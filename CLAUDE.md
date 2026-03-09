@@ -39,6 +39,7 @@ It enables customers to scan a QR code at their table, browse a digital menu, pl
 | **Auth** | [NextAuth.js](https://next-auth.js.org/) + JWT | Email/password for owners, PIN for staff |
 | **Payment (customer)** | [Midtrans](https://midtrans.com/) | Indonesia's lowest-fee gateway (QRIS 0.7%) |
 | **Payment (merchant billing)** | Midtrans or bank transfer | FBQR collects subscription fees from merchants |
+| **Push notifications** | Web Push API (browser-native) | New order alerts to merchant-pos and merchant-kitchen |
 | **QR Codes** | [`qrcode`](https://www.npmjs.com/package/qrcode) npm package | Generate per-table QR codes |
 | **PDF** | [`@react-pdf/renderer`](https://react-pdf.org/) | Invoice and pre-invoice generation |
 | **Email** | [Resend](https://resend.com/) | Transactional email — billing reminders, invoices, notifications |
@@ -232,7 +233,7 @@ Merchant             ← Restaurant owner account (email + hashed password)
   │     └── MerchantBillingInvoice ← FBQR → merchant invoices (NOT customer invoices)
   │                                   (invoiceNumber, amount, dueAt, paidAt, pdfUrl)
   │
-  └── Restaurant     ← The restaurant entity
+  └── Restaurant[]   ← One merchant can own multiple restaurants (chain support)
         ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
         ├── MerchantSettings     ← Feature flags, payment methods, tax, service charge
         ├── MerchantRole         ← User-created staff roles ([permissions])
@@ -249,11 +250,18 @@ Merchant             ← Restaurant owner account (email + hashed password)
 
 ── ORDERS ────────────────────────────────────────────────────────────
 Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED
+  │  orderType: DINE_IN | TAKEAWAY | DELIVERY
+  │  queueNumber (int) — auto-increments per restaurant per day for counter/takeaway
+  │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
+  │  platformOrderId (nullable) — external delivery platform reference
+  │
   ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority
   ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
+  ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
   ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
-  └── Payment        ← Midtrans transaction record (method, amount, status, webhookData)
+  └── Payment        ← method: QRIS | GOPAY | OVO | DANA | VA | CASH | CARD
+                        status: PENDING | SUCCESS | FAILED | REFUNDED
 
 ── CUSTOMERS ─────────────────────────────────────────────────────────
 Customer             ← Optional registered account (email / Google OAuth)
@@ -939,30 +947,277 @@ Research into the two most mature QR ordering markets informs key FBQR decisions
 
 ---
 
+## Takeaway / Counter Mode
+
+> **Critical gap for chain and counter-service restaurants.** The current architecture assumes dine-in table QR. Counter-service operators (fried chicken chains, warungs, food courts) need a fundamentally different flow.
+
+`Order.orderType` enum: `DINE_IN | TAKEAWAY | DELIVERY`
+
+### Counter / Takeaway Flow
+
+```
+Customer walks up to counter
+    │
+    ├── Option A: Scan QR at counter (like table QR but without a table)
+    ├── Option B: Staff inputs order on merchant-pos
+    └── Option C: Order comes in from delivery platform (GrabFood/GoFood)
+    │
+    ▼
+Customer gets an order queue number (e.g. "Order #042")
+    │
+    ▼
+Order queue display (large screen facing customers) shows pending + ready numbers
+    │
+    ▼
+Kitchen prepares → marks READY → display highlights #042 as ready
+    │
+    ▼
+Customer collects at counter
+```
+
+### Order Queue Display
+
+A separate screen/view (`/kitchen/queue-display`) for customer-facing use:
+
+```
+┌─────────────────────────────────────┐
+│          PESANAN SIAP               │
+│                                     │
+│   042   047   051   055             │
+│                                     │
+│          SEDANG DISIAPKAN           │
+│                                     │
+│   043   044   048   049   052       │
+└─────────────────────────────────────┘
+```
+- Designed to be shown on a TV or tablet facing the customer waiting area
+- Updates in real-time via Supabase Realtime
+- Order numbers auto-generated per restaurant per day (resets at midnight)
+- Ready numbers shown for configurable duration, then cleared
+
+### Cash / "Pay at Counter" Option
+
+Some customers — especially at warungs and older demographics — pay cash.
+
+- Merchant can enable `CASH` as a payment option per restaurant
+- Customer selects "Bayar di Kasir" at checkout — order is submitted without online payment
+- Order appears on merchant-pos with `paymentStatus: PENDING_CASH`
+- Cashier marks as paid when cash is collected
+- `Payment.method: CASH`, `Payment.amount` entered manually by cashier
+- Cash orders appear in reports separately from QRIS/digital payments
+
+---
+
+## Delivery Platform Integration (GrabFood / GoFood / ShopeeFood)
+
+> **Deal-breaker for chain operators.** Delivery orders likely represent 30–50% of a chain's revenue. If FBQR doesn't handle them, merchants run two parallel systems — and FBQR loses.
+
+### Integration Approach
+
+Each platform provides webhooks or APIs when an order is placed. FBQR receives these and creates a standard `Order` record with `orderType: DELIVERY`.
+
+| Platform | Integration Method | Notes |
+|---|---|---|
+| **GrabFood** | GrabFood Merchant API + webhook | Available for registered partners |
+| **GoFood (Gojek)** | Gojek Merchant API | Most popular in Indonesia |
+| **ShopeeFood** | ShopeeFood Merchant API | Growing rapidly in Indonesia |
+
+### Unified Kitchen View
+
+Delivery orders appear on `merchant-kitchen` exactly like dine-in orders — same queue, same priority controls. Kitchen staff see order type badge (🛵 Delivery / 🪑 Dine-in / 🥡 Takeaway) but the workflow is identical.
+
+Delivery-specific fields on `Order`:
+- `platformName`: `GRABFOOD | GOFOOD | SHOPEEFOOD`
+- `platformOrderId`: external reference
+- `deliveryAddress`: customer address (if relevant for display)
+- `estimatedPickupTime`: when the driver will arrive
+
+> **Phase 1:** Manual integration — delivery orders entered by staff on merchant-pos. **Phase 2:** Automated webhook integration per platform.
+
+---
+
+## Multi-Restaurant Per Merchant Account
+
+> **Deal-breaker for chains.** Currently one email = one restaurant. A chain owner with 8 branches cannot manage 8 separate accounts.
+
+### Revised Model
+
+```
+Merchant (owner account)
+  └── Restaurant[]    ← can own multiple restaurants
+        └── Branch[]  ← each restaurant has branches
+```
+
+The owner logs in once and switches between restaurants from a top-level selector. Each restaurant has its own:
+- Menu, branding, promotions, staff, tables
+- Subscription (each restaurant billed separately, or a chain plan covers all)
+- Reports (viewable individually or aggregated)
+
+Staff accounts are scoped to a specific restaurant (they don't see other restaurants under the same owner).
+
+> **Schema change:** `Merchant` has a one-to-many relationship with `Restaurant`. Permissions, subscriptions, and audit logs are restaurant-scoped, not merchant-scoped. Update Prisma schema accordingly.
+
+---
+
+## Push Notifications & Sound Alerts (New Order Alerts)
+
+> **High friction for all merchants without this.** If a new order arrives and the merchant doesn't know immediately, the system fails as a POS replacement.
+
+### What needs to be alerted
+
+| Event | Who is alerted | Channel |
+|---|---|---|
+| New order received | merchant-pos, merchant-kitchen | In-app sound + visual badge + push notification |
+| Order status changes | Customer (PREPARING, READY) | Supabase Realtime on order tracking screen |
+| Call Waiter request | merchant-pos | In-app alert + sound |
+| Payment failed (merchant billing) | Merchant owner | Email (Resend) |
+
+### Implementation
+
+- **In-app sound:** Web Audio API plays an alert sound when a new `Order` record is created (Supabase Realtime subscription)
+- **Browser push notification:** Web Push API — merchant-pos asks for notification permission on first login; sends push even when tab is not in focus
+- **WhatsApp fallback (Phase 2):** If merchant has WhatsApp Business configured, send new order summary via WA message
+
+Add to tech stack:
+- **Push notifications:** Web Push API (native, no extra service needed for browser notifications)
+
+---
+
+## Menu Import / Migration Tool
+
+> **High friction for merchants upgrading from existing POS.** A seafood restaurant with 60+ items will not manually re-enter every item with photos, variants, and descriptions.
+
+### Import Options
+
+| Method | Use case |
+|---|---|
+| **CSV import** | Merchant exports from existing POS/Excel; FBQR provides a template CSV with required columns |
+| **Manual bulk entry UI** | Streamlined form for quickly entering many items without uploading a file |
+| **Copy menu from another restaurant** | For chain operators — clone an entire restaurant's menu to a new branch |
+
+### CSV Template Format
+
+```csv
+category,name,description,price,isHalal,isVegetarian,spiceLevel,variants,addons
+Seafood,Kepiting Saus Padang,"Kepiting segar...",185000,true,false,2,"","Extra Nasi:10000"
+Seafood,Udang Bakar,"...",120000,true,false,1,"","Saus Pedas:5000|Extra Mentega:8000"
+```
+
+Photos cannot be imported via CSV — merchant uploads images per item after import, or skips photos initially.
+
+---
+
+## ROI Analytics Dashboard ("Show Me the Value")
+
+> **Needed to justify the subscription for all three personas.** Without this, merchants can't answer "is FBQR making me more money?"
+
+### Metrics shown to merchant (merchant-pos dashboard)
+
+| Metric | Description |
+|---|---|
+| Revenue this month vs last month | IDR trend with % change |
+| Orders via QRIS vs cash vs delivery | Breakdown of order sources |
+| Average order value (AOV) trend | Week-over-week |
+| Top 5 best-selling items | By revenue and by quantity |
+| Peak hours heatmap | 7-day rolling hourly order volume |
+| Table turnover rate | Average session length per table |
+| AI recommendations impact | Orders that included a recommended item vs not (if AI enabled) |
+| Loyalty program uptake | % of orders by registered customers |
+
+### Platform-level (FBQRSYS)
+
+| Metric | Description |
+|---|---|
+| Total GMV across all merchants | Platform gross merchandise value |
+| MRR / ARR | Monthly/annual recurring revenue from subscriptions |
+| Merchant growth | New signups, trial conversions, churned |
+| Top-performing merchants | For case studies / referral programme |
+
+---
+
+## Accounting Export
+
+> **Required for established businesses.** Pak Budi's accountant needs data; Bu Sari's finance team needs it for 8 branches.
+
+| Export format | Notes |
+|---|---|
+| **Excel (.xlsx)** | Itemized order report, daily/weekly/monthly, filterable by date range |
+| **CSV** | Same as Excel but for any accounting tool |
+| **Accurate Online** | Indonesia's most popular SME accounting software — direct integration (Phase 2) |
+| **Jurnal.id** | Alternative popular Indonesian accounting tool (Phase 2) |
+
+All exports include: date, order ID, items, quantities, prices, tax, service charge, payment method, discount applied.
+
+---
+
+## Permanent Free Tier (Warung / Lite Mode)
+
+> **Deal-breaker for Mas Tono.** A 14-day trial that then requires payment will lose the warung segment entirely. They need to see sustained value before paying anything.
+
+### Proposed tier structure
+
+| Tier | Price | Limits | Unlocks subscription |
+|---|---|---|---|
+| **Free / Warung** | Rp 0 forever | 1 branch, 5 tables, 30 menu items, basic layout (List only), no AI, no branding, FBQR watermark on menu | If they grow past limits or want features, they upgrade |
+| **Starter** | Paid monthly | 1 branch, 15 tables, all layouts, branding, basic AI | |
+| **Pro** | Paid monthly | Multiple branches, unlimited, full AI, loyalty, delivery integration | |
+
+> The Free tier is the acquisition strategy for the warung segment. A warung that grows into a small restaurant chain is a high-value future Pro subscriber.
+
+**Free tier retention features:**
+- FBQR logo/watermark on the customer menu (marketing for FBQR)
+- "Upgrade" prompt visible when they hit a limit (not a hard block — a gentle nudge)
+- Offline capability works on Free tier (important for warung connectivity)
+
+---
+
+## Post-Order Customer Rating
+
+> Needed for Pak Budi (reputation matters for a seasoned restaurant) and for platform quality control.
+
+After an order is marked COMPLETED:
+- Customer sees a simple 1–5 star prompt on their order tracking screen ("Bagaimana makanannya?")
+- Optional text comment
+- Rating is stored per `Order` (not publicly visible by default — merchant sees aggregate)
+- Merchant dashboard shows average rating, recent comments, trend over time
+- FBQRSYS can see platform-wide ratings to identify quality issues (future: merchant score)
+
+---
+
 ## What's Still Missing / Backlog
 
-The following features are identified but not yet specified in detail. Ordered by priority:
+Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠️ = high friction. 📋 = nice-to-have.
 
-| Feature | Priority | Source | Notes |
+| Feature | Level | Persona | Notes |
 |---|---|---|---|
-| **Refund / cancellation flow** | High | Core | Partial/full refund via Midtrans, reflected in reports |
-| **Stock / inventory tracking** | Medium | Core | Track inventory per `MenuItem`, auto-mark unavailable when stock hits 0 |
-| **Discount codes / vouchers** | Medium | Core | Customer-facing promo codes separate from merchant promotions |
-| **Export reports** | Medium | Core | Download sales/order reports as Excel or PDF |
-| **WhatsApp notifications** | Medium | Core | Send invoice link and order status via WhatsApp Business API |
-| **Email delivery** | Medium | Core | Invoices and order confirmations via email (Resend or Nodemailer) |
-| **Printer integration** | Medium | Core | Thermal printer for kitchen tickets and receipts (`node-thermal-printer`) |
-| **Group ordering (collaborative cart)** | Medium | China insight | Multiple phones at same table add to shared cart; show who ordered what |
-| **Kitchen multi-station routing** | Medium | China insight | Route `OrderItem` to kitchen station (grill/cold/drinks) by `MenuCategory` |
-| **Privacy consent flow** | Medium | China insight | Explicit data consent UI; minimal collection principle; clear opt-in for loyalty |
-| **Warung / Lite mode** | Medium | Singapore insight | Simplified setup flow for single-stall operators; fewer features, faster onboarding |
-| **Table reservation** | Low | Core | Customers or staff can book a table in advance |
-| **Split bill** | Low | Core | Allow multiple payments against one order |
-| **Staff shift management** | Low | Core | Clock-in/out, shift reports |
-| **Offline mode (merchant-pos)** | Low | Core | PWA with local queue if internet drops briefly |
-| **Multi-language menu items** | Low | Core | Per-item name/description in multiple languages |
-| **Customer waitlist** | Low | Core | Join digital queue when restaurant is full |
-| **Multi-restaurant per merchant** | Low | Core | Currently one email = one restaurant; revisit when needed |
+| **Takeaway / counter mode** | 🚨 Deal-breaker | Chain, warung | Documented above — `orderType`, queue number, counter QR |
+| **Order queue number display** | 🚨 Deal-breaker | Chain, warung | Customer-facing screen showing pending/ready order numbers |
+| **Cash / "Pay at Counter"** | 🚨 Deal-breaker | Warung, all | `CASH` payment method, cashier marks paid manually |
+| **Multi-restaurant per merchant** | 🚨 Deal-breaker | Chain | One login, multiple restaurants; schema change required |
+| **Delivery platform integration** | 🚨 Deal-breaker | Chain | GrabFood/GoFood/ShopeeFood webhook → unified kitchen view |
+| **Permanent free / Warung tier** | 🚨 Deal-breaker | Warung | Free forever with limits; upgrade path clearly shown |
+| **Push/sound notifications for new orders** | ⚠️ High friction | All | Web Push API + in-app audio; browser notification permission |
+| **Printer integration** | ⚠️ High friction | Seafood, chain | Upgrade from backlog to high priority; `node-thermal-printer` |
+| **Menu import / CSV migration** | ⚠️ High friction | Seafood, chain | CSV template + bulk entry UI + clone menu across branches |
+| **ROI analytics dashboard** | ⚠️ High friction | All | Merchants must see measurable value to keep subscribing |
+| **Accounting export** | ⚠️ High friction | Seafood, chain | Excel/CSV export; Accurate/Jurnal.id integration (Phase 2) |
+| **Post-order customer rating** | ⚠️ High friction | Seafood | 1–5 stars after order complete; merchant dashboard aggregate |
+| **WhatsApp Business integration** | ⚠️ High friction | Warung | Order notifications, invoice sharing via WA |
+| **Refund / cancellation flow** | ⚠️ High friction | All | Midtrans refund API; reflected in reports |
+| **Offline mode (merchant-pos)** | ⚠️ High friction | Warung | PWA local queue; sync on reconnect |
+| **Stock / inventory tracking** | 📋 Nice-to-have | All | Auto-mark unavailable when stock hits 0 |
+| **Discount codes / vouchers** | 📋 Nice-to-have | All | Customer-facing promo codes |
+| **Export reports** | 📋 Nice-to-have | All | Excel/PDF download (see Accounting Export above) |
+| **Group ordering (collaborative cart)** | 📋 Nice-to-have | Seafood | Multiple phones, shared cart, per-person attribution |
+| **Kitchen multi-station routing** | 📋 Nice-to-have | Chain | Route by category to grill/cold/drinks station |
+| **Privacy consent flow** | 📋 Nice-to-have | All | Data collection opt-in; minimal principle |
+| **Table merge / split bill** | 📋 Nice-to-have | Seafood | Group dining; split payment between people |
+| **Table reservation** | 📋 Nice-to-have | Seafood | Book in advance |
+| **Staff shift management** | 📋 Nice-to-have | Chain | Clock-in/out, shift reports |
+| **Multi-language menu items** | 📋 Nice-to-have | All | Per-item name/description in multiple languages |
+| **Menu templates** | 📋 Nice-to-have | Warung | Pre-built menus to accelerate setup |
+| **Branded QR code design** | 📋 Nice-to-have | Seafood, chain | Styled QR with restaurant logo |
+| **Shareable menu URL** | 📋 Nice-to-have | All | Digital menu link without scanning |
 
 ---
 
@@ -1017,24 +1272,28 @@ Work through this sequence, one session at a time:
 | 4 | Dynamic RBAC — role/permission engine + middleware | `apps/web` |
 | 5 | FBQRSYS — merchant management UI (create, view, suspend) | `apps/web/(fbqrsys)` |
 | 6 | Merchant subscription & billing — plans, invoices, auto-lock, email reminders | `apps/web/(fbqrsys)` |
-| 7 | Merchant onboarding — trial flow, plan selection | `apps/web/(merchant)` |
+| 7 | Merchant onboarding — trial/free tier flow, plan selection | `apps/web/(merchant)` |
 | 8 | Restaurant branding settings + CSS variable injection | `apps/web/(merchant)` + `apps/menu` |
-| 9 | merchant-pos — menu & category management + layout + allergens | `apps/web/(merchant)` |
+| 9 | merchant-pos — menu & category management + layout + allergens + CSV import | `apps/web/(merchant)` |
 | 10 | merchant-pos — table management + QR generation + floor map | `apps/web/(merchant)` |
-| 11 | merchant-pos — promotions | `apps/web/(merchant)` |
-| 12 | end-user-system — QR validation + branded menu (Grid layout) | `apps/menu` |
+| 11 | merchant-pos — promotions + discount codes | `apps/web/(merchant)` |
+| 12 | end-user-system — QR validation + branded menu (Grid layout, dine-in) | `apps/menu` |
 | 13 | end-user-system — List, Bundle, Spotlight layouts | `apps/menu` |
 | 14 | end-user-system — item detail modal, variants, add-ons, allergens | `apps/menu` |
-| 15 | end-user-system — cart + pre-invoice + Midtrans checkout | `apps/menu` |
-| 16 | end-user-system — order tracking screen + real-time status + Call Waiter | `apps/menu` |
-| 17 | Invoice PDF generation + storage | shared |
-| 18 | merchant-kitchen — real-time order queue + item priority reordering | `apps/web/(kitchen)` |
-| 19 | merchant-pos — reports + analytics + export | `apps/web/(merchant)` |
-| 20 | AI recommendation engine | `apps/menu` + API |
-| 21 | Audit log — logging middleware + viewer UI | All |
-| 22 | Merchant loyalty program + customer account | `apps/menu` + `apps/web/(merchant)` |
-| 23 | Platform loyalty + gamification (Phase 2) | All |
-| 24 | Remaining backlog items | TBD |
+| 15 | end-user-system — cart + pre-invoice + Midtrans QRIS + Cash option | `apps/menu` |
+| 16 | end-user-system — order tracking screen + real-time status + Call Waiter + rating | `apps/menu` |
+| 17 | Takeaway / counter mode — counter QR, queue numbers, order queue display screen | `apps/menu` + `apps/web/(kitchen)` |
+| 18 | Push notifications — Web Push API (new order alert, Call Waiter alert) | `apps/web` |
+| 19 | Invoice + MerchantBillingInvoice PDF generation + storage | shared |
+| 20 | merchant-kitchen — real-time queue + priority reordering + queue number display | `apps/web/(kitchen)` |
+| 21 | merchant-pos — ROI analytics dashboard + accounting export | `apps/web/(merchant)` |
+| 22 | Delivery platform integration — GrabFood/GoFood webhook → unified kitchen | `apps/web` + API |
+| 23 | AI recommendation engine | `apps/menu` + API |
+| 24 | Audit log — logging middleware + viewer UI | All |
+| 25 | Merchant loyalty program + customer account | `apps/menu` + `apps/web/(merchant)` |
+| 26 | Platform loyalty + gamification (Phase 2) | All |
+| 27 | WhatsApp Business integration (notifications, invoice sharing) | shared |
+| 28 | Remaining backlog items | TBD |
 
 ---
 
