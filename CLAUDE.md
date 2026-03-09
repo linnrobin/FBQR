@@ -402,27 +402,72 @@ Schema is designed now; UI is built later.
 
 ---
 
+## Competitive Intelligence — China & Singapore QR Systems
+
+Research into the two most mature QR ordering markets informs key FBQR decisions.
+
+### China (WeChat / Alipay / Meituan)
+
+- **98% of Chinese restaurants** use QR-based ordering
+- Ordering flows entirely through **WeChat or Alipay Mini Programs** — no browser, no install
+- Payment fees: WeChat Pay 0.6%, Alipay 0.55% — the benchmark for low-cost QR payments
+- **Group ordering** (collaborative shared cart): Multiple phones at the same table add items simultaneously; each person's avatar appears next to their items — the most socially natural group dining UX in the world
+- **AI capabilities:** Meituan's "Xiaomei" voice agent, personalized flash coupons, demand forecasting; Ele.me's recommendation engine uses weather + location. Shanghai targets 70%+ AI penetration in F&B by 2028
+- **Loyalty:** Deeply integrated into WeChat Wallet; points, tiers, and coupons in a unified view. Alipay loyalty reported 47.5% repurchase rate lift for participating merchants
+- **Kitchen:** Multi-station routing (wok / cold kitchen / beverages), multilingual ticket printing, 300+ POS config options (Eats365), real-time inventory auto-deduction
+- **Weaknesses:** Forced data collection (phone number + WeChat follow required before ordering), QR code security vulnerabilities (spoofing/phishing incidents), elderly digital exclusion, platform fragmentation across Meituan/Ele.me/WeChat/Alipay
+
+### Singapore (SGQR / TabSquare / Foodpanda)
+
+- **SGQR:** World's first unified QR label — one code, 22+ payment schemes (GrabPay, PayLah!, NETS, PayNow, WeChat Pay, etc.)
+- Payment fees: PayNow personal QR = **0% (free)**, NETS SGQR = 0.5–0.8%, compared to QRIS Indonesia 0.7% — broadly equivalent
+- **Government digitisation (Hawkers Go Digital):** 11,500+ hawker stalls enrolled, 33% YoY transaction value growth. Key lesson: financial subsidies + human ambassador onboarding drove adoption, not just UX quality
+- **TabSquare (AI-powered, market leader):** Documented **25%+ lift in average order value** from AI SmartMenu recommendations. Dynamic upselling produced 10% upsell revenue increase in 6 months at local chains. 12M diners/yr, SGD 200M GMV
+- **Foodpanda + TabSquare dine-in:** 8,000+ restaurants across 7 SEA countries. 15–25% dine-in discounts used as customer acquisition tool
+- **Loyalty fragmentation:** GrabRewards, Panda Pro, bank credit card programs, and standalone restaurant apps operate independently — no unified loyalty layer across channels
+- **Weaknesses:** No super-app equivalent to WeChat, 80% of transactions still offline, back-of-house tech lag for SMEs, government subsidy cliff (NETS MDR subsidy ends mid-2026)
+
+### 10 Direct Implications for FBQR
+
+| # | Insight | FBQR Action |
+|---|---|---|
+| 1 | **Table-scoped QR is the right architecture** | ✅ Already designed — unique UUID per table, restaurant+table encoded in URL |
+| 2 | **Zero-install is non-negotiable** — both markets prove download requirements destroy conversion | ✅ Browser-based `apps/menu` — no app install required |
+| 3 | **Group ordering is a high-value differentiator** — China's collaborative cart fits Indonesia's group dining culture | 🔲 Add to backlog: shared cart with per-person item attribution |
+| 4 | **QRIS at 0.7% is competitive** — WeChat Pay 0.6%, SGQR 0.5–0.8% — on par with global best | ✅ Midtrans QRIS as default payment method |
+| 5 | **AI upselling has proven, measurable ROI** — TabSquare 25% AOV lift is the strongest industry data point | ✅ AI recommendation engine planned (all 4 types, merchant-configurable) |
+| 6 | **Forced data collection is a trust and reputation risk** — China's backlash is a clear warning | ✅ Customer login is opt-in; anonymous QR sessions are first-class |
+| 7 | **Loyalty unification is a market gap in SEA** — Singapore's fragmented loyalty is an opportunity | ✅ FBQR loyalty layer tied to customer account, not platform-specific |
+| 8 | **Kitchen multi-station routing matters at scale** — needed for larger restaurants | 🔲 Add to backlog: route `OrderItem` to kitchen station by category |
+| 9 | **Warung/informal segment needs a simplified mode** — Singapore's hawker programme confirms this | 🔲 Add to backlog: "Lite mode" for single-stall operators, minimal setup |
+| 10 | **Privacy by design must be foundational** — build explicit consent and minimal data collection from day one | 🔲 Add to backlog: privacy consent flow, clear opt-in for loyalty data |
+
+---
+
 ## What's Still Missing / Backlog
 
-The following features are identified but not yet specified in detail. Add them as issues or future CLAUDE.md sections:
+The following features are identified but not yet specified in detail. Ordered by priority:
 
-| Feature | Priority | Notes |
-|---|---|---|
-| **Stock / inventory tracking** | Medium | Track inventory per `MenuItem`, auto-mark unavailable when stock hits 0 |
-| **Printer integration** | Medium | Thermal printer for kitchen tickets and receipts (via `node-thermal-printer` or similar) |
-| **WhatsApp notifications** | Medium | Send invoice link and order status via WhatsApp Business API |
-| **Table reservation** | Low | Customers or staff can book a table in advance |
-| **Split bill** | Low | Allow multiple payments against one order |
-| **Discount codes / vouchers** | Medium | Customer-facing promo codes separate from merchant promotions |
-| **Staff shift management** | Low | Clock-in/out, shift reports |
-| **Offline mode (merchant-pos)** | Low | PWA with local queue if internet drops briefly |
-| **Multi-language menu items** | Low | Per-item name/description in multiple languages |
-| **Export reports** | Medium | Download sales/order reports as Excel or PDF |
-| **Email delivery** | Medium | Invoices and order confirmations via email (Resend or Nodemailer) |
-| **Customer waitlist** | Low | Join digital queue when restaurant is full |
-| **Reservation system** | Low | Full booking flow with time slots |
-| **Refund flow** | High | Partial/full refund via Midtrans, reflected in reports |
-| **Multi-restaurant per merchant** | Low | Currently one email = one restaurant; revisit when needed |
+| Feature | Priority | Source | Notes |
+|---|---|---|---|
+| **Refund / cancellation flow** | High | Core | Partial/full refund via Midtrans, reflected in reports |
+| **Stock / inventory tracking** | Medium | Core | Track inventory per `MenuItem`, auto-mark unavailable when stock hits 0 |
+| **Discount codes / vouchers** | Medium | Core | Customer-facing promo codes separate from merchant promotions |
+| **Export reports** | Medium | Core | Download sales/order reports as Excel or PDF |
+| **WhatsApp notifications** | Medium | Core | Send invoice link and order status via WhatsApp Business API |
+| **Email delivery** | Medium | Core | Invoices and order confirmations via email (Resend or Nodemailer) |
+| **Printer integration** | Medium | Core | Thermal printer for kitchen tickets and receipts (`node-thermal-printer`) |
+| **Group ordering (collaborative cart)** | Medium | China insight | Multiple phones at same table add to shared cart; show who ordered what |
+| **Kitchen multi-station routing** | Medium | China insight | Route `OrderItem` to kitchen station (grill/cold/drinks) by `MenuCategory` |
+| **Privacy consent flow** | Medium | China insight | Explicit data consent UI; minimal collection principle; clear opt-in for loyalty |
+| **Warung / Lite mode** | Medium | Singapore insight | Simplified setup flow for single-stall operators; fewer features, faster onboarding |
+| **Table reservation** | Low | Core | Customers or staff can book a table in advance |
+| **Split bill** | Low | Core | Allow multiple payments against one order |
+| **Staff shift management** | Low | Core | Clock-in/out, shift reports |
+| **Offline mode (merchant-pos)** | Low | Core | PWA with local queue if internet drops briefly |
+| **Multi-language menu items** | Low | Core | Per-item name/description in multiple languages |
+| **Customer waitlist** | Low | Core | Join digital queue when restaurant is full |
+| **Multi-restaurant per merchant** | Low | Core | Currently one email = one restaurant; revisit when needed |
 
 ---
 
