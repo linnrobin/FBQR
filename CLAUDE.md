@@ -105,57 +105,76 @@ FBQR/                              # Monorepo root
 
 ## RBAC — Role-Based Access Control
 
-RBAC operates at two levels: **FBQRSYS** (platform) and **Merchant** (restaurant).
+RBAC is **fully dynamic**. Roles are user-created with any name — the system only provides suggestion templates as a starting point. Nothing is hardcoded except the atomic permission list, which maps directly to code-level access gates.
 
-### FBQRSYS Roles
+### How it works
 
-| Role | Description |
-|---|---|
-| `SYSTEM_OWNER` | Full platform access — can do everything |
-| `SYSTEM_STAFF` | Configurable permissions (see below) |
+```
+Permission   ← System-defined atomic capability (hardcoded, maps to code gate)
+    ↑
+Role         ← User-created named bundle of permissions (any name, any permissions)
+    ↑
+RoleTemplate ← System-provided suggestion presets (editable, not enforced)
+    ↑
+UserRole     ← Assignment of a Role to a Staff member
+```
 
-#### FBQRSYS Permissions (assignable to SYSTEM_STAFF)
+**Permissions are system-defined** because they correspond to actual code checks (`requirePermission(session, 'menu:edit')`). New permissions are only added when new features are built.
+
+**Roles are fully owned by the admin.** An FBQRSYS owner can create a role called "Tim Pemasaran" with only `reports:read`. A merchant owner can create "Koordinator Dapur" with `kitchen:manage` + `orders:view`. Role names are free-form text. Descriptions are optional.
+
+**Templates are suggestions only.** The system shows preset role templates to help new users get started, but they can rename, modify, or delete any template. Templates are never enforced.
+
+### FBQRSYS — System-Defined Permissions
 
 | Permission | Description |
 |---|---|
 | `merchants:create` | Create new merchant accounts |
 | `merchants:read` | View merchant list and details |
-| `merchants:update` | Edit merchant details and branding |
+| `merchants:update` | Edit merchant details and settings |
 | `merchants:delete` | Deactivate or delete merchant accounts |
 | `reports:read` | View platform-level reports |
-| `settings:manage` | Modify platform settings |
+| `settings:manage` | Modify platform-level settings |
 | `admins:manage` | Create/manage other FBQRSYS staff accounts |
 
-**Example:** FBQRSYS Staff1 has `merchants:create` only. FBQRSYS Staff2 has `reports:read` only.
+#### FBQRSYS Role Templates (suggestions only — owner can rename/modify)
 
-### Merchant Roles
-
-| Role | Description |
+| Suggested Name | Default Permissions |
 |---|---|
-| `MERCHANT_OWNER` | Full access to their restaurant |
-| `MERCHANT_SUPERVISOR` | Manage menu, view reports — cannot manage billing or owner account |
-| `MERCHANT_CASHIER` | POS access, process orders, view active orders |
-| `KITCHEN_ADMIN` | Manage kitchen queue, reorder items, mark items ready |
-| `KITCHEN_STAFF` | View kitchen display only — read-only |
+| Platform Owner | All |
+| Merchant Manager | `merchants:create`, `merchants:read`, `merchants:update` |
+| Analyst | `reports:read`, `merchants:read` |
+| Support Staff | `merchants:read` |
 
-#### Merchant Permissions (assignable per role)
+### Merchant — System-Defined Permissions
 
-| Permission | Owner | Supervisor | Cashier | Kitchen Admin | Kitchen Staff |
-|---|---|---|---|---|---|
-| `menu:manage` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `promotions:manage` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `reports:read` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `orders:view` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `orders:manage` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `kitchen:view` | ✅ | ✅ | ❌ | ✅ | ✅ |
-| `kitchen:manage` | ✅ | ❌ | ❌ | ✅ | ❌ |
-| `staff:manage` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `tables:manage` | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `settings:manage` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `branding:manage` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `invoices:read` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Permission | Description |
+|---|---|
+| `menu:manage` | Create/edit/delete menu categories and items |
+| `promotions:manage` | Create/edit/delete promotions |
+| `reports:read` | View sales and order reports |
+| `orders:view` | View current and past orders |
+| `orders:manage` | Update order status, cancel orders |
+| `kitchen:view` | View kitchen display |
+| `kitchen:manage` | Reorder item priority, mark items ready |
+| `staff:manage` | Create/edit/delete staff accounts and roles |
+| `tables:manage` | Create/edit tables and generate QR codes |
+| `settings:manage` | Edit restaurant settings (tax, service charge, etc.) |
+| `branding:manage` | Edit restaurant branding (logo, colors, layout) |
+| `invoices:read` | View and download invoices |
+| `loyalty:manage` | Configure merchant loyalty program |
 
-> Roles are a preset bundle of permissions. Custom per-staff permission overrides can be added in a later iteration.
+#### Merchant Role Templates (suggestions only — owner can rename/modify)
+
+| Suggested Name | Default Permissions |
+|---|---|
+| Owner | All |
+| Supervisor | `menu:manage`, `promotions:manage`, `reports:read`, `orders:view`, `orders:manage`, `tables:manage`, `invoices:read` |
+| Cashier | `orders:view`, `orders:manage`, `invoices:read` |
+| Kitchen Admin | `kitchen:view`, `kitchen:manage`, `orders:view` |
+| Kitchen Staff | `kitchen:view`, `orders:view` |
+
+> **Owner accounts are special.** The Merchant owner (email + password) always has full access and cannot be stripped of permissions. The FBQRSYS owner (the FBQR platform account) always has full platform access. These are the only hardcoded "super" roles.
 
 ---
 
@@ -191,19 +210,25 @@ Every state-changing action is recorded in the `AuditLog` table.
 ## Key Data Models (Prisma Schema)
 
 ```
-SystemAdmin          ← FBQRSYS super-admins (SYSTEM_OWNER | SYSTEM_STAFF + permissions)
+SystemAdmin          ← FBQRSYS owner account (email + password, full platform access)
+SystemRole           ← User-created FBQRSYS roles (name, description, [permissions])
+SystemRoleAssignment ← Links SystemAdmin to a SystemRole
+SystemPermission     ← Enum of all platform-level permission keys (system-defined)
+
 Merchant             ← Restaurant owner account (email + hashed password)
   └── Restaurant     ← The restaurant entity
-        ├── MerchantBranding     ← Logo, colors, font, custom CSS
-        ├── MerchantSettings     ← Feature flags (AI, loyalty, tax, service charge)
+        ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
+        ├── MerchantSettings     ← Feature flags (AI, loyalty, tax, service charge, etc.)
         ├── Branch               ← Physical locations
         │     └── Table          ← Each table with unique QR token + status
-        ├── MenuCategory
-        │     └── MenuItem       ← Price, description, image, availability, variants
+        ├── MenuCategory         ← menuLayoutOverride per category (optional)
+        │     └── MenuItem       ← Price, description, image, availability
         │           └── MenuItemVariant   ← e.g. small/medium/large, spice level
         │           └── MenuItemAddon     ← e.g. extra cheese, no onion
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
-        └── Staff                ← Kitchen/cashier accounts (role + PIN auth)
+        ├── Staff                ← Staff accounts (PIN auth, linked to one or more Roles)
+        ├── MerchantRole         ← User-created roles (name, description, [permissions])
+        └── MerchantRoleAssignment ← Links Staff to a MerchantRole
 
 Order                ← Created when customer submits cart
   ├── OrderItem      ← Line items (MenuItem + quantity + price snapshot + kitchenPriority)
@@ -211,8 +236,12 @@ Order                ← Created when customer submits cart
   ├── Invoice        ← Generated after payment confirmed
   └── Payment        ← Midtrans transaction record
 
-Customer             ← Optional registered customer account (for loyalty)
-  └── LoyaltyPoint   ← Points earned per order (future implementation)
+Customer             ← Optional registered customer account
+  ├── PlatformLoyaltyBalance  ← FBQR platform-wide points (Phase 2)
+  └── MerchantLoyaltyBalance  ← Per-restaurant points (one per enrolled merchant)
+
+MerchantLoyaltyProgram ← Per-restaurant loyalty configuration (if enabled)
+  └── LoyaltyTier    ← Tiers with thresholds, titles, benefits (Phase 2 gamification)
 
 CustomerSession      ← Anonymous or authenticated session scoped to Restaurant + Table
 
@@ -301,23 +330,146 @@ Sequence resets daily per restaurant.
 
 ---
 
-## Merchant White-labeling (MerchantBranding)
+## Restaurant Branding (RestaurantBranding)
 
-Each restaurant can customize the appearance of the `end-user-system` (customer menu app).
-Settings are managed from the FBQRSYS admin panel (and overridable by the merchant owner).
+> **Scope:** FBQRSYS itself is **never** white-labeled — it always shows the FBQR platform identity. The `merchant-pos` and `merchant-kitchen` apps display the restaurant name but retain FBQR's own UI chrome.
+>
+> **Only the `end-user-system` (customer-facing menu app) is fully branded per restaurant.** Customers see the restaurant's identity — they may not be aware FBQR is the underlying platform.
+
+Each restaurant configures its customer-facing branding. Settings can be set by FBQRSYS admin or by the merchant owner.
 
 | Field | Description |
 |---|---|
 | `logoUrl` | Restaurant logo shown in menu header |
-| `bannerUrl` | Optional banner image for menu hero |
-| `primaryColor` | Primary brand color (hex) — buttons, accents |
-| `secondaryColor` | Secondary brand color (hex) |
-| `fontFamily` | Font choice from a curated list (e.g. Inter, Poppins, Lato) |
-| `borderRadius` | UI rounding style: `sharp`, `rounded`, `pill` |
-| `customCss` | Optional raw CSS overrides (FBQRSYS admin only — sanitized) |
+| `bannerUrl` | Optional hero banner image at top of menu |
+| `primaryColor` | Primary brand color (hex) — buttons, highlights, CTAs |
+| `secondaryColor` | Secondary brand color (hex) — backgrounds, accents |
+| `fontFamily` | Font from a curated list (Inter, Poppins, Lato, Playfair Display, etc.) |
+| `borderRadius` | UI rounding style: `sharp` / `rounded` / `pill` |
+| `menuLayout` | Default menu layout for the restaurant (see Menu Layout section) |
+| `customCss` | Optional raw CSS overrides (FBQRSYS admin only — sanitized before storage) |
 
-Branding is fetched once per customer session and applied via CSS variables.
-Changes take effect immediately (no rebuild needed).
+Branding is fetched once per customer session and applied via CSS custom properties (`--color-primary`, etc.).
+Changes take effect immediately without a rebuild.
+
+---
+
+## Dynamic Menu Layouts
+
+The `end-user-system` (customer menu app) supports **4 layout modes**. Each restaurant sets a default layout, and each `MenuCategory` can independently override it.
+
+> **Design principle:** Mobile-first, one hand, zero learning curve. The customer has never seen this menu before and is probably on 4G with their thumb. Every layout must be fast, scannable, and frictionless to add items.
+
+### Layout Modes
+
+#### 1. Grid (Cafe style)
+Best for: cafes, bakeries, bubble tea, dessert shops — many visually appealing items.
+
+```
+[Food] [Drinks] [Snacks] ← sticky category tabs
+┌──────┬──────┬──────┐
+│  🎂  │  ☕  │  🥐  │
+│Cake  │Latte │Crois.│
+│ 25k  │ 28k  │ 18k  │
+├──────┼──────┼──────┤
+│  🍮  │  🧁  │  🍵  │
+│Pudd. │Muffin│Matcha│
+│ 22k  │ 20k  │ 26k  │
+└──────┴──────┴──────┘
+          [Cart: 2 items · 46k]  ← sticky
+```
+- 2-3 column grid depending on screen width
+- Image-first cards, name + price below
+- Category tabs pinned at top, scroll-spy active
+
+#### 2. Package / Bundle style
+Best for: fast casual, lunch set restaurants, value meals, family restaurants.
+
+```
+┌─────────────────────┐
+│ 🍔🍟🥤  MEAL SET A  │
+│ Burger + Fries +    │
+│ Drink               │
+│ ~~85k~~  → 65k      │
+├─────────────────────┤
+│ 🍗🍚🥗  MEAL SET B  │
+│ Chicken + Rice +    │
+│ Salad               │
+│ ~~75k~~  → 58k      │
+└─────────────────────┘
+```
+- Full-width card per item/combo
+- Prominently shows bundle contents and savings
+- Crossed-out original price for perceived value
+- Works alongside other layouts (e.g. combos use Bundle, drinks use List)
+
+#### 3. List (Kiosk style)
+Best for: kiosks, warungs, food courts, restaurants with 50+ items.
+
+```
+🔍 Search menu...
+─────────────────────
+[img] Nasi Goreng    75k
+      Fried rice w/ egg
+─────────────────────
+[img] Mie Ayam       55k
+      Chicken noodle soup
+─────────────────────
+[img] Soto Ayam      50k
+      Spiced chicken broth
+─────────────────────
+```
+- Dense, scannable, text-forward
+- Small thumbnail (48×48) on the left
+- Name + short description + price in one row
+- Search bar always visible at top
+- Category filter sidebar or horizontal chip row
+
+#### 4. Spotlight (Fine dining style)
+Best for: fine dining, omakase, small curated menus (under 20 items), premium casual.
+
+```
+┌─────────────────────┐
+│                     │
+│    [LARGE PHOTO]    │
+│                     │
+│  Wagyu Sirloin      │
+│  Grade A5 · 250g    │
+│                     │
+│  Slow-braised with  │
+│  truffle demi-glace │
+│  and seasonal veg.  │
+│                     │
+│         Rp 485.000  │
+│   [+ Add to order]  │
+└─────────────────────┘
+     ← 3 of 12 →
+```
+- One item per screen section (scroll to next)
+- Full-width hero image, large
+- Extended description, chef notes, allergen info
+- Pagination indicator ("3 of 12")
+- Emphasis on storytelling over scanning
+
+### Per-Category Layout Override
+
+`MenuCategory` has an optional `menuLayoutOverride` field. When set, that category renders in its own layout regardless of the restaurant default.
+
+**Example:** A restaurant's default is Grid.
+- Category "Signature Dishes" → override to Spotlight
+- Category "Drinks" → override to List
+- Category "Today's Sets" → override to Package
+- Category "Sides & Snacks" → uses default (Grid)
+
+### Configuration
+
+Both `Restaurant.menuLayout` and `MenuCategory.menuLayoutOverride` use the enum:
+```
+GRID | BUNDLE | LIST | SPOTLIGHT
+```
+
+Merchants configure this from the branding/menu settings page in `merchant-pos`.
+Preview renders in real-time in the settings UI before saving.
 
 ---
 
@@ -390,15 +542,41 @@ All recommendation logic runs server-side on API routes. No external AI service 
 
 ---
 
-## Customer Loyalty Points (Future Implementation)
+## Customer Loyalty — Two-Tier System
 
-Schema is designed now; UI is built later.
+Loyalty is split into two independent tiers. Schema is designed now; UI is Phase 2.
 
-- Customer can optionally create an account or log in via Google
-- Points are earned per IDR spent (rate configurable per merchant)
-- Points are redeemable for discounts at checkout
-- Loyalty history is visible in the customer's account dashboard
-- Merchants can view their top customers in merchant-pos reports
+### Tier 1: FBQR Platform Loyalty (Phase 2)
+
+Customers earn **FBQR Points** across *all* restaurants that use the FBQR platform.
+
+- Earned on every order at any FBQR-powered restaurant, regardless of which one
+- Redeemable for platform-wide rewards (discounts, free items, FBQR credits)
+- Managed by FBQRSYS — merchants have no control over this tier
+- Gives customers a reason to prefer FBQR-powered restaurants over non-FBQR ones
+- Phase 2 gamification: platform-wide leaderboards, "power diner" badges, streak rewards
+
+### Tier 2: Merchant Loyalty (opt-in per restaurant, Phase 1 schema / Phase 2 UI)
+
+Each restaurant can run its own independent loyalty program if enabled in `MerchantSettings`.
+
+- Merchant sets program name (e.g. "Sakura Points", "Kopi Emas Club"), exchange rate (IDR per point), and redemption rules
+- Points are scoped to that restaurant only — do not transfer between restaurants
+- Customer earns points on orders at that restaurant; redeems for discounts at checkout
+- Merchants view top customers and loyalty analytics in merchant-pos reports
+
+#### Gamification — Phase 2
+
+Merchant loyalty supports gamified tiers and titles:
+
+| Example | Detail |
+|---|---|
+| **Custom titles** | Frequent visitor to a Japanese restaurant earns the title "Japan-kun". A ramen regular becomes "Ramen Shogun". Titles are fully customizable by the merchant |
+| **Tier thresholds** | Bronze / Silver / Gold (or custom tier names) with different point multipliers and benefits |
+| **Streaks** | "Visited 5 weeks in a row" badge — encourages return visits |
+| **First-time visitor reward** | Auto-trigger bonus points on first order at a restaurant |
+
+Schema (`LoyaltyTier`, title field on `MerchantLoyaltyBalance`) is designed to support all of the above from day one, even if the UI ships later.
 
 ---
 
@@ -519,23 +697,25 @@ Work through this sequence, one session at a time:
 | 1 | Monorepo scaffold (Turborepo, packages, apps) | All |
 | 2 | Prisma schema + migrations + seed | `packages/database` |
 | 3 | Auth (email+password JWT, PIN auth, NextAuth) | `apps/web` |
-| 4 | RBAC middleware + permission checks | `apps/web` |
+| 4 | Dynamic RBAC — role/permission engine + middleware | `apps/web` |
 | 5 | FBQRSYS — merchant management UI | `apps/web/(fbqrsys)` |
-| 6 | Merchant branding system | `apps/web/(fbqrsys)` + `apps/menu` |
-| 7 | merchant-pos — menu & category management | `apps/web/(merchant)` |
+| 6 | Restaurant branding settings + CSS variable injection | `apps/web/(merchant)` + `apps/menu` |
+| 7 | merchant-pos — menu & category management + layout config | `apps/web/(merchant)` |
 | 8 | merchant-pos — table management + QR generation | `apps/web/(merchant)` |
 | 9 | merchant-pos — promotions | `apps/web/(merchant)` |
-| 10 | end-user-system — menu display (branded) | `apps/menu` |
-| 11 | end-user-system — cart + variants + add-ons | `apps/menu` |
-| 12 | end-user-system — pre-invoice + Midtrans checkout | `apps/menu` |
-| 13 | Invoice PDF generation + storage | shared |
-| 14 | merchant-kitchen — real-time order queue | `apps/web/(kitchen)` |
-| 15 | merchant-kitchen — item priority reordering | `apps/web/(kitchen)` |
-| 16 | merchant-pos — reports + analytics | `apps/web/(merchant)` |
-| 17 | AI recommendation engine | `apps/menu` + API |
-| 18 | Audit log — logging + viewer UI | All |
-| 19 | Customer loyalty (schema ready; UI here) | `apps/menu` |
-| 20 | Remaining backlog items | TBD |
+| 10 | end-user-system — Grid layout (base layout, branded) | `apps/menu` |
+| 11 | end-user-system — List, Bundle, Spotlight layouts | `apps/menu` |
+| 12 | end-user-system — cart + variants + add-ons | `apps/menu` |
+| 13 | end-user-system — pre-invoice + Midtrans checkout | `apps/menu` |
+| 14 | Invoice PDF generation + storage | shared |
+| 15 | merchant-kitchen — real-time order queue | `apps/web/(kitchen)` |
+| 16 | merchant-kitchen — item priority reordering | `apps/web/(kitchen)` |
+| 17 | merchant-pos — reports + analytics | `apps/web/(merchant)` |
+| 18 | AI recommendation engine | `apps/menu` + API |
+| 19 | Audit log — logging + viewer UI | All |
+| 20 | Merchant loyalty program + customer account | `apps/menu` + `apps/web/(merchant)` |
+| 21 | Platform loyalty + gamification (Phase 2) | All |
+| 22 | Remaining backlog items | TBD |
 
 ---
 
