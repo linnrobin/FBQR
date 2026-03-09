@@ -37,9 +37,12 @@ It enables customers to scan a QR code at their table, browse a digital menu, pl
 | **ORM** | [Prisma](https://www.prisma.io/) | Type-safe DB access, easy migrations |
 | **Real-time** | [Supabase Realtime](https://supabase.com/docs/guides/realtime) | Live order push to kitchen display |
 | **Auth** | [NextAuth.js](https://next-auth.js.org/) + JWT | Email/password for owners, PIN for staff |
-| **Payment** | [Midtrans](https://midtrans.com/) | Indonesia's lowest-fee gateway (QRIS 0.7%) |
+| **Payment (customer)** | [Midtrans](https://midtrans.com/) | Indonesia's lowest-fee gateway (QRIS 0.7%) |
+| **Payment (merchant billing)** | Midtrans or bank transfer | FBQR collects subscription fees from merchants |
 | **QR Codes** | [`qrcode`](https://www.npmjs.com/package/qrcode) npm package | Generate per-table QR codes |
 | **PDF** | [`@react-pdf/renderer`](https://react-pdf.org/) | Invoice and pre-invoice generation |
+| **Email** | [Resend](https://resend.com/) | Transactional email — billing reminders, invoices, notifications |
+| **Scheduled Jobs** | [Vercel Cron](https://vercel.com/docs/cron-jobs) | Daily billing checks, auto-lock overdue accounts |
 | **File Storage** | Supabase Storage | Menu item images, restaurant logos, invoice PDFs |
 | **Hosting** | [Vercel](https://vercel.com/) (Next.js) + [Supabase](https://supabase.com/) | Generous free tiers, auto-scaling |
 
@@ -133,9 +136,11 @@ UserRole     ← Assignment of a Role to a Staff member
 | `merchants:read` | View merchant list and details |
 | `merchants:update` | Edit merchant details and settings |
 | `merchants:delete` | Deactivate or delete merchant accounts |
+| `merchants:suspend` | Manually lock or unlock a merchant account |
 | `reports:read` | View platform-level reports |
 | `settings:manage` | Modify platform-level settings |
 | `admins:manage` | Create/manage other FBQRSYS staff accounts |
+| `billing:manage` | Manage subscription plans, view/edit merchant billing, send invoices |
 
 #### FBQRSYS Role Templates (suggestions only — owner can rename/modify)
 
@@ -143,6 +148,7 @@ UserRole     ← Assignment of a Role to a Staff member
 |---|---|
 | Platform Owner | All |
 | Merchant Manager | `merchants:create`, `merchants:read`, `merchants:update` |
+| Billing Admin | `billing:manage`, `merchants:read`, `merchants:suspend` |
 | Analyst | `reports:read`, `merchants:read` |
 | Support Staff | `merchants:read` |
 
@@ -163,6 +169,7 @@ UserRole     ← Assignment of a Role to a Staff member
 | `branding:manage` | Edit restaurant branding (logo, colors, layout) |
 | `invoices:read` | View and download invoices |
 | `loyalty:manage` | Configure merchant loyalty program |
+| `billing:read` | View own FBQR subscription invoices and billing history |
 
 #### Merchant Role Templates (suggestions only — owner can rename/modify)
 
@@ -210,47 +217,324 @@ Every state-changing action is recorded in the `AuditLog` table.
 ## Key Data Models (Prisma Schema)
 
 ```
-SystemAdmin          ← FBQRSYS owner account (email + password, full platform access)
+── PLATFORM ──────────────────────────────────────────────────────────
+SystemAdmin          ← FBQRSYS admin accounts (owner + staff with dynamic roles)
 SystemRole           ← User-created FBQRSYS roles (name, description, [permissions])
-SystemRoleAssignment ← Links SystemAdmin to a SystemRole
-SystemPermission     ← Enum of all platform-level permission keys (system-defined)
+SystemRoleAssignment ← Links SystemAdmin → SystemRole
+SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
 
+── MERCHANT ──────────────────────────────────────────────────────────
 Merchant             ← Restaurant owner account (email + hashed password)
+  │  status: TRIAL | ACTIVE | SUSPENDED | CANCELLED
+  │  trialEndsAt, suspendedAt, suspendedReason, suspendedByAdminId
+  │
+  ├── MerchantSubscription   ← Active plan (planId, cycle, currentPeriodEnd, autoRenew)
+  │     └── MerchantBillingInvoice ← FBQR → merchant invoices (NOT customer invoices)
+  │                                   (invoiceNumber, amount, dueAt, paidAt, pdfUrl)
+  │
   └── Restaurant     ← The restaurant entity
         ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
-        ├── MerchantSettings     ← Feature flags (AI, loyalty, tax, service charge, etc.)
+        ├── MerchantSettings     ← Feature flags, payment methods, tax, service charge
+        ├── MerchantRole         ← User-created staff roles ([permissions])
+        ├── MerchantRoleAssignment ← Links Staff → MerchantRole
         ├── Branch               ← Physical locations
-        │     └── Table          ← Each table with unique QR token + status
-        ├── MenuCategory         ← menuLayoutOverride per category (optional)
-        │     └── MenuItem       ← Price, description, image, availability
-        │           └── MenuItemVariant   ← e.g. small/medium/large, spice level
-        │           └── MenuItemAddon     ← e.g. extra cheese, no onion
+        │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/CLOSED)
+        ├── MenuCategory         ← layout override, availableFrom/availableTo (time window)
+        │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
+        │           │              estimatedPrepTime, stockCount, isAvailable
+        │           ├── MenuItemVariant   ← e.g. Small/Medium/Large + price delta
+        │           └── MenuItemAddon     ← e.g. Extra Cheese (+5k), No Onion (0)
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
-        ├── Staff                ← Staff accounts (PIN auth, linked to one or more Roles)
-        ├── MerchantRole         ← User-created roles (name, description, [permissions])
-        └── MerchantRoleAssignment ← Links Staff to a MerchantRole
+        └── Staff                ← Staff accounts (PIN auth)
 
-Order                ← Created when customer submits cart
-  ├── OrderItem      ← Line items (MenuItem + quantity + price snapshot + kitchenPriority)
-  ├── PreInvoice     ← Generated at checkout, before payment
-  ├── Invoice        ← Generated after payment confirmed
-  └── Payment        ← Midtrans transaction record
+── ORDERS ────────────────────────────────────────────────────────────
+Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED
+  ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority
+  ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
+  ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
+  ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
+  └── Payment        ← Midtrans transaction record (method, amount, status, webhookData)
 
-Customer             ← Optional registered customer account
-  ├── PlatformLoyaltyBalance  ← FBQR platform-wide points (Phase 2)
-  └── MerchantLoyaltyBalance  ← Per-restaurant points (one per enrolled merchant)
+── CUSTOMERS ─────────────────────────────────────────────────────────
+Customer             ← Optional registered account (email / Google OAuth)
+  ├── PlatformLoyaltyBalance  ← Cross-restaurant FBQR Points (Phase 2)
+  └── MerchantLoyaltyBalance  ← Per-restaurant points + earned title
 
-MerchantLoyaltyProgram ← Per-restaurant loyalty configuration (if enabled)
-  └── LoyaltyTier    ← Tiers with thresholds, titles, benefits (Phase 2 gamification)
+CustomerSession      ← Scoped to Restaurant + Table + QR token
+  └── status: ACTIVE | COMPLETED | EXPIRED
 
-CustomerSession      ← Anonymous or authenticated session scoped to Restaurant + Table
+MerchantLoyaltyProgram ← Per-restaurant loyalty config (name, IDR per point, redemption rate)
+  └── LoyaltyTier    ← Tier name, threshold, multiplier, custom title, badge (Phase 2)
 
-AuditLog             ← Immutable record of all state-changing actions
+── PLATFORM ──────────────────────────────────────────────────────────
+AuditLog             ← Immutable. actor, action, entity, oldValue, newValue, IP, timestamp
 ```
+
+### Order Status Lifecycle
+
+```
+PENDING     → customer submitted cart, payment not yet initiated
+CONFIRMED   → payment successful (Midtrans webhook received)
+PREPARING   → kitchen acknowledged and started preparing
+READY       → all items marked ready by kitchen
+COMPLETED   → order closed (customer received food / table cleared)
+CANCELLED   → cancelled before or during preparation (triggers refund flow if CONFIRMED)
+```
+
+### Merchant Account Status
+
+```
+TRIAL       → new account, subscription not yet purchased; limited features
+ACTIVE      → subscription current and paid
+SUSPENDED   → overdue payment (auto) or manual lock by FBQRSYS admin
+CANCELLED   → merchant terminated; data retained for reporting
+```
+
+When status = `SUSPENDED`:
+- `merchant-pos` login blocked (shows suspension notice with contact info)
+- `merchant-kitchen` blocked
+- Customer scanning a table QR sees: "This restaurant is temporarily unavailable. Please ask staff for assistance."
+- `end-user-system` does NOT expose any menu or ordering capability
+
+---
+
+## Merchant Subscription & Billing (FBQRSYS → Merchant)
+
+> **Distinct from customer invoices.** `MerchantBillingInvoice` is FBQR billing the merchant for their subscription. `Invoice` is the merchant billing their customer for a meal. These are completely separate models, flows, and PDF templates.
+
+### Subscription Plans
+
+Plans are configurable from FBQRSYS (not hardcoded in schema — stored in `SubscriptionPlan`). Example structure:
+
+| Tier | Typical Limits | Billing |
+|---|---|---|
+| Trial | Limited tables, basic features, no branding | Free, time-limited (e.g. 14 days) |
+| Starter | 1 branch, up to 10 tables, no AI, no loyalty | Monthly or yearly |
+| Pro | Multiple branches, unlimited tables, full AI, full branding, loyalty | Monthly or yearly |
+| Enterprise | Custom limits, dedicated support, custom contract | Custom |
+
+> Exact tier names, prices, and feature limits are set by the FBQRSYS owner in the admin panel. Do not hardcode plan details.
+
+### Merchant Onboarding Flow
+
+```
+FBQRSYS admin creates Merchant account (email + temp password)
+    │
+    ▼
+Merchant receives email → sets own password → logs in (status: TRIAL)
+    │
+    ▼
+Merchant sees trial banner + feature restrictions
+    │
+    ▼
+Merchant chooses a plan → pays → status → ACTIVE
+    │
+    OR FBQRSYS admin manually assigns a plan (for enterprise / negotiated deals)
+```
+
+> **Self-service vs admin-assisted:** Trial signup can be self-service (merchant registers themselves) or admin-created. Both paths must be supported.
+
+### Billing Cycle & Invoice Flow
+
+```
+Subscription period starts
+    │
+    ▼
+7 days before renewal → email to merchant: "Your subscription renews on {date}"
+    │
+    ▼
+3 days before → reminder email
+    │
+    ▼
+Renewal date → payment attempted (auto-charge via saved method, or manual invoice)
+    │
+    ├── Payment SUCCESS → generate MerchantBillingInvoice (PDF) → email to merchant → status: ACTIVE
+    │
+    └── Payment FAILED → grace period (configurable, e.g. 3 days)
+            │
+            ▼
+        Grace period email: "Payment failed. Please update your payment method."
+            │
+            ├── Merchant pays → ACTIVE
+            │
+            └── Grace period expired → status: SUSPENDED (auto-lock, logged in AuditLog)
+```
+
+### FBQRSYS Admin Controls (Billing)
+
+Available to users with `billing:manage` + `merchants:suspend` permissions:
+
+| Action | Description |
+|---|---|
+| View all merchant subscriptions | Filter by status, plan, renewal date |
+| Manually suspend | Lock a merchant account regardless of billing status |
+| Manually unsuspend / override | Unlock a suspended merchant (e.g. dispute resolution) |
+| Send billing invoice | Manually trigger invoice generation and email |
+| Extend trial | Give a merchant more trial time |
+| Change plan | Move merchant to a different plan |
+| View billing history | All `MerchantBillingInvoice` records for a merchant |
+| Generate platform revenue report | Total MRR, churn, new activations, by plan tier |
+
+### MerchantBillingInvoice Format
+
+```
+FBQR Invoice
+Invoice #: FBQR-{YYYYMM}-{merchantId}
+Date: {issueDate}
+Due: {dueDate}
+
+Bill To:
+  {merchantName}
+  {merchantEmail}
+
+Description: FBQR {PlanName} Subscription — {period}
+Amount: Rp {amount}
+Tax (PPN 11%): Rp {tax}
+Total: Rp {total}
+
+Payment: {method} — {status}
+```
+
+### Subscription Status in merchant-pos
+
+Merchant owners (with `billing:read`) see:
+- Current plan name and renewal date in their settings
+- Download all their FBQR subscription invoices
+- Upgrade/downgrade plan button (future: self-service)
+- Payment method management (future: self-service)
+
+---
+
+## End-User System — Complete QR Flow
+
+### 1. Customer scans QR
+
+```
+Customer's phone camera scans table QR code
+    │
+    ▼
+URL decoded: https://menu.fbqr.app/{restaurantId}/{tableId}?token={uuid}
+    │
+    ▼
+Server validates:
+  - Token matches table record
+  - Restaurant status = ACTIVE (not SUSPENDED or CANCELLED)
+  - Table status ≠ CLOSED
+    │
+    ├── Invalid/expired token → show error: "This QR code is invalid. Please ask staff."
+    ├── Restaurant SUSPENDED → show: "This restaurant is temporarily unavailable."
+    └── Valid → create or resume CustomerSession → load branded menu
+```
+
+### 2. Menu experience
+
+- Restaurant branding (colors, logo, font) applied via CSS variables on first load
+- Menu layout rendered per restaurant default + per-category overrides
+- **Dietary / allergen badges** shown per item: Halal ✅, Vegetarian 🌿, Vegan 🌱, Contains Nuts ⚠️, Dairy ⚠️, Spicy 🌶️
+- **Out-of-stock items** shown greyed out with "Habis" (sold out) label — not orderable
+- **AI recommendations** shown if enabled: bestsellers highlighted, time-appropriate items surfaced
+- **Category time windows**: categories with `availableFrom`/`availableTo` only appear during their window (e.g. "Sarapan" only shows 06:00–11:00)
+- Search bar available in List layout and optionally in others
+- Estimated prep time shown per item (optional, if merchant sets it)
+
+### 3. Building the cart
+
+- Tap item → item detail modal (image, description, variants, add-ons, allergens)
+- Select variant (required if variants exist) → select add-ons (optional)
+- Add to cart → sticky cart bar updates at bottom of screen
+- Can adjust quantities in cart or remove items
+- Upsell prompt shown if `aiUpsell` enabled ("Tambah minuman?" at appropriate moment)
+
+### 4. Checkout
+
+- Customer reviews cart → pre-invoice shown (itemized + tax + service charge + total)
+- Optional: customer logs in / creates account to earn loyalty points
+- If merchant loyalty enabled and customer is logged in: redeemable points shown + option to apply discount
+- Select payment method (merchant-configured: QRIS default, others optional)
+- QRIS payment: Midtrans generates QR → customer scans with e-wallet
+- Non-QRIS: redirect to Midtrans hosted payment page
+
+### 5. Post-payment (customer view)
+
+```
+Payment confirmed (Midtrans webhook)
+    │
+    ▼
+Customer sees: "Pesanan diterima! 🎉"
+Order tracking screen shows:
+  ├── Order summary (items ordered)
+  ├── Live status indicator: CONFIRMED → PREPARING → READY
+  ├── Invoice download link (PDF)
+  └── [Call Waiter] button (always available)
+    │
+    ▼
+Status updates pushed via Supabase Realtime — customer page updates without refresh
+    │
+    ▼
+Status = READY → banner: "Pesanan siap! Silakan ambil." or "Pelayan akan segera mengantarkan."
+    │
+    ▼
+Customer can [Add More Items] → new items go to same table session, create a new Order record
+```
+
+### 6. "Call Waiter" feature
+
+- Always visible button on the menu and order tracking screen
+- Creates a `WaiterRequest` record (restaurantId, tableId, message, requestedAt)
+- Pushes real-time notification to merchant-pos floor view
+- Staff marks request as resolved
+- Logged in AuditLog
+
+### 7. Multi-order sessions
+
+- Customers can place multiple orders per table session (e.g. order mains, then later order dessert)
+- Each "Add More Items" creates a new `Order` linked to the same `CustomerSession`
+- All orders from the same session are visible together on the order tracking screen
+- Kitchen sees all orders grouped by table
+
+### 8. Session end
+
+- FBQRSYS or merchant-pos can close a table session (e.g. after customer leaves)
+- Table status reverts to AVAILABLE
+- CustomerSession status → COMPLETED
+- Loyalty points (if applicable) are credited at session close
 
 ---
 
 ## Order Flow
+
+```
+[CUSTOMER]
+Scans QR → menu loads (branded, layout configured) → builds cart
+    │ AI recommendations shown (bestsellers, upsell, personalized, time-based)
+    ▼
+Item detail → select variant + add-ons → add to cart
+    │
+    ▼
+Pre-invoice (itemized + tax + service charge) → optional loyalty redemption
+    │
+    ▼
+Payment via Midtrans QRIS (or other method if configured)
+    │
+    ▼
+[FBQR API]
+Midtrans webhook → Order status → CONFIRMED → Invoice PDF generated
+
+[KITCHEN]
+Supabase Realtime push → order appears on merchant-kitchen display
+Kitchen reorders item priority → marks PREPARING → marks READY
+
+[CUSTOMER]
+Live status updates on order tracking screen → PREPARING → READY notification
+    │
+    ▼
+Customer may [Add More Items] → new Order → same flow
+Customer may [Call Waiter] → WaiterRequest created → notified on merchant-pos
+
+[MERCHANT-POS]
+Real-time order status visible → reports updated
+Loyalty points credited to customer (if registered + loyalty enabled)
+```
 
 ```
 Customer scans QR (encoded: restaurantId + tableId + token)
@@ -500,6 +784,39 @@ Configurable per restaurant in `MerchantSettings`:
 
 ---
 
+## Menu Item — Full Field Specification
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Display name |
+| `description` | string | Short description (shown in item detail) |
+| `price` | int | IDR, no decimals |
+| `imageUrl` | string | Supabase Storage path |
+| `isAvailable` | bool | Soft toggle — hides from menu without deleting |
+| `stockCount` | int? | If set, decrements per order; auto-marks unavailable at 0 |
+| `estimatedPrepTime` | int? | Minutes — shown to customer ("~15 min") |
+| `isHalal` | bool | Shows Halal badge |
+| `isVegetarian` | bool | Shows Vegetarian badge |
+| `isVegan` | bool | Shows Vegan badge |
+| `allergens` | string[] | e.g. `["nuts", "dairy", "gluten"]` — shown as warning badges |
+| `spiceLevel` | int? | 0 = none, 1 = mild, 2 = medium, 3 = hot — shown as 🌶️ count |
+| `sortOrder` | int | Display order within category |
+| `deletedAt` | datetime? | Soft delete — preserved in order history |
+
+## Menu Category — Full Field Specification
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Category name |
+| `imageUrl` | string? | Optional category header image |
+| `sortOrder` | int | Display order |
+| `menuLayoutOverride` | enum? | `GRID` / `BUNDLE` / `LIST` / `SPOTLIGHT` — overrides restaurant default |
+| `availableFrom` | time? | If set, category only shows after this time (e.g. `06:00`) |
+| `availableTo` | time? | If set, category only shows before this time (e.g. `11:00`) |
+| `isActive` | bool | Toggle entire category without deleting |
+
+**Time-based availability example:** A "Sarapan" category with `availableFrom: 06:00`, `availableTo: 11:00` is only shown to customers between 6am and 11am WIB. Outside that window, the category is hidden entirely from the menu.
+
 ## Menu Item Variants & Add-ons
 
 Each `MenuItem` can have:
@@ -698,24 +1015,26 @@ Work through this sequence, one session at a time:
 | 2 | Prisma schema + migrations + seed | `packages/database` |
 | 3 | Auth (email+password JWT, PIN auth, NextAuth) | `apps/web` |
 | 4 | Dynamic RBAC — role/permission engine + middleware | `apps/web` |
-| 5 | FBQRSYS — merchant management UI | `apps/web/(fbqrsys)` |
-| 6 | Restaurant branding settings + CSS variable injection | `apps/web/(merchant)` + `apps/menu` |
-| 7 | merchant-pos — menu & category management + layout config | `apps/web/(merchant)` |
-| 8 | merchant-pos — table management + QR generation | `apps/web/(merchant)` |
-| 9 | merchant-pos — promotions | `apps/web/(merchant)` |
-| 10 | end-user-system — Grid layout (base layout, branded) | `apps/menu` |
-| 11 | end-user-system — List, Bundle, Spotlight layouts | `apps/menu` |
-| 12 | end-user-system — cart + variants + add-ons | `apps/menu` |
-| 13 | end-user-system — pre-invoice + Midtrans checkout | `apps/menu` |
-| 14 | Invoice PDF generation + storage | shared |
-| 15 | merchant-kitchen — real-time order queue | `apps/web/(kitchen)` |
-| 16 | merchant-kitchen — item priority reordering | `apps/web/(kitchen)` |
-| 17 | merchant-pos — reports + analytics | `apps/web/(merchant)` |
-| 18 | AI recommendation engine | `apps/menu` + API |
-| 19 | Audit log — logging + viewer UI | All |
-| 20 | Merchant loyalty program + customer account | `apps/menu` + `apps/web/(merchant)` |
-| 21 | Platform loyalty + gamification (Phase 2) | All |
-| 22 | Remaining backlog items | TBD |
+| 5 | FBQRSYS — merchant management UI (create, view, suspend) | `apps/web/(fbqrsys)` |
+| 6 | Merchant subscription & billing — plans, invoices, auto-lock, email reminders | `apps/web/(fbqrsys)` |
+| 7 | Merchant onboarding — trial flow, plan selection | `apps/web/(merchant)` |
+| 8 | Restaurant branding settings + CSS variable injection | `apps/web/(merchant)` + `apps/menu` |
+| 9 | merchant-pos — menu & category management + layout + allergens | `apps/web/(merchant)` |
+| 10 | merchant-pos — table management + QR generation + floor map | `apps/web/(merchant)` |
+| 11 | merchant-pos — promotions | `apps/web/(merchant)` |
+| 12 | end-user-system — QR validation + branded menu (Grid layout) | `apps/menu` |
+| 13 | end-user-system — List, Bundle, Spotlight layouts | `apps/menu` |
+| 14 | end-user-system — item detail modal, variants, add-ons, allergens | `apps/menu` |
+| 15 | end-user-system — cart + pre-invoice + Midtrans checkout | `apps/menu` |
+| 16 | end-user-system — order tracking screen + real-time status + Call Waiter | `apps/menu` |
+| 17 | Invoice PDF generation + storage | shared |
+| 18 | merchant-kitchen — real-time order queue + item priority reordering | `apps/web/(kitchen)` |
+| 19 | merchant-pos — reports + analytics + export | `apps/web/(merchant)` |
+| 20 | AI recommendation engine | `apps/menu` + API |
+| 21 | Audit log — logging middleware + viewer UI | All |
+| 22 | Merchant loyalty program + customer account | `apps/menu` + `apps/web/(merchant)` |
+| 23 | Platform loyalty + gamification (Phase 2) | All |
+| 24 | Remaining backlog items | TBD |
 
 ---
 
@@ -779,14 +1098,21 @@ SUPABASE_SERVICE_ROLE_KEY=
 NEXTAUTH_URL=
 NEXTAUTH_SECRET=
 
-# Midtrans
+# Midtrans (customer payments + merchant billing)
 MIDTRANS_SERVER_KEY=
 MIDTRANS_CLIENT_KEY=
 MIDTRANS_IS_PRODUCTION=false
 
+# Email (Resend)
+RESEND_API_KEY=
+EMAIL_FROM=noreply@fbqr.app
+
 # App URLs
 NEXT_PUBLIC_MENU_APP_URL=     # URL of apps/menu (for QR code generation)
 NEXT_PUBLIC_WEB_APP_URL=      # URL of apps/web
+
+# Cron secret (for Vercel Cron Jobs — billing checks, auto-lock)
+CRON_SECRET=
 ```
 
 ---
