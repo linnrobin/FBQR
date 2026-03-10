@@ -1222,7 +1222,7 @@ FBQRSYS admin reviews the request
 ```
 
 FBQRSYS admin controls:
-- Whether the merchant has multi-restaurant capability (`Merchant.multiRestaurantEnabled: bool`)
+- Whether the merchant has multi-restaurant capability (`Merchant.multiBranchEnabled: bool`)
 - How many restaurants / branches the merchant is allowed (`Merchant.restaurantLimit: int`, driven by their plan)
 - Which plan tier the new restaurant is on (each restaurant billed separately, or chain plan covers all)
 
@@ -1244,7 +1244,7 @@ FBQRSYS admin controls:
 
 | Model | Field | Notes |
 |---|---|---|
-| `Merchant` | `multiRestaurantEnabled` | bool — set by FBQRSYS admin only |
+| `Merchant` | `multiBranchEnabled` | bool — set by FBQRSYS admin only |
 | `Merchant` | `restaurantLimit` | int — max restaurants allowed under this merchant account |
 | `Restaurant` | `merchantId` | FK to owning Merchant |
 | `Branch` | `restaurantId` | FK to owning Restaurant |
