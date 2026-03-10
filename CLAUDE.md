@@ -11,20 +11,23 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 1.5
-Current phase  : Phase 0 — Requirements complete. Fifth architecture review fixes applied. No code written yet.
-Last completed : Fifth pre-code architecture review (v1.4 → v1.5): fixed 5 issues (DIRTY opt-in
-                 gate, tax at Order level + OrderEvent.cancellationReason, late webhook table check,
-                 PIN session timeout, kitchen gate = Payment.status); added order expiry cron spec,
-                 idempotencyKey on Order, WaiterRequest role routing, split bill + NPWP + offline
-                 fallback to backlog; ADR-018 expanded with v1.4 rebuttals (13 items).
+Version        : 1.6
+Current phase  : Phase 0 — Requirements complete. Sixth architecture review fixes applied. No code written yet.
+Last completed : Sixth pre-code architecture review (v1.5 → v1.6): fixed 9 issues (cashier reject
+                 in PENDING→CANCELLED transition; REFUNDED/COMPLETED order decoupling; stockCount
+                 deduction moved from PENDING to CONFIRMED; PENDING_CASH excluded from expiry cron;
+                 expiry cron rewritten as atomic UPDATE...RETURNING; iOS Web Push PWA limitation
+                 documented; paymentTimeoutMinutes synced to Midtrans custom_expiry; autoResetAvailability
+                 added to MenuItem; WaiterRequest.resolvedAt + auto-resolve on session close);
+                 ADR-018 expanded with v1.5 rebuttals (9 items).
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining items
                  are Phase 2 concerns — all Phase 1 blockers resolved)
 Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
                  merchant first-time onboarding guided setup flow — not yet documented;
-                 refund flow full detail — deferred to Step 15 and Step 19
+                 refund flow full detail — deferred to Step 15 and Step 19;
+                 end-of-day PENDING_CASH cleanup (abandoned cash orders) — not yet specified
 ```
 
 ---
@@ -444,6 +447,11 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │     cancellationReason: CUSTOMER_REQUEST | PAYMENT_FAILED | MERCHANT_CANCEL | SYSTEM_EXPIRED | REFUND
   ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
   │                    branchId (FK), tableId (FK), notifyRoleId (FK? nullable — null = all branch staff)
+  │                    resolvedAt (datetime? — null = open; set when staff marks resolved or session closes)
+  │                    Auto-resolve rule: when a CustomerSession moves to COMPLETED or EXPIRED, all
+  │                    open WaiterRequests for that session's tableId are automatically resolved
+  │                    (resolvedAt = session close time, resolver = SYSTEM). This prevents stale
+  │                    waiter alerts cluttering the merchant-pos dashboard after a table turns over.
   ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
   ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
@@ -497,7 +505,7 @@ Only these transitions are permitted. Any other transition must be rejected by t
 | From | To | Who can trigger |
 |---|---|---|
 | `PENDING` | `CONFIRMED` | System (Midtrans webhook) or cashier (cash confirm) |
-| `PENDING` | `CANCELLED` | Customer or system (payment failed) |
+| `PENDING` | `CANCELLED` | Customer; system (payment failed); or staff (cashier rejects a cash order) |
 | `PENDING` | `EXPIRED` | System (payment timeout cron) |
 | `CONFIRMED` | `PREPARING` | Kitchen staff |
 | `CONFIRMED` | `CANCELLED` | Merchant owner / supervisor (triggers refund) |
@@ -506,7 +514,9 @@ Only these transitions are permitted. Any other transition must be rejected by t
 | `READY` | `COMPLETED` | Staff or system (after configurable hold period) |
 | `EXPIRED` | `CONFIRMED` | System only (late webhook revival within window) |
 
-All other transitions (e.g. `COMPLETED → CANCELLED`, `READY → PREPARING`, `EXPIRED → CANCELLED`) are invalid and must return an error. The `OrderEvent` log records every transition with actor and timestamp.
+All other transitions (e.g. `READY → PREPARING`, `EXPIRED → CANCELLED`) are invalid and must return an error. The `OrderEvent` log records every transition with actor and timestamp.
+
+> **Post-COMPLETED refunds:** A `COMPLETED` order is terminal — its `Order.status` never changes. If a refund is issued after completion (e.g. customer complained, merchant goodwill refund), only `Payment.status → REFUNDED` changes. The `Order` row retains `COMPLETED`. A credit note is generated and `AuditLog` records the `REFUND` action. This keeps historical order counts accurate and analytics unaffected.
 
 Definitions:
 ```
@@ -545,7 +555,8 @@ EXPIRED     → PENDING order where no payment confirmation arrived within timeo
 | `SUCCESS` | `CONFIRMED` | Midtrans webhook verified — pushed to kitchen |
 | `FAILED` | `CANCELLED` | Payment declined; customer notified; `cancellationReason: PAYMENT_FAILED` |
 | `EXPIRED` | `EXPIRED` | No confirmation within timeout window; terminal state |
-| `REFUNDED` | `CANCELLED` | Post-confirmation cancellation; triggers refund flow; `cancellationReason: REFUND` |
+| `REFUNDED` | `CANCELLED` (if order was in CONFIRMED/PREPARING/READY) | Pre-completion refund: triggers refund flow; `cancellationReason: REFUND` |
+| `REFUNDED` | `COMPLETED` (unchanged) | Post-completion refund: `Order.status` stays `COMPLETED`; only `Payment.status → REFUNDED`; credit note generated; `AuditLog` records `REFUND` |
 
 > **Kitchen visibility gate:** An order is pushed to kitchen when and only when `Payment.status → SUCCESS` (digital) or cashier taps [Confirm] (`PENDING_CASH → SUCCESS`). `Order.status` alone is not the gate — two different `PENDING` orders (Midtrans vs cash) exist simultaneously but only the one confirmed moves to kitchen. Never use `Order.status = PENDING` as a kitchen display filter.
 >
@@ -781,9 +792,10 @@ Customer can [Add More Items] → new items go to same table session, create a n
 ### 6. "Call Waiter" feature
 
 - Always visible button on the menu and order tracking screen
-- Creates a `WaiterRequest` record (restaurantId, tableId, message, requestedAt)
+- Creates a `WaiterRequest` record (restaurantId, tableId, message, requestedAt, resolvedAt: null)
 - Pushes real-time notification to merchant-pos floor view
-- Staff marks request as resolved
+- Staff marks request as resolved (`resolvedAt` set to current time)
+- Auto-resolved when the CustomerSession closes (`resolvedAt` set by SYSTEM)
 - Logged in AuditLog
 
 ### 7. Multi-order sessions
@@ -1268,7 +1280,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `serviceChargeRate` | `0.00` | Optional service charge (e.g. 5–10%) |
 | `serviceChargeLabel` | `"Service"` | Display label |
 | `pricesIncludeTax` | `false` | If true, displayed prices are tax-inclusive |
-| `paymentTimeoutMinutes` | `15` | Minutes before a PENDING order auto-expires; configurable per merchant |
+| `paymentTimeoutMinutes` | `15` | Minutes before a PENDING order auto-expires; configurable per merchant. This value is also passed as `custom_expiry` in the Midtrans `snap_token` request so Midtrans independently expires the payment page at the same time — reducing late webhook occurrences to true edge cases. |
 | `lateWebhookWindowMinutes` | `60` | Minutes after expiry during which a SUCCESS webhook revives the order; beyond this auto-refund |
 | `paymentMode` | `PAY_FIRST` | `PAY_FIRST` or `PAY_AT_CASHIER` — controls whether Midtrans is required |
 | `maxPendingOrders` | `3` | Max concurrent PENDING orders per CustomerSession |
@@ -1287,7 +1299,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `price` | int | IDR, no decimals |
 | `imageUrl` | string | Supabase Storage path |
 | `isAvailable` | bool | Soft toggle — hides from menu without deleting |
-| `stockCount` | int? | If set, decrements per order; auto-marks unavailable at 0. Decrement uses a DB-level atomic operation (`UPDATE ... WHERE stockCount > 0`) to prevent overselling under concurrent orders. If the decrement fails (stock = 0), the order item is rejected and the customer sees "Item is sold out" before payment. |
+| `stockCount` | int? | If set, decrements when `Order → CONFIRMED` (not at PENDING creation). Deducting at PENDING would allow an attacker to deplete stock by opening many carts without paying. Decrement uses a DB-level atomic operation (`UPDATE ... WHERE stockCount > 0`) to prevent overselling under concurrent confirmations. If the atomic decrement fails (stock already 0), the order is auto-refunded via Midtrans Refund API and the customer is notified "Item is now sold out." |
 | `estimatedPrepTime` | int? | Minutes — shown to customer ("~15 min") |
 | `isHalal` | bool | Shows Halal badge |
 | `isVegetarian` | bool | Shows Vegetarian badge |
@@ -1295,6 +1307,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `allergens` | string[] | e.g. `["nuts", "dairy", "gluten"]` — shown as warning badges |
 | `spiceLevel` | int? | 0 = none, 1 = mild, 2 = medium, 3 = hot — shown as 🌶️ count |
 | `sortOrder` | int | Display order within category |
+| `autoResetAvailability` | bool | Default `false`. If `true`, a midnight cron job automatically sets `isAvailable = true` for this item at the start of each day. Useful for daily-stock items (e.g. "Today's Special" marked unavailable when sold out; auto-resets overnight). Items with `stockCount` set do NOT need this — their availability is controlled by stock depletion. |
 | `deletedAt` | datetime? | Soft delete — preserved in order history |
 
 ## Menu Category — Full Field Specification
@@ -1684,7 +1697,8 @@ Permissions, subscriptions, and audit logs are **restaurant-scoped**, not branch
 ### Implementation
 
 - **In-app sound:** Web Audio API plays an alert sound when a new `Order` record is created (Supabase Realtime subscription)
-- **Browser push notification:** Web Push API — merchant-pos asks for notification permission on first login; sends push even when tab is not in focus
+- **Browser push notification:** Web Push API — merchant-pos asks for notification permission on first login; sends push even when tab is not in focus.
+  > **iOS limitation:** Web Push requires the PWA to be installed to the Home Screen on iOS (Safari 16.4+). Standard Safari browser tabs on iOS do NOT support Web Push — the notification permission API is unavailable. On first login, detect iOS Safari (`/iPad|iPhone|iPod/.test(navigator.userAgent)`) and show a banner: "Install this app to your Home Screen to receive order notifications." This is a platform constraint, not an FBQR limitation. Android Chrome supports Web Push natively with no installation required.
 - **WhatsApp fallback (Phase 2):** If merchant has WhatsApp Business configured, send new order summary via WA message
 
 ### Realtime reliability
@@ -1716,14 +1730,21 @@ A separate scheduled job (Vercel Cron, runs every minute) handles PENDING order 
 
 ```
 Every 1 minute:
-  SELECT * FROM Order WHERE status = 'PENDING'
-    AND createdAt < NOW() - INTERVAL '${paymentTimeoutMinutes} minutes'
-  FOR EACH expired order:
-    SET Order.status = 'EXPIRED'
-    SET Payment.status = 'EXPIRED'
+  -- Atomic batch update — prevents overlapping cron invocations from double-expiring
+  UPDATE "Order"
+    SET status = 'EXPIRED'
+    WHERE status = 'PENDING'
+      AND "paymentMode" != 'PAY_AT_CASHIER'   -- PENDING_CASH orders are NOT expired by this cron
+      AND createdAt < NOW() - INTERVAL '${paymentTimeoutMinutes} minutes'
+    RETURNING id
+
+  FOR EACH returned id:
+    UPDATE "Payment" SET status = 'EXPIRED' WHERE orderId = id
     Log OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
-    Release stockCount reservation (if applicable)
+    -- Note: stockCount is deducted at CONFIRMED, not PENDING, so no stock release is needed here
 ```
+
+> **Why PENDING_CASH is excluded:** Cash orders waiting for cashier confirmation do not have a Midtrans timeout. Their lifecycle is: either the cashier confirms (same shift) or rejects (explicit action). The `paymentTimeoutMinutes` setting applies only to digital (Midtrans) payments. Cash orders that are abandoned should be cleared via cashier rejection or an end-of-day manual cleanup — not by the digital expiry cron.
 
 This is distinct from the reconciliation job. Expiry is local; reconciliation cross-checks with Midtrans.
 
@@ -2398,6 +2419,20 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 | Refund flow ownership | ✅ Resolved in v1.3 | Automated via Midtrans API on status CANCELLED; RBAC `orders:refund` |
 | Subscription 30-min "soft-lock" window | ❌ Rejected — not implemented | Suspension must take immediate effect for financial integrity; a grace window for in-progress payments creates an attack surface where merchants game the suspension timing. The correct model (already in spec): payments confirmed before suspension go through; new payments after suspension are auto-refunded. |
 | BranchCode "resets daily" misread | ✅ Already correct | The *counter* resets daily per branch; `branchCode` is a static identifier. Doc is unambiguous. |
+
+**Fixed before v1.6 review:**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| PENDING→CANCELLED missing cashier reject path | ✅ Fixed in v1.6 | State machine table updated: cashier rejecting cash order is a valid trigger |
+| REFUNDED Payment moves COMPLETED Order to CANCELLED | ✅ Fixed in v1.6 | Payment→Order mapping table split: pre-completion refund → CANCELLED; post-completion refund → Order stays COMPLETED, only Payment.status changes; credit note generated |
+| stockCount deducted at PENDING (DoS vulnerability) | ✅ Fixed in v1.6 | stockCount field doc updated: deduction at CONFIRMED; if stock exhausted at webhook time, auto-refund issued |
+| PENDING_CASH orders expired by digital expiry cron | ✅ Fixed in v1.6 | Expiry cron updated with `WHERE paymentMode != 'PAY_AT_CASHIER'` clause + rationale |
+| Cron SELECT+loop race condition under overlapping invocations | ✅ Fixed in v1.6 | Cron pseudocode rewritten as atomic `UPDATE...RETURNING` — no separate SELECT loop |
+| iOS Web Push requires PWA (not documented) | ✅ Fixed in v1.6 | Push notification section updated: iOS limitation explained, browser detection + install prompt documented |
+| paymentTimeoutMinutes not synced to Midtrans snap_token expiry | ✅ Fixed in v1.6 | MerchantSettings table updated: `paymentTimeoutMinutes` now explicitly passed as `custom_expiry` in snap_token request |
+| No autoResetAvailability for daily-stock items | ✅ Fixed in v1.6 | `autoResetAvailability` bool added to MenuItem spec with midnight cron behaviour |
+| WaiterRequest has no resolvedAt; stale alerts after session close | ✅ Fixed in v1.6 | `resolvedAt` added to WaiterRequest model; auto-resolve rule on CustomerSession close/expiry documented |
 
 **Future agents:** If you are about to raise any of these as issues, read the referenced ADRs first.
 
