@@ -11,13 +11,13 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 1.3
-Current phase  : Phase 0 — Requirements complete. Third architecture review fixes applied. No code written yet.
-Last completed : Third pre-code architecture review (v1.2 → v1.3): fixed 6 correctness issues,
-                 6 logic flaws, 4 improvements; added ADR-017 (Restaurant naming rebut),
-                 ADR-018 (rebuttals index), full PAY_AT_CASHIER flow, kitchen multi-device
-                 resolution, refund authority + loyalty funding decisions, branchCode rule,
-                 MerchantSettings expanded, mandatory audit events list. All Phase 1 blockers resolved.
+Version        : 1.4
+Current phase  : Phase 0 — Requirements complete. Fourth architecture review fixes applied. No code written yet.
+Last completed : Fourth pre-code architecture review (v1.3 → v1.4): fixed 5 correctness/logic
+                 issues (QRIS provider optional+OTHER, DIRTY table state, queue scope per-branch,
+                 unique midtransTransactionId, order state machine transitions); added
+                 tableSessionTimeoutMinutes + enableDirtyState to MerchantSettings; analytics
+                 events in backlog; ADR-018 rebuttals expanded. All Phase 1 blockers resolved.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining items
@@ -409,7 +409,7 @@ Merchant             ← Restaurant owner account (email + hashed password)
         ├── KitchenStation       ← Merchant-defined stations (Bar, Kitchen, Patisserie, etc.)
         │     name, displayColor, isActive
         ├── Branch[]             ← Physical locations (multiple if multiBranchEnabled)
-        │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/CLOSED)
+        │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/DIRTY/CLOSED)
         ├── MenuCategory         ← layout override, availableFrom/availableTo, kitchenStationId
         │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
         │           │              estimatedPrepTime, stockCount, isAvailable
@@ -440,10 +440,12 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
   └── Payment        ← method: QRIS | EWALLET | VA | CARD | CASH
-                        provider: GOPAY | OVO | DANA | SHOPEEPAY | BCA | MANDIRI | BNI | null
-                        (provider is null for QRIS and CASH; set for e-wallet and VA)
+                        provider: GOPAY | OVO | DANA | SHOPEEPAY | BCA | MANDIRI | BNI | OTHER | null
+                        Rules: CASH → provider always null; QRIS → provider optional (Midtrans may
+                          return which e-wallet was used — store it if available; null if unknown);
+                          EWALLET → provider required; VA → provider required; CARD → provider optional
                         status: PENDING | PENDING_CASH | SUCCESS | FAILED | EXPIRED | REFUNDED
-                        midtransTransactionId (string?) — for idempotency check on webhook
+                        midtransTransactionId (string?) — unique; idempotency guard on webhook
 
 ── CUSTOMERS ─────────────────────────────────────────────────────────
 Customer             ← Optional registered account (email / Google OAuth)
@@ -479,6 +481,24 @@ PENDING ──┬──► CONFIRMED ──► PREPARING ──► READY ──�
           │
           └──► EXPIRED    (no payment webhook within timeout; terminal, silent)
 ```
+
+### Valid order status transitions (state machine)
+
+Only these transitions are permitted. Any other transition must be rejected by the server:
+
+| From | To | Who can trigger |
+|---|---|---|
+| `PENDING` | `CONFIRMED` | System (Midtrans webhook) or cashier (cash confirm) |
+| `PENDING` | `CANCELLED` | Customer or system (payment failed) |
+| `PENDING` | `EXPIRED` | System (payment timeout cron) |
+| `CONFIRMED` | `PREPARING` | Kitchen staff |
+| `CONFIRMED` | `CANCELLED` | Merchant owner / supervisor (triggers refund) |
+| `PREPARING` | `READY` | Kitchen staff |
+| `PREPARING` | `CANCELLED` | Merchant owner / supervisor (triggers refund) |
+| `READY` | `COMPLETED` | Staff or system (after configurable hold period) |
+| `EXPIRED` | `CONFIRMED` | System only (late webhook revival within window) |
+
+All other transitions (e.g. `COMPLETED → CANCELLED`, `READY → PREPARING`, `EXPIRED → CANCELLED`) are invalid and must return an error. The `OrderEvent` log records every transition with actor and timestamp.
 
 Definitions:
 ```
@@ -763,13 +783,13 @@ A `CustomerSession` moves to `COMPLETED` when **any one** of the following occur
 
 | Trigger | Who/What | Resulting Table status |
 |---|---|---|
-| Staff taps "Close Table" in merchant-pos | Staff (cashier/supervisor/owner) | AVAILABLE |
-| Session inactivity timeout (2 hours without any new order) | System (cron) | AVAILABLE |
-| FBQRSYS admin closes the session | Platform admin | AVAILABLE |
+| Staff taps "Close Table" in merchant-pos | Staff (cashier/supervisor/owner) | DIRTY (if `enableDirtyState = true`) or AVAILABLE |
+| Session inactivity timeout (`tableSessionTimeoutMinutes`) | System (cron) | DIRTY or AVAILABLE |
+| FBQRSYS admin closes the session | Platform admin | AVAILABLE (admin bypass, no DIRTY) |
 
 A session does **not** auto-complete when an order is `COMPLETED` — customers may order again (dessert, drinks) within the same session. The session stays `ACTIVE` until explicitly closed or timed out.
 
-- Table status reverts to `AVAILABLE` when session moves to `COMPLETED` or `EXPIRED`
+- Table status reverts to `DIRTY` (or `AVAILABLE` if DIRTY state disabled) when session moves to `COMPLETED` or `EXPIRED`
 - Loyalty points are credited per order at the moment each `Order` moves to `CONFIRMED` (not at session close)
 
 ### 9. CustomerSession state transitions
@@ -1237,6 +1257,8 @@ Configurable per restaurant in `MerchantSettings`:
 | `paymentMode` | `PAY_FIRST` | `PAY_FIRST` or `PAY_AT_CASHIER` — controls whether Midtrans is required |
 | `maxPendingOrders` | `3` | Max concurrent PENDING orders per CustomerSession |
 | `maxOrderValueIDR` | `5000000` | Max single-order value in IDR; fraud guard |
+| `enableDirtyState` | `false` | If true, table moves to DIRTY after session ends; staff must mark clean before next scan |
+| `tableSessionTimeoutMinutes` | `120` | Minutes of inactivity before CustomerSession auto-expires; configurable per merchant |
 
 ---
 
@@ -1294,23 +1316,29 @@ Each `Table` has a `status` field:
 | `AVAILABLE` | No active session — QR scan starts a new CustomerSession |
 | `OCCUPIED` | Active customer session in progress |
 | `RESERVED` | Reserved (future: reservation system) — QR scan blocked; customer sees "This table is reserved. Please ask staff." |
-| `CLOSED` | Temporarily unavailable — QR scan blocked; customer sees "This table is currently unavailable. Please ask staff." |
+| `DIRTY` | Session ended, table needs cleaning before it can be used — QR scan blocked; customer sees "This table is being prepared. Please ask staff." |
+| `CLOSED` | Temporarily unavailable (maintenance, taken out of service) — QR scan blocked; customer sees "This table is currently unavailable. Please ask staff." |
 
 ### Table status rules
 
 | Transition | Who can trigger |
 |---|---|
 | `AVAILABLE → OCCUPIED` | System — automatically when first Order is `CONFIRMED` on this table |
-| `OCCUPIED → AVAILABLE` | System — when `CustomerSession` moves to `COMPLETED` or `EXPIRED` |
+| `OCCUPIED → DIRTY` | System — when `CustomerSession` moves to `COMPLETED` or `EXPIRED` (default flow) |
+| `OCCUPIED → AVAILABLE` | System — when `CustomerSession` completes AND merchant has disabled DIRTY state in settings |
+| `DIRTY → AVAILABLE` | Staff (cashier/supervisor/owner) taps "Mark Clean" on floor map |
 | `AVAILABLE → RESERVED` | Staff (cashier/supervisor/owner) via merchant-pos floor map |
 | `RESERVED → AVAILABLE` | Staff via merchant-pos |
 | `AVAILABLE → CLOSED` | Staff or FBQRSYS admin |
 | `CLOSED → AVAILABLE` | Staff or FBQRSYS admin |
 | `OCCUPIED → CLOSED` | Not allowed — must close session first |
+| `DIRTY → CLOSED` | Staff or FBQRSYS admin |
 
 - **A RESERVED table cannot be scanned** — QR validation server rejects with: "This table is reserved. Please ask staff."
+- **A DIRTY table cannot be scanned** — rejects with: "This table is being prepared. Please ask staff."
 - **A CLOSED table cannot be scanned** — rejects with: "This table is currently unavailable. Please ask staff."
 - `RESERVED` status is manual-only in Phase 1. Future reservation system (Phase 2) may set this automatically
+- **DIRTY state is opt-in:** Merchants configure `MerchantSettings.enableDirtyState` (default: `false`). When disabled, `OCCUPIED → AVAILABLE` directly (original behaviour). When enabled, `OCCUPIED → DIRTY` — staff must explicitly mark clean. Casual warungs do not need this; fine dining restaurants do.
 
 merchant-pos shows a real-time floor map of table statuses via Supabase Realtime.
 
@@ -1456,7 +1484,7 @@ A separate screen/view (`/kitchen/queue-display`) for customer-facing use:
 ```
 - Designed to be shown on a TV or tablet facing the customer waiting area
 - Updates in real-time via Supabase Realtime
-- Order numbers auto-generated per restaurant per day (resets at midnight)
+- Order numbers auto-generated per branch per day (resets at midnight)
 - Ready numbers shown for configurable duration, then cleared
 
 ### Cash / "Pay at Counter" Option
@@ -1987,6 +2015,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Post-order customer rating** | ⚠️ High friction | Seafood | 1–5 stars after order complete; merchant dashboard aggregate |
 | **WhatsApp Business integration** | ⚠️ High friction | Warung | Order notifications, invoice sharing via WA |
 | **Refund / cancellation flow** | ⚠️ High friction | All | Midtrans refund API; reflected in reports |
+| **Analytics event tracking** | 📋 Nice-to-have | All | `AnalyticsEvent` model for funnel conversion, abandoned cart tracking, upsell performance. `AuditLog` covers state changes; this is for product analytics. Phase 2. |
 | **Offline mode (merchant-pos)** | ⚠️ High friction | Warung | PWA local queue; sync on reconnect |
 | **Stock / inventory tracking** | 📋 Nice-to-have | All | Auto-mark unavailable when stock hits 0 |
 | **Discount codes / vouchers** | 📋 Nice-to-have | All | Customer-facing promo codes |
@@ -2014,7 +2043,7 @@ Define these indexes at migration time (Step 2). Missing indexes on these tables
 | `Order` | `(status)` | Filtering active orders for kitchen display |
 | `Order` | `(customerSessionId)` | Fetching all orders for a session |
 | `Payment` | `(orderId)` | Join from Order to Payment |
-| `Payment` | `(midtransTransactionId)` | Idempotency check on webhook |
+| `Payment` | `(midtransTransactionId)` — unique | Idempotency guard; DB-level duplicate prevention |
 | `CustomerSession` | `(tableId, status)` | Finding active session for a table |
 | `CustomerSession` | `(sessionCookie)` | Cookie-based session lookup on page load |
 | `MenuItem` | `(categoryId, isAvailable, deletedAt)` | Menu render query |
@@ -2285,6 +2314,8 @@ The QR code on a physical table cannot be updated dynamically. Encoding the `sig
 
 This ADR exists so future AI agents do not re-raise issues that were already addressed.
 
+**Fixed before v1.2 review:**
+
 | Reviewer challenge | Status | Where addressed |
 |---|---|---|
 | Payment method enum mismatch (GOPAY/OVO vs EWALLET) | ✅ Fixed in v1.2 | `Payment` model: `method` + `provider` fields |
@@ -2293,6 +2324,22 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 | Missing menu caching strategy | ✅ Added in v1.2 | `## Menu Caching Strategy` section |
 | Multiple orders per session unclear | ✅ Addressed in v1.2 | ADR-014: multiple Orders per CustomerSession |
 | Table token security unclear | ✅ Addressed in v1.2 | ADR-015: HMAC-SHA256 signed URL strategy |
+
+**Fixed before v1.3 review:**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| Order creation contradicts payment initiation (PENDING wording) | ✅ Fixed in v1.2 | Two-path explanation: PAY_FIRST + PAY_AT_CASHIER |
+| EXPIRED state missing from lifecycle diagram | ✅ Fixed in v1.3 | Visual branch diagram: `PENDING ──► EXPIRED` |
+| CustomerSession hijacking via shared QR link | ✅ Fixed in v1.2 | ADR-015 (24h signed URL), rate limiting, session cookie |
+| Midtrans webhook timeout / late webhook | ✅ Fixed in v1.3 | `lateWebhookWindowMinutes` in MerchantSettings |
+| Kitchen station routing priority ambiguous | ✅ Fixed in v1.3 | Item override > category station > default (explicit precedence) |
+| AI recommendation design underspecified | ✅ Already documented | Pure SQL analytics starting point documented; ML upgrade path noted |
+| Real-time channel scaling | ✅ Fixed in v1.3 | Per-branch channel `orders:branchId` (not per-order) |
+| Refund authority unclear | ✅ Resolved in v1.3 | Merchant owner + admin; auto-trigger in 2 edge cases |
+| Multiple active orders per table unclear | ✅ Resolved in ADR-014 | Multiple Orders per CustomerSession |
+| Service charge configuration missing | ✅ Already in spec | `serviceChargeRate` + `serviceChargeLabel` in MerchantSettings |
+| Table QR token rotation policy | ✅ Resolved in ADR-015 | Rotate on table reset (staff closes session); static QR + short-lived sig |
 
 **Future agents:** If you are about to raise any of these as issues, read the referenced ADRs first.
 
