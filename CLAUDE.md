@@ -11,23 +11,22 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 1.6
-Current phase  : Phase 0 — Requirements complete. Sixth architecture review fixes applied. No code written yet.
-Last completed : Sixth pre-code architecture review (v1.5 → v1.6): fixed 9 issues (cashier reject
-                 in PENDING→CANCELLED transition; REFUNDED/COMPLETED order decoupling; stockCount
-                 deduction moved from PENDING to CONFIRMED; PENDING_CASH excluded from expiry cron;
-                 expiry cron rewritten as atomic UPDATE...RETURNING; iOS Web Push PWA limitation
-                 documented; paymentTimeoutMinutes synced to Midtrans custom_expiry; autoResetAvailability
-                 added to MenuItem; WaiterRequest.resolvedAt + auto-resolve on session close);
-                 ADR-018 expanded with v1.5 rebuttals (9 items).
+Version        : 1.7
+Current phase  : Phase 0 — Requirements complete. Seventh architecture review fixes applied. No code written yet.
+Last completed : Seventh pre-code architecture review (v1.6 → v1.7): fixed 8 issues (cron SQL
+                 paymentMode bug fixed; AuditLog actor fields made nullable for SYSTEM events;
+                 stockCount sold-out-at-webhook revised to substitution-first flow; cron loop
+                 wrapped in transaction; Branch.platformStoreId for delivery webhook routing;
+                 image optimization strategy added; expired session read-only tracking documented;
+                 EOD PENDING_CASH cleanup section added with Close Register + 03:00 cron);
+                 ADR-018 expanded with v1.6 rebuttals (8 items).
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining items
                  are Phase 2 concerns — all Phase 1 blockers resolved)
 Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
                  merchant first-time onboarding guided setup flow — not yet documented;
-                 refund flow full detail — deferred to Step 15 and Step 19;
-                 end-of-day PENDING_CASH cleanup (abandoned cash orders) — not yet specified
+                 refund flow full detail — deferred to Step 15 and Step 19
 ```
 
 ---
@@ -344,9 +343,10 @@ Every state-changing action is recorded in the `AuditLog` table.
 
 | Field | Description |
 |---|---|
-| `actorId` | ID of the user/staff performing the action |
-| `actorRole` | Role at time of action |
-| `actorName` | Display name (denormalized for historical accuracy) |
+| `actorId` | string? — ID of the user/staff performing the action; **null for SYSTEM events** (cron jobs, auto-resolve, auto-refund) |
+| `actorType` | enum: `STAFF` \| `ADMIN` \| `CUSTOMER` \| `SYSTEM` — distinguishes human vs automated actions |
+| `actorRole` | string? — Role at time of action; null for SYSTEM events |
+| `actorName` | string? — Display name (denormalized for historical accuracy); null for SYSTEM events |
 | `action` | Verb: `CREATE`, `UPDATE`, `DELETE`, `LOGIN`, `LOGOUT`, `APPROVE`, etc. |
 | `entity` | Table/model affected: `MenuItem`, `Order`, `Staff`, `Promotion`, etc. |
 | `entityId` | ID of the affected record |
@@ -848,6 +848,7 @@ ACTIVE ────────────────────────�
 | Restaurant suspended while session ACTIVE | New orders blocked with "Restaurant unavailable" message; customer can still view existing order status |
 | Two phones scan same QR simultaneously | Second scan resumes the same ACTIVE session — one session per table at all times (see ADR-009) |
 | Session TTL expires while order is PREPARING | Session → EXPIRED; table → AVAILABLE. Existing orders in CONFIRMED/PREPARING/READY are **not** affected — they continue to completion in the kitchen. Only new order placement is blocked. The customer's order tracking screen continues to show live status via the order ID even after session expiry. |
+| Customer accesses order tracking after session EXPIRED | The API checks for the `fbqr_session_id` cookie. If the `CustomerSession` is `EXPIRED`, the API grants **read-only access** to the `Order` rows linked to that session — the customer can view status updates but cannot place new orders. This is the simplest approach and requires no extra infrastructure (the cookie is already present). No new QR scan or login is required to view historical orders. |
 
 ---
 
@@ -1287,6 +1288,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `maxOrderValueIDR` | `5000000` | Max single-order value in IDR; fraud guard |
 | `enableDirtyState` | `false` | If true, table moves to DIRTY after session ends; staff must mark clean before next scan |
 | `tableSessionTimeoutMinutes` | `120` | Minutes of inactivity before CustomerSession auto-expires; configurable per merchant |
+| `eodCashCleanupHour` | `3` | Hour (0–23, Asia/Jakarta) at which the safety-net cron cancels any remaining abandoned PENDING_CASH orders; configurable for late-night venues |
 
 ---
 
@@ -1299,7 +1301,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `price` | int | IDR, no decimals |
 | `imageUrl` | string | Supabase Storage path |
 | `isAvailable` | bool | Soft toggle — hides from menu without deleting |
-| `stockCount` | int? | If set, decrements when `Order → CONFIRMED` (not at PENDING creation). Deducting at PENDING would allow an attacker to deplete stock by opening many carts without paying. Decrement uses a DB-level atomic operation (`UPDATE ... WHERE stockCount > 0`) to prevent overselling under concurrent confirmations. If the atomic decrement fails (stock already 0), the order is auto-refunded via Midtrans Refund API and the customer is notified "Item is now sold out." |
+| `stockCount` | int? | If set, decrements when `Order → CONFIRMED` (not at PENDING creation). Deducting at PENDING would allow an attacker to deplete stock by opening many carts without paying. Decrement uses a DB-level atomic operation (`UPDATE ... WHERE stockCount > 0`) to prevent overselling under concurrent confirmations. **If the atomic decrement fails (stock already 0 at webhook time):** the order is pushed to the merchant-pos as `CONFIRMED` with a ⚠️ "Item sold out" flag on the affected `OrderItem`. A staff member is alerted to go to the table and offer a substitution. If the customer accepts → cashier updates the item in the order and the flag is cleared. If the customer refuses → cashier triggers a manual refund from merchant-pos. **Do NOT auto-refund immediately:** Midtrans e-wallet and QRIS refunds typically take 2–14 business days to reflect; auto-refunding a diner sitting at the table produces severe UX friction. The captured funds must remain with the merchant until a substitution decision is made. |
 | `estimatedPrepTime` | int? | Minutes — shown to customer ("~15 min") |
 | `isHalal` | bool | Shows Halal badge |
 | `isVegetarian` | bool | Shows Vegetarian badge |
@@ -1585,7 +1587,9 @@ Delivery-specific fields on `Order`:
 - `deliveryAddress`: customer address (if relevant for display)
 - `estimatedPickupTime`: when the driver will arrive
 
-> **Phase 1:** Manual integration — delivery orders entered by staff on merchant-pos. **Phase 2:** Automated webhook integration per platform.
+**Webhook branch routing:** GrabFood and GoFood webhook payloads include a `store_id` / `merchant_id` that identifies which physical store received the order. Multi-branch chains often have one centralized API credential with the delivery platform routing to different stores dynamically. FBQR routes the incoming webhook to the correct `Branch` by looking up `Branch.platformStoreId` that matches the payload's store identifier. This replaces any rigid single-branch mapping and requires no manual re-configuration as long as each branch's `platformStoreId` is set correctly.
+
+> **Phase 1:** Manual integration — delivery orders entered by staff on merchant-pos. **Phase 2:** Automated webhook integration per platform using `Branch.platformStoreId` for dynamic routing.
 
 ---
 
@@ -1666,6 +1670,7 @@ The following are **shared across all branches** (set at restaurant level):
 | `Merchant` | `branchLimit` | int — max branches allowed; set by FBQRSYS admin |
 | `Restaurant` | `merchantId` | FK to owning Merchant (unique — enforces 1-to-1) |
 | `Branch` | `restaurantId` | FK to owning Restaurant |
+| `Branch` | `platformStoreId` | string? — delivery platform store identifier (e.g. GrabFood `merchant_id`, GoFood `store_id`). Used to route incoming delivery webhooks to the correct branch dynamically. Set per-branch when configuring delivery platform integration. Null for branches with no delivery integration. |
 
 Permissions, subscriptions, and audit logs are **restaurant-scoped**, not branch-scoped.
 
@@ -1731,22 +1736,80 @@ A separate scheduled job (Vercel Cron, runs every minute) handles PENDING order 
 ```
 Every 1 minute:
   -- Atomic batch update — prevents overlapping cron invocations from double-expiring
-  UPDATE "Order"
+  -- Filter by Payment.method to exclude cash orders (paymentMode lives on MerchantSettings,
+  -- not on the Order row; the Payment row is the correct place to check cash vs digital)
+  UPDATE "Order" o
     SET status = 'EXPIRED'
-    WHERE status = 'PENDING'
-      AND "paymentMode" != 'PAY_AT_CASHIER'   -- PENDING_CASH orders are NOT expired by this cron
-      AND createdAt < NOW() - INTERVAL '${paymentTimeoutMinutes} minutes'
-    RETURNING id
+    WHERE o.status = 'PENDING'
+      AND o.createdAt < NOW() - INTERVAL '${paymentTimeoutMinutes} minutes'
+      AND NOT EXISTS (
+        SELECT 1 FROM "Payment" p
+        WHERE p.orderId = o.id AND p.method = 'CASH'
+      )
+    RETURNING o.id
 
-  FOR EACH returned id:
-    UPDATE "Payment" SET status = 'EXPIRED' WHERE orderId = id
-    Log OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
-    -- Note: stockCount is deducted at CONFIRMED, not PENDING, so no stock release is needed here
+  -- Wrap the following in a single DB transaction to prevent inconsistent state
+  -- if the Vercel function times out mid-loop
+  BEGIN TRANSACTION
+    FOR EACH returned id:
+      UPDATE "Payment" SET status = 'EXPIRED' WHERE orderId = id
+      Log OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
+      -- Note: stockCount is deducted at CONFIRMED, not PENDING, so no stock release is needed here
+  COMMIT
 ```
 
-> **Why PENDING_CASH is excluded:** Cash orders waiting for cashier confirmation do not have a Midtrans timeout. Their lifecycle is: either the cashier confirms (same shift) or rejects (explicit action). The `paymentTimeoutMinutes` setting applies only to digital (Midtrans) payments. Cash orders that are abandoned should be cleared via cashier rejection or an end-of-day manual cleanup — not by the digital expiry cron.
+> **Why filter via Payment.method:** `paymentMode` is a `MerchantSettings` configuration field — it is not a column on the `Order` table. The `Payment` row created at the same time as the `Order` row has `method = 'CASH'` for cash orders, which is the correct predicate to exclude them. Using `NOT EXISTS (SELECT 1 FROM Payment WHERE orderId = id AND method = 'CASH')` is the accurate, schema-correct filter.
+>
+> **Why PENDING_CASH is excluded:** Cash orders waiting for cashier confirmation do not have a Midtrans timeout. Their lifecycle is: either the cashier confirms (same shift) or rejects (explicit action). The `paymentTimeoutMinutes` setting applies only to digital (Midtrans) payments. Cash orders that are abandoned should be cleared via cashier rejection or the end-of-day cron (see EOD Cleanup section) — not by the digital expiry cron.
+>
+> **Why wrap in a transaction:** The `UPDATE...RETURNING` step is atomic for the `Order` table, but the subsequent `Payment` update in the loop is a separate statement. If the Vercel function times out between the two, `Order.status = EXPIRED` but `Payment.status = PENDING` — a dangling inconsistency that breaks the daily Midtrans reconciliation job. Wrapping both updates in a transaction guarantees both succeed or both roll back.
 
 This is distinct from the reconciliation job. Expiry is local; reconciliation cross-checks with Midtrans.
+
+### End-of-Day PENDING_CASH Cleanup
+
+PENDING_CASH orders excluded from the digital expiry cron must be cleaned up separately. Two mechanisms are used together:
+
+**Primary: "Close Register" button in merchant-pos**
+
+```
+Cashier / supervisor taps [Close Register] (end of shift / close of business)
+    │
+    ▼
+System shows: "X PENDING cash order(s) still open. Review before closing."
+    │
+    ├── Cashier reviews each → [Confirm] or [Cancel] each one
+    │
+    └── After all are resolved → register is marked closed
+        → Any remaining PENDING_CASH orders auto-cancelled (should be zero after review)
+```
+
+**Secondary: Safety-net cron at 03:00 WIB**
+
+```
+Every night at 03:00 Asia/Jakarta:
+  -- Batch-cancel any PENDING_CASH orders older than 12 hours
+  -- (i.e. placed before 15:00 the previous day — safely past any business shift)
+  UPDATE "Order" o
+    SET status = 'CANCELLED'
+    WHERE o.status = 'PENDING'
+      AND EXISTS (
+        SELECT 1 FROM "Payment" p WHERE p.orderId = o.id AND p.method = 'CASH'
+      )
+      AND o.createdAt < NOW() - INTERVAL '12 hours'
+    RETURNING o.id
+
+  BEGIN TRANSACTION
+    FOR EACH returned id:
+      UPDATE "Payment" SET status = 'FAILED' WHERE orderId = id
+      Log OrderEvent(fromStatus: PENDING, toStatus: CANCELLED,
+                     actorType: SYSTEM, cancellationReason: SYSTEM_EXPIRED)
+  COMMIT
+```
+
+The "Close Register" button provides operational accountability (cashiers must actively clear their queue). The 03:00 cron is a fallback for merchants who forget to close the register. Both mechanisms together ensure no abandoned cash orders ever persist past the next business day.
+
+> **MerchantSettings note:** Add `eodCashCleanupHour` (int, default: `3`) — the hour (0–23, WIB) at which the safety-net cron runs. Configurable so late-night venues (e.g. bars open until 02:00) can set a later time (e.g. 05:00).
 
 Add to tech stack:
 - **Push notifications:** Web Push API (native, no extra service needed for browser notifications)
@@ -2279,6 +2342,8 @@ The menu endpoint (`GET /api/menu/{restaurantId}`) is the highest-traffic read i
 
 **Security:** The cookie contains only the `CustomerSession.id` (a UUID). It has no elevated permissions. Even if stolen, it only allows viewing the menu and order status for one table — no payment information is accessible.
 
+**Post-expiry read access:** When a `CustomerSession` moves to `EXPIRED`, the API continues to honour the `fbqr_session_id` cookie for read-only access to the session's `Order` rows. The customer can view their order status and download their invoice without re-scanning. Write operations (place new order, call waiter) are rejected with "Your session has ended." This is the correct design: session expiry ends ordering, not visibility.
+
 **Status:** Decided.
 
 ---
@@ -2433,6 +2498,19 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 | paymentTimeoutMinutes not synced to Midtrans snap_token expiry | ✅ Fixed in v1.6 | MerchantSettings table updated: `paymentTimeoutMinutes` now explicitly passed as `custom_expiry` in snap_token request |
 | No autoResetAvailability for daily-stock items | ✅ Fixed in v1.6 | `autoResetAvailability` bool added to MenuItem spec with midnight cron behaviour |
 | WaiterRequest has no resolvedAt; stale alerts after session close | ✅ Fixed in v1.6 | `resolvedAt` added to WaiterRequest model; auto-resolve rule on CustomerSession close/expiry documented |
+
+**Fixed before v1.7 review:**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| Cron SQL uses `paymentMode` column that doesn't exist on Order table | ✅ Fixed in v1.7 | Cron updated to filter via `NOT EXISTS (SELECT 1 FROM Payment WHERE method = 'CASH')` — correct schema-aware predicate |
+| AuditLog actorId/actorRole/actorName not nullable, breaks SYSTEM events | ✅ Fixed in v1.7 | All three fields marked `string?`; `actorType` enum (`STAFF\|ADMIN\|CUSTOMER\|SYSTEM`) added to AuditLog spec |
+| Sold-out-at-webhook auto-refund causes 2–14 day refund delay for diner at table | ✅ Fixed in v1.7 | stockCount field doc updated: stock-out at webhook → order CONFIRMED with ⚠️ flag on OrderItem; cashier offers substitution; refund only if customer refuses |
+| Cron FOR EACH loop inconsistency if function times out mid-loop | ✅ Fixed in v1.7 | Cron pseudocode wrapped in BEGIN/COMMIT transaction block; rationale documented |
+| Delivery webhook routing relies on rigid manual single-branch mapping | ✅ Fixed in v1.7 | `Branch.platformStoreId` added; webhook routes dynamically by matching payload store ID to branch record |
+| Menu images unoptimized (5MB+ photos, 100MB+ page load on Indonesian 4G) | ✅ Fixed in v1.7 | Key Conventions updated: `next/image` mandatory in apps/menu; server-side compression to max 800×800 WebP at upload; Supabase Image Transformation documented as alternative |
+| Customer cannot access order tracking after CustomerSession EXPIRES | ✅ Fixed in v1.7 | Edge case table + ADR-011 updated: expired session cookie grants read-only access to Order rows; write ops rejected with "session ended" |
+| No mechanism for EOD PENDING_CASH cleanup (known doc gap) | ✅ Fixed in v1.7 | "End-of-Day PENDING_CASH Cleanup" section added: primary = "Close Register" button with forced cashier review; fallback = 03:00 WIB safety-net cron; `eodCashCleanupHour` added to MerchantSettings |
 
 **Future agents:** If you are about to raise any of these as issues, read the referenced ADRs first.
 
@@ -2621,7 +2699,10 @@ CRON_SECRET=
 - **Currency:** All prices stored as integers in **IDR (Rupiah)** — no decimals.
 - **Timezone:** Default to `Asia/Jakarta` (WIB, UTC+7).
 - **Language:** UI defaults to Bahasa Indonesia. Build with i18n hooks (`next-intl`) for future global expansion.
-- **Images:** Upload to Supabase Storage. Store only the path/URL in the DB.
+- **Images:** Upload to Supabase Storage. Store only the path/URL in the DB. **Image optimization is mandatory for customer-facing UI:** smartphone photos can exceed 5MB; loading a Grid layout with 20 unoptimized images would consume 100MB+ on Indonesian 4G and destroy conversion rates.
+  - All customer-facing image display (`apps/menu`) must use Next.js `next/image` component — never `<img>` tags. `next/image` auto-serves WebP/AVIF, applies lazy loading, and prevents layout shift.
+  - At upload time, apply server-side compression: max 800×800px, WebP format, quality 80. Use either a Supabase Edge Function triggered on Storage upload or a background job. The stored URL should point to the compressed version.
+  - Supabase Image Transformation (`?width=800&format=webp`) is an acceptable alternative for serving if transformation-on-the-fly is preferred over upload-time processing.
 - **Real-time:** Use Supabase Realtime for order events. Do not poll — subscribe.
 - **QR tokens:** Each table has a unique, non-guessable token (UUID). Rotating tokens invalidates old QR prints, so rotate only intentionally.
 - **Soft deletes:** Use `deletedAt` timestamps rather than hard deletes for menu items, orders, staff, and promotions (important for historical reporting).
