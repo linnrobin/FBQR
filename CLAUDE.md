@@ -1189,7 +1189,7 @@ Delivery-specific fields on `Order`:
 
 ---
 
-## Multi-Restaurant Per Merchant Account
+## Multi-Branch Per Merchant Account
 
 > **Deal-breaker for chains.** A chain owner with 8 branches cannot manage 8 separate accounts. However, multi-branch capability is a premium feature controlled by FBQRSYS — merchants do not self-provision additional restaurants.
 
@@ -1213,7 +1213,7 @@ Merchant submits an Expression of Interest (EOI)
 FBQRSYS admin reviews the request
     │
     ├── Approves → admin opens merchant's account in FBQRSYS panel
-    │               → enables multi-restaurant flag on the Merchant record
+    │               → enables multi-branch flag on the Merchant record
     │               → adds each Restaurant one by one (name, address, contact)
     │               → adds each Branch under the appropriate Restaurant
     │               → merchant immediately sees new restaurant(s) in their switcher
@@ -1222,7 +1222,7 @@ FBQRSYS admin reviews the request
 ```
 
 FBQRSYS admin controls:
-- Whether the merchant has multi-restaurant capability (`Merchant.multiBranchEnabled: bool`)
+- Whether the merchant has multi-branch capability (`Merchant.multiBranchEnabled: bool`)
 - How many restaurants / branches the merchant is allowed (`Merchant.restaurantLimit: int`, driven by their plan)
 - Which plan tier the new restaurant is on (each restaurant billed separately, or chain plan covers all)
 
@@ -1502,7 +1502,7 @@ All live panel widgets update via Supabase Realtime — no refresh needed.
 
 ---
 
-### Merchant Owner Dashboard — Chain / Multi-Restaurant View
+### Merchant Owner Dashboard — Chain / Multi-Branch View
 
 When "All Restaurants" is selected in the restaurant switcher, the merchant sees a consolidated view across their entire portfolio.
 
@@ -1598,7 +1598,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Takeaway / counter mode** | 🚨 Deal-breaker | Chain, warung | Documented above — `orderType`, queue number, counter QR |
 | **Order queue number display** | 🚨 Deal-breaker | Chain, warung | Customer-facing screen showing pending/ready order numbers |
 | **Cash / "Pay at Counter"** | 🚨 Deal-breaker | Warung, all | `CASH` payment method, cashier marks paid manually |
-| **Multi-restaurant per merchant** | 🚨 Deal-breaker | Chain | One login, multiple restaurants; schema change required |
+| **Multi-branch per merchant** | 🚨 Deal-breaker | Chain | One login, multiple branches; enabled via FBQRSYS EOI |
 | **Delivery platform integration** | 🚨 Deal-breaker | Chain | GrabFood/GoFood/ShopeeFood webhook → unified kitchen view |
 | **Permanent free / Warung tier** | 🚨 Deal-breaker | Warung | Free forever with limits; upgrade path clearly shown |
 | **Push/sound notifications for new orders** | ⚠️ High friction | All | Web Push API + in-app audio; browser notification permission |
