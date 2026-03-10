@@ -11,26 +11,29 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 1.9
-Current phase  : Phase 0 — Requirements complete. Ninth operational review fixes applied. No code written yet.
-Last completed : Ninth operational review (v1.8 → v1.9): fixed 7 issues + 1 rebuttal + 6 deferred
-                 (kitchen load control: maxActiveOrders + orderingPaused toggle;
-                 WaiterRequest.type enum: ASSISTANCE|BILL|CALL with bill-total preview;
-                 weight-based pricing: MenuItem.priceType BY_WEIGHT + full staff weighing flow;
-                 kitchen display card format: table identity, elapsed timer, customerNote field;
-                 Order.customerNote free-text field;
-                 Midtrans fee transparency in revenue dashboard: gross/fees/net;
-                 ADR-019: per-branch separate menus rejected → BranchMenuOverride pattern;
-                 6 items deferred to Phase 2: Hidang mode, label printing, booking deposit,
-                 per-branch availability override, staff order mode, inventory/COGS)
+Version        : 2.0
+Current phase  : Phase 0 — Requirements complete. Major product maturity review applied. No code written yet.
+Last completed : Product maturity review (v1.9 → v2.0): 6 major additions
+                 (Merchant Onboarding & In-App Guidance: 5-step wizard, setup checklist,
+                 contextual help, FAQ, coach marks, empty states, schema fields;
+                 Public REST API & Webhooks: architecture, 10 endpoints, 6 webhook events,
+                 MerchantApiKey + WebhookEndpoint + WebhookDeliveryLog schema stubs, ADR-021;
+                 UI & Design Standards: design philosophy per app, design tokens, typography
+                 scale, component rules, motion spec, accessibility, responsive breakpoints,
+                 apps/menu-specific requirements;
+                 Phase 2 Schema Scaffolding: 8 new tables + 9 nullable fields stubbed in
+                 Phase 1 Prisma with rationale;
+                 ADR-020: CoreUI/AdminLTE rejected, shadcn/ui + Tailwind + Blocks + TanStack
+                 Table + Recharts + Framer Motion decided; tech stack table updated;
+                 ADR-021: REST + bearer token + webhooks chosen, GraphQL/OAuth2 rejected)
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (all Phase 1
                  blockers resolved; remaining items are Phase 2 concerns)
 Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
-                 merchant first-time onboarding guided setup flow — not yet documented;
                  refund flow full detail — deferred to Step 15 and Step 19;
-                 estimated wait time display for customers — deferred to Phase 2 (formula documented)
+                 estimated wait time display for customers — formula documented, UI Phase 2;
+                 Hidang mode full flow — deferred to Phase 2
 ```
 
 ---
@@ -177,8 +180,12 @@ It enables customers to scan a QR code at their table, browse a digital menu, pl
 | Layer | Technology | Rationale |
 |---|---|---|
 | **Monorepo** | [Turborepo](https://turbo.build/) | Unified build pipeline, shared packages |
-| **Frontend** | [Next.js 14+](https://nextjs.org/) (App Router) | SSR, API routes, great DX |
-| **Styling** | [Tailwind CSS](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) | Fast, accessible, consistent UI |
+| **Frontend** | [Next.js 15+](https://nextjs.org/) (App Router) | SSR, API routes, great DX |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) | Unstyled primitives you own; Tailwind-native; no Bootstrap conflict. See ADR-020. |
+| **Admin layout** | [shadcn/ui Blocks](https://ui.shadcn.com/blocks) + shadcn Sidebar component | Pre-built dashboard layouts — no separate admin framework needed |
+| **Data tables** | [TanStack Table](https://tanstack.com/table) via shadcn DataTable | Headless, type-safe sorting / filtering / pagination |
+| **Charts** | [Recharts](https://recharts.org/) via shadcn Charts | Composable, Tailwind-compatible; all analytics dashboards |
+| **Animation** | [Framer Motion](https://www.framer.com/motion/) | Page transitions, micro-interactions, mobile gesture handling |
 | **Database** | [PostgreSQL](https://www.postgresql.org/) via [Supabase](https://supabase.com/) | Free tier, real-time subscriptions, built-in storage |
 | **ORM** | [Prisma](https://www.prisma.io/) | Type-safe DB access, easy migrations |
 | **Real-time** | [Supabase Realtime](https://supabase.com/docs/guides/realtime) | Live order push to kitchen display |
@@ -191,12 +198,16 @@ It enables customers to scan a QR code at their table, browse a digital menu, pl
 | **Email** | [Resend](https://resend.com/) | Transactional email — billing reminders, invoices, notifications |
 | **Scheduled Jobs** | [Vercel Cron](https://vercel.com/docs/cron-jobs) | Daily billing checks, auto-lock overdue accounts |
 | **File Storage** | Supabase Storage | Menu item images, restaurant logos, invoice PDFs |
+| **API docs** | [Zod-to-OpenAPI](https://github.com/asteasolutions/zod-to-openapi) + Swagger UI | Auto-generated from Zod schemas; served at `/api/docs` (Phase 2) |
+| **i18n** | [next-intl](https://next-intl-docs.vercel.app/) | Bahasa Indonesia default; multi-language expansion path |
 | **Hosting** | [Vercel](https://vercel.com/) (Next.js) + [Supabase](https://supabase.com/) | Generous free tiers, auto-scaling |
 
 > **Architecture note:** This project uses a **modular monolith** (not microservices).
 > The Turborepo structure enforces clean domain boundaries between sub-systems.
 > Individual apps can be extracted into independent services later if scaling demands it,
 > but microservices add significant operational overhead that is not worth it at this stage.
+>
+> **UI framework decision:** CoreUI and AdminLTE are explicitly rejected — both are Bootstrap-based and conflict with Tailwind CSS. shadcn/ui Blocks + TanStack Table + Recharts + Framer Motion replaces all admin template needs without framework lock-in. See ADR-020.
 
 ---
 
@@ -639,6 +650,149 @@ When status = `SUSPENDED`:
 - **Existing active orders continue to completion** — orders already `CONFIRMED` or `PREPARING` are not cancelled. Kitchen staff already logged in can mark them `READY` and `COMPLETED`. This prevents food waste and customer harm from an administrative action.
 - New `CustomerSession` creation is blocked; existing `ACTIVE` sessions can view their order status but cannot place new orders
 - **Pending payment during suspension:** If a merchant is suspended while a customer has an open Midtrans payment page (order in `PENDING`): when the `SUCCESS` webhook arrives, the system **auto-refunds** via Midtrans Refund API and logs `LATE_WEBHOOK_REFUND` — the order is never pushed to kitchen. The customer sees: "Payment refunded — restaurant is temporarily unavailable." A `PENDING_CASH` order in the same scenario is auto-cancelled (no Midtrans refund needed as no charge occurred).
+
+---
+
+## Merchant Onboarding & In-App Guidance
+
+> **A merchant who feels lost in the first 10 minutes will churn.** Pak Budi has never used SaaS. Tante Lina is not a tech person. The system must guide them from "blank account" to "accepting first order" with zero support ticket. This is not optional — it is the difference between activation and abandonment.
+
+### First-Login Setup Wizard
+
+Displayed immediately after a merchant's first login. Blocking (cannot access dashboard until Step 1 and Step 3 are complete). All other steps skippable but tracked.
+
+```
+Welcome to FBQR! Let's get your restaurant ready in 5 steps.
+────────────────────────────────────────────────────────────
+
+Step 1 ✱  Restaurant Details          [REQUIRED]
+          Name, address, cuisine type, logo upload
+          → Sets Restaurant.name, Branch.address, RestaurantBranding.logoUrl
+
+Step 2    Your First Menu             [recommended]
+          "Add at least 3 items to your menu to preview how it looks."
+          → Creates 1 MenuCategory + up to 5 MenuItems (simplified inline form)
+          → Shows live preview of apps/menu as merchant types
+
+Step 3 ✱  Create Your First Table     [REQUIRED]
+          Table name/number → system generates QR code immediately
+          → "Scan this QR now to see your menu on your phone!" ← the "aha" moment
+
+Step 4    Payment Setup               [recommended]
+          Enable QRIS (default, always available)
+          Optionally enable Cash ("Bayar di Kasir")
+          → Sets MerchantSettings.paymentMode
+
+Step 5    Invite Your First Staff     [optional]
+          Enter staff name + PIN → creates Staff account
+          → Can skip; owner can do everything themselves initially
+
+────────────────────────────────────────────────────────────
+[ Skip to dashboard ]  ←  always visible after Step 1 + 3 complete
+```
+
+**Wizard UX rules:**
+- One step per screen — no multi-field scroll of doom
+- Each step shows estimated time: "~2 minutes"
+- Progress bar at top (1 of 5)
+- Back button always available (no data lost)
+- Step 3 shows an animated QR code that the merchant can scan immediately — the single most powerful activation moment
+- Wizard state is persisted in DB (`Merchant.onboardingStep: int`) so page refresh does not restart it
+
+### Setup Completion Checklist (Persistent)
+
+After wizard, a dismissible checklist card appears on the merchant-pos home dashboard until all items are checked:
+
+```
+┌─────────────────────────────────────────────┐
+│  🚀  Selesaikan setup restoran Anda          │
+│  ████████░░  80% selesai                    │
+│                                              │
+│  ✅  Info restoran diisi                    │
+│  ✅  Menu pertama dibuat (3 item)           │
+│  ✅  Meja & QR code dibuat                  │
+│  ✅  Metode pembayaran dikonfigurasi        │
+│  ⬜  Undang staff pertama          → Setup  │
+│  ⬜  Atur branding & warna         → Setup  │
+│  ⬜  Coba terima pesanan pertama   → Guide  │
+│                                              │
+│                          [ Sembunyikan ]    │
+└─────────────────────────────────────────────┘
+```
+
+Checklist is stored in `Merchant.onboardingChecklist` (JSON array of completed keys). Dismissed permanently per merchant when they click "Sembunyikan" (but admin can reset it).
+
+### In-App Contextual Help
+
+**`?` icon tooltip on every non-obvious setting:**
+
+Every field in MerchantSettings, RBAC role editor, kitchen station config, and tax settings gets a `?` icon that opens a popover with:
+1. What this setting does in plain language
+2. Example: "e.g. kalau Anda set 15, pesanan baru akan ditolak kalau ada 15 pesanan aktif di dapur"
+3. Recommended value for most restaurants
+
+**Coach marks (first-time tour):**
+Shown once per feature area on first visit. Uses a simple highlight overlay (no third-party tour library — custom built with Framer Motion). Areas covered:
+- First visit to kitchen display → highlight station tabs + priority drag handle
+- First visit to floor map → highlight "Pause Orders" toggle + table status colours
+- First visit to reports → highlight date range filter + export button
+
+Coach marks are stored in `Staff.seenCoachMarks: string[]` (array of keys). Dismissed permanently per staff member.
+
+**Empty state guidance (examples):**
+
+| Screen | Empty state message | CTA |
+|---|---|---|
+| Menu categories (0 items) | "Belum ada kategori menu. Tambahkan kategori pertama untuk mulai menerima pesanan." | [ + Tambah Kategori ] |
+| Tables (0 tables) | "Belum ada meja. Buat meja dan unduh QR code-nya untuk pelanggan." | [ + Tambah Meja ] |
+| Staff (0 staff) | "Hanya Anda yang bisa login saat ini. Tambahkan staff untuk berbagi akses." | [ + Tambah Staff ] |
+| Orders today (0 orders) | "Belum ada pesanan hari ini. Share QR code meja Anda ke pelanggan!" | [ Lihat QR Code ] |
+| Kitchen display (no active orders) | "Dapur kosong — tidak ada pesanan aktif." | — (no CTA needed) |
+
+### In-App Help Panel
+
+A slide-out panel (shadcn `Sheet`) accessible from the `?` button in the main navigation. Contains:
+
+**FAQ — Top 15 questions (searchable):**
+
+| # | Question | Category |
+|---|---|---|
+| 1 | Bagaimana cara membuat QR code untuk meja? | Setup |
+| 2 | Bagaimana cara menambahkan item menu? | Menu |
+| 3 | Bagaimana cara memberi akses ke staff? | Staff |
+| 4 | Pelanggan tidak bisa scan QR, kenapa? | Troubleshooting |
+| 5 | Bagaimana cara pause pesanan saat dapur sibuk? | Operations |
+| 6 | Bagaimana cara set harga diskon / promo? | Menu |
+| 7 | Bagaimana cara melihat laporan penjualan? | Reports |
+| 8 | Bagaimana cara mengatur pajak (PPN)? | Settings |
+| 9 | Bagaimana cara cetak struk? | Hardware |
+| 10 | Pesanan sudah dibayar tapi tidak muncul di dapur? | Troubleshooting |
+| 11 | Bagaimana cara tandai item habis terjual? | Menu |
+| 12 | Bagaimana cara tutup meja setelah tamu selesai? | Operations |
+| 13 | Bagaimana cara export laporan ke Excel? | Reports |
+| 14 | Bagaimana cara upgrade plan? | Billing |
+| 15 | Bagaimana cara menghubungi support FBQR? | Support |
+
+**Video guides** (embedded YouTube, 60–90 seconds each):
+- "Setup pertama: dari daftar sampai terima pesanan pertama" (onboarding overview)
+- "Cara menambahkan dan mengatur menu"
+- "Cara menggunakan kitchen display"
+- "Cara membaca laporan penjualan"
+
+**Support contact:**
+- WhatsApp Business button (direct link to FBQR support WA number)
+- Email: support@fbqr.app
+- Response time indicator: "Biasanya kami balas dalam 2 jam (07:00–22:00 WIB)"
+
+### `Merchant.onboardingStep` Schema Field
+
+Add to `Merchant` model:
+
+| Field | Type | Notes |
+|---|---|---|
+| `onboardingStep` | int | 0 = not started, 1–5 = wizard step completed, 6 = wizard complete |
+| `onboardingChecklist` | JSON | Array of completed checklist item keys |
+| `wizardCompletedAt` | datetime? | Timestamp when wizard reached step 6 |
 
 ---
 
@@ -1684,6 +1838,178 @@ Research into the two most mature QR ordering markets informs key FBQR decisions
 
 ---
 
+## UI & Design Standards
+
+> **UI is the product.** FBQR competes by being more beautiful, more intuitive, and more trustworthy than every other QR system a merchant has tried. A merchant decides to stay or churn within the first 10 minutes of using the merchant-pos. A customer decides whether to use the menu or ask a waiter within 3 seconds of it loading.
+
+### Design Philosophy
+
+| App | Target feeling | Reference products |
+|---|---|---|
+| `apps/menu` (customer) | Premium restaurant's own digital experience — the customer should feel they are at the restaurant, not using a SaaS tool | Kopi Kenangan app, Nobu digital menu, Grab Food item detail screens |
+| `apps/web` merchant-pos | Clean, fast, zero clutter — works under pressure at dinner rush | Linear, Notion, Vercel dashboard |
+| `apps/web` merchant-kitchen | High contrast, glanceable at 3 metres, touch-friendly | Airport departure boards, Grafana dashboards in dark mode |
+| `apps/web` FBQRSYS | Professional B2B admin — trustworthy and data-dense | Stripe dashboard, Vercel admin |
+
+### Design Tokens (shared via `packages/config/tokens`)
+
+Define these once; import in Tailwind config for both apps.
+
+```ts
+// Color palette
+primary:   '#E8622A'   // warm coral-orange — energy, appetite, Indonesian warmth
+                        // change per restaurant via CSS variables in apps/menu only
+surface:   '#FAFAF9'   // off-white — cleaner than pure white
+neutral:   '#1C1917'   // stone-950 — body text
+muted:     '#78716C'   // stone-500 — secondary text
+border:    '#E7E5E4'   // stone-200 — dividers
+
+// Status colors (consistent across all apps)
+success:   '#16A34A'   // green-600
+warning:   '#D97706'   // amber-600
+danger:    '#DC2626'   // red-600
+info:      '#2563EB'   // blue-600
+
+// Spacing scale: Tailwind default (4px base unit)
+// Border radius: --radius: 0.625rem (matches shadcn default)
+// Font: Geist Sans (Next.js default, clean and modern)
+// Font (apps/menu): overridden per restaurant via RestaurantBranding.fontFamily
+```
+
+> **`apps/menu` branding override:** Every color above can be overridden per restaurant via CSS custom properties injected at session load time (`--color-primary`, `--color-surface`, etc.). The default palette above applies to FBQR's own restaurant demo and to merchants who have not customised branding.
+
+### Typography Scale
+
+```
+Display:  font-size 36px / line-height 40px / font-weight 700  — hero headings (apps/menu)
+H1:       30px / 36px / 700   — page titles
+H2:       24px / 32px / 600   — section headings
+H3:       20px / 28px / 600   — card headings
+Body:     16px / 24px / 400   — default body text
+Small:    14px / 20px / 400   — secondary labels, metadata
+Micro:    12px / 16px / 400   — badges, timestamps, table captions
+Mono:     14px / 20px / 400   — invoice numbers, order IDs, code
+```
+
+### Component Rules
+
+**Loading states — always use skeletons, never spinners:**
+```
+❌ <Spinner />              — user sees a vague "something is happening"
+✅ <Skeleton className="h-4 w-[200px]" />  — user sees the shape of the content about to arrive
+```
+Exception: full-page initial load may use a branded splash screen (apps/menu only).
+
+**Empty states — never show a blank div:**
+Every list, table, and grid must have an empty state that:
+1. Explains why it is empty (not just "No data")
+2. Provides the next action the user should take
+3. Uses a relevant illustration or icon (not stock clipart)
+
+```
+Example — empty menu categories:
+  [🍽️ illustration]
+  "Belum ada kategori menu"
+  "Tambahkan kategori pertama Anda untuk mulai menerima pesanan."
+  [ + Tambah Kategori ]
+```
+
+**Error states — friendly language + recovery action:**
+```
+❌ "Error 500: Internal Server Error"
+✅ "Terjadi kesalahan. Coba lagi, atau hubungi support jika masalah berlanjut."
+   [ Coba Lagi ]  [ Hubungi Support ]
+```
+
+**Toast notifications — use Sonner (ships with shadcn/ui):**
+```ts
+// Success
+toast.success('Menu berhasil disimpan')
+// Error
+toast.error('Gagal menyimpan. Periksa koneksi internet Anda.')
+// Info
+toast.info('3 pesanan baru masuk')
+// Warning (use sparingly)
+toast.warning('Stok Nasi Goreng tersisa 2 porsi')
+```
+
+**Confirmation dialogs — only for destructive or irreversible actions:**
+```
+✅ Deleting a menu item, cancelling an order, revoking staff access
+❌ Saving a form, changing a toggle — these should save immediately with a toast
+```
+
+### Motion & Animation (Framer Motion)
+
+```ts
+// Page transitions — subtle fade + slight upward slide
+const pageVariants = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  exit:    { opacity: 0, y: -8 }
+}
+transition: { duration: 0.15, ease: 'easeOut' }
+
+// List item stagger (kitchen display, menu items)
+transition: { staggerChildren: 0.04 }
+
+// Order status badge pulse (PREPARING state)
+animate: { scale: [1, 1.05, 1] }
+transition: { repeat: Infinity, duration: 2 }
+
+// Drawer / Sheet slide-in — use shadcn Sheet (Framer Motion built-in)
+```
+
+**Rule:** Animation must never slow down a task. If an animation makes staff wait, remove it. Motion is for orientation (where did that card go?) and delight (the order just arrived!) — not decoration.
+
+### Accessibility Baseline
+
+- **WCAG 2.1 AA** minimum for all interactive elements
+- All interactive elements reachable by keyboard (`Tab`, `Enter`, `Space`, `Esc`)
+- All images have `alt` text (menu item images: use item name as alt)
+- Colour contrast ratio ≥ 4.5:1 for body text, ≥ 3:1 for large text
+- Focus ring always visible (Tailwind `focus-visible:ring-2`)
+- Screen reader labels on icon-only buttons (`aria-label`)
+- `apps/menu`: touch targets ≥ 44×44px (thumb-friendly on mobile)
+- `apps/web` merchant-pos: designed for both tablet (1024px) and desktop (1280px+)
+- `merchant-kitchen`: designed primarily for 1080p TV/monitor in landscape, dark mode
+
+### Responsive Breakpoints
+
+```
+apps/menu:        Mobile-first. Primary target: 375–430px (iPhone SE → iPhone 15 Pro Max)
+                  Tablet (768px+): optional enhancement; most customers use phone
+apps/web:         Tablet (1024px) as minimum — kitchen staff use iPads
+                  Desktop (1280px+): primary for merchant owner dashboard
+merchant-kitchen: 1080p landscape (1920×1080) — TV/monitor in kitchen
+FBQRSYS:          Desktop only (1280px+) — platform admin always at a workstation
+```
+
+### `apps/menu` — Specific UI Requirements
+
+The customer menu app is the **revenue-generating surface** and the shop window for every restaurant on the platform. It must be held to a higher visual standard than the admin apps.
+
+- **First render < 1.5 seconds** on Indonesian 4G (Lighthouse score > 85)
+- **No layout shift** (CLS < 0.1) — menu items must not jump as images load
+- **Optimistic UI** — add to cart is instant (no server round-trip before updating cart count)
+- **Swipe gestures** — Spotlight layout items swipeable left/right (Framer Motion drag)
+- **Haptic feedback** — `navigator.vibrate(10)` on "Add to Cart" confirmation (Android)
+- **Bottom sheet for item detail** on mobile (slides up from bottom, not a modal) — matches native app patterns customers already know
+- **Sticky bottom cart bar** — always visible, shows item count + total, animates on change
+- **Cart additions** — item count badge on cart button springs (scale 1 → 1.3 → 1) when item added
+- **Color theming** — CSS custom properties applied within 50ms of session load (no flash of unstyled menu)
+
+### Code Quality for UI
+
+- No inline styles — Tailwind only (exception: dynamic CSS custom properties for branding)
+- No magic numbers — use Tailwind spacing/color tokens
+- Components in `packages/ui` must be truly generic (no business logic)
+- Business-aware components live in each app's `components/` directory
+- Every new page component needs a `loading.tsx` (Next.js built-in skeleton)
+- Every new page component needs an `error.tsx` (Next.js built-in error boundary)
+
+---
+
 ## Takeaway / Counter Mode
 
 > **Critical gap for chain and counter-service restaurants.** The current architecture assumes dine-in table QR. Counter-service operators (fried chicken chains, warungs, food courts) need a fundamentally different flow.
@@ -2390,6 +2716,166 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 
 ---
 
+## Public REST API & Webhooks
+
+> **Integration is not optional.** Merchants who don't build their own inventory module will use someone else's. If FBQR doesn't expose an API, the merchant runs two disconnected systems and eventually picks the one their accountant or POS vendor supports. An open API turns FBQR into a platform, not just a product.
+
+### Architecture
+
+```
+External system (accounting, inventory, loyalty, delivery aggregator)
+    │
+    │  REST API (bearer token)            Webhooks (HTTPS POST, signed)
+    │  GET  /api/v1/orders                ← order.confirmed
+    │  GET  /api/v1/menu-items            ← order.status_changed
+    │  POST /api/v1/menu-items/:id/stock  ← payment.received
+    │  GET  /api/v1/reports/revenue       ← stock.depleted
+    │                                     ← session.closed
+    ▼
+FBQR API (Next.js API routes, /api/v1/*)
+```
+
+**Auth:** API key as bearer token — `Authorization: Bearer fbqr_live_xxxx`.
+Keys are scoped to a merchant and carry a permission list (same atomic permission keys as RBAC).
+No OAuth2 — server-to-server integration; bearer tokens are the right simplicity/security tradeoff.
+
+**Versioning:** `/api/v1/` prefix. Breaking changes bump the version; old versions deprecated with 6-month notice.
+
+**Rate limiting:** 60 requests/minute per API key (configurable by plan tier).
+
+**Response format:**
+```json
+{ "data": { ... }, "meta": { "requestId": "uuid", "timestamp": "ISO8601" } }
+// Errors:
+{ "error": { "code": "ORDER_NOT_FOUND", "message": "Order 123 does not exist" }, "meta": { ... } }
+```
+
+### REST Endpoints (Phase 2 — schema scaffolded in Phase 1)
+
+| Method | Path | Permission | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/orders` | `orders:view` | List orders (filter by status, date, branch) |
+| `GET` | `/api/v1/orders/:id` | `orders:view` | Single order with items |
+| `PATCH` | `/api/v1/orders/:id/status` | `orders:manage` | Update order status |
+| `GET` | `/api/v1/menu-items` | `menu:manage` | List all menu items |
+| `PATCH` | `/api/v1/menu-items/:id` | `menu:manage` | Update item (price, availability) |
+| `POST` | `/api/v1/menu-items/:id/stock` | `menu:manage` | Set stock count |
+| `GET` | `/api/v1/reports/revenue` | `reports:read` | Revenue summary (date range, branch) |
+| `GET` | `/api/v1/webhooks` | `settings:manage` | List registered endpoints |
+| `POST` | `/api/v1/webhooks` | `settings:manage` | Register a webhook endpoint |
+| `DELETE` | `/api/v1/webhooks/:id` | `settings:manage` | Remove a webhook endpoint |
+
+### Webhook Events
+
+FBQR POSTs a signed JSON payload to registered endpoints when these events occur:
+
+| Event | Payload includes | Common use case |
+|---|---|---|
+| `order.confirmed` | Order ID, items, table, branch, total | Trigger inventory deduction in external system |
+| `order.status_changed` | Order ID, old status, new status | Sync to delivery aggregator dashboard |
+| `order.cancelled` | Order ID, reason, items | Restore stock in external inventory |
+| `payment.received` | Payment ID, method, amount, order ID | Sync to Accurate Online / Jurnal.id |
+| `stock.depleted` | Item ID, name, branch | Alert purchasing system to reorder |
+| `session.closed` | Session ID, table, orders summary | Trigger loyalty sync or end-of-day export |
+
+**Webhook security:** `X-FBQR-Signature: sha256=<HMAC-SHA256>` header on every POST, signed with `WebhookEndpoint.secret`. Recipients verify before processing.
+
+**Webhook reliability:** Retries on non-2xx response — 5 attempts, exponential backoff (5s, 25s, 125s, 625s, 3125s). After 5 failures the endpoint is marked `isActive = false` and merchant is notified by email. Every attempt logged in `WebhookDeliveryLog`.
+
+### Schema (stub in Phase 1 Prisma — no UI until Phase 2)
+
+```
+MerchantApiKey
+  id            string UUID PK
+  merchantId    string FK → Merchant
+  name          string          — human label ("Accurate Online integration")
+  keyHash       string          — bcrypt hash; full key shown once at creation only
+  keyPrefix     string          — first 8 chars for display ("fbqr_liv…")
+  permissions   string[]        — subset of merchant permission keys
+  lastUsedAt    datetime?
+  expiresAt     datetime?       — null = never expires
+  revokedAt     datetime?       — null = active
+  createdAt     datetime
+
+WebhookEndpoint
+  id              string UUID PK
+  merchantId      string FK → Merchant
+  url             string          — HTTPS only (validated at creation)
+  events          string[]        — subscribed event type keys
+  secret          string          — random 32-byte hex; shown once at creation
+  isActive        bool            — false after 5 consecutive failures
+  failureCount    int             — resets to 0 on success
+  lastTriggeredAt datetime?
+  createdAt       datetime
+
+WebhookDeliveryLog
+  id             string UUID PK
+  endpointId     string FK → WebhookEndpoint
+  event          string
+  requestBody    JSON
+  responseCode   int?
+  responseBody   string?
+  attemptNumber  int
+  deliveredAt    datetime
+```
+
+**Additional indexes:**
+```
+MerchantApiKey:      (merchantId, revokedAt)       — list active keys
+MerchantApiKey:      (keyPrefix)                   — fast auth lookup
+WebhookEndpoint:     (merchantId, isActive)        — list active endpoints
+WebhookDeliveryLog:  (endpointId, deliveredAt DESC) — delivery log pagination
+```
+
+**API documentation:** Auto-generated OpenAPI spec from Zod schemas via `zod-to-openapi`; served at `api.fbqr.app/docs` (Swagger UI). Phase 2.
+
+---
+
+## Phase 2 Schema Scaffolding (Must Be in Phase 1 Prisma)
+
+> **Non-breaking migrations are only possible if Phase 1 schema anticipates Phase 2 needs.** Adding a new nullable column to an existing table later is easy. Adding a new table with foreign keys to existing tables is also easy. But retrofitting a design (e.g. splitting a single-payment model into multi-payment) is a painful migration. This section lists every table and field that must exist in the Phase 1 Prisma schema even though the UI ships in Phase 2.
+
+### Tables to create in Phase 1 Prisma (zero UI, just schema)
+
+| Table | Phase 2 feature it enables | Notes |
+|---|---|---|
+| `MerchantApiKey` | Public REST API | Schema defined in Public API section above |
+| `WebhookEndpoint` | Webhook subscriptions | Schema defined in Public API section above |
+| `WebhookDeliveryLog` | Webhook delivery audit | Schema defined in Public API section above |
+| `BranchMenuOverride` | Per-branch item availability | `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
+| `Reservation` | Table reservation system | `(id, branchId FK, tableId FK, guestName, guestPhone, partySize, scheduledAt, depositPaid bool, status: PENDING\|CONFIRMED\|CANCELLED\|SEATED\|NO_SHOW)` |
+| `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
+| `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
+| `MerchantRequest` | In-app EOI for multi-branch | `(id, merchantId FK, type: MULTI_BRANCH, requestedBranches int, message, status: PENDING\|APPROVED\|REJECTED, reviewedByAdminId?, reviewedAt?, createdAt)` |
+
+### Fields to add to existing tables in Phase 1 Prisma (nullable, no Phase 1 UI)
+
+| Table | Field | Type | Phase 2 feature |
+|---|---|---|---|
+| `Merchant` | `onboardingStep` | int default 0 | Onboarding wizard state |
+| `Merchant` | `onboardingChecklist` | JSON default `[]` | Setup checklist tracking |
+| `Merchant` | `wizardCompletedAt` | datetime? | Onboarding analytics |
+| `Staff` | `seenCoachMarks` | string[] default `[]` | In-app coach marks dismissed |
+| `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY`) nullable | Per-item kitchen status |
+| `Order` | `depositRate` | decimal? | Booking deposit percentage |
+| `Order` | `depositAmount` | int? | Deposit amount charged upfront |
+| `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
+| `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
+
+### Why these specific items
+
+**`BranchMenuOverride`** — without this stub, adding per-branch availability in Phase 2 requires modifying `MenuItem` (adding nullable branchId FK) which would change how all Phase 1 menu queries work. A separate junction table is the clean, non-breaking addition.
+
+**`Reservation`** — the foreign keys to `Table` and `Branch` must exist in the schema before Phase 1 data accumulates. Adding them later requires migrating existing rows. Creating the table now with no data is costless.
+
+**`MerchantIntegration`** — a generic integration registry means adding WhatsApp, Accurate Online, and Jurnal.id in Phase 2 is just inserting a row with a different `type`. Without this, each integration gets its own table, which fragments the schema.
+
+**`OrderItem.status`** — nullable in Phase 1, populated in Phase 2. Adding this column to a table with millions of rows in Phase 2 would require a long migration. Stub it now while the table is empty.
+
+**`Merchant.onboardingStep` / `onboardingChecklist`** — needed from the first deployment since onboarding is a Phase 1 feature (the wizard runs on first login). Already included in the Merchant Onboarding section above — listed here for completeness.
+
+---
+
 ## Database Indexing Strategy
 
 Define these indexes at migration time (Step 2). Missing indexes on these tables will cause slow queries at scale.
@@ -2810,6 +3296,17 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 
 **Future agents:** If you are about to raise any of these as issues, read the referenced ADRs first.
 
+**Fixed before v2.0 review (product maturity: onboarding, API, UI, Phase 2 prep):**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| No merchant onboarding wizard — new users overwhelmed on first login | ✅ Fixed in v2.0 | Full first-login wizard (5 steps), setup checklist, in-app help panel, FAQ, coach marks, empty states all documented in Merchant Onboarding section; `Merchant.onboardingStep`, `onboardingChecklist`, `wizardCompletedAt` fields added |
+| No public API — merchants cannot integrate inventory / accounting without two systems | ✅ Fixed in v2.0 | Public REST API + Webhooks section added; `MerchantApiKey`, `WebhookEndpoint`, `WebhookDeliveryLog` schema stubbed in Phase 1 Prisma; ADR-021 documents design decisions |
+| No UI framework decision — CoreUI / AdminLTE vs shadcn/ui unresolved | ✅ Fixed in v2.0 | ADR-020: CoreUI and AdminLTE rejected (Bootstrap conflict); shadcn/ui + Tailwind + shadcn Blocks + TanStack Table + Recharts + Framer Motion decided; tech stack table updated |
+| Phase 2 prep unclear — which Phase 1 schema items must be stubbed now | ✅ Fixed in v2.0 | Phase 2 Schema Scaffolding section added: 8 new tables + 9 new nullable fields to include in Phase 1 Prisma; rationale per item |
+| No design standards — "beautiful UI" undefined in the spec | ✅ Fixed in v2.0 | UI & Design Standards section added: design philosophy per app, design tokens, typography scale, component rules (skeletons not spinners, empty states, error states), motion spec, accessibility baseline, responsive breakpoints, apps/menu-specific requirements |
+| apps/menu has zero design direction — customer experience undefined | ✅ Fixed in v2.0 | apps/menu specific section in UI standards: <1.5s first render, optimistic cart, swipe gestures, haptic feedback, bottom sheet, sticky cart bar, CSS theming <50ms |
+
 ---
 
 ### ADR-019: Per-Branch Separate Menus — Rejected; Correct Pattern is Per-Branch Availability Override
@@ -2833,6 +3330,64 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 4. **If a chain genuinely needs completely different menus** (different concept, different pricing, different items), those are two different restaurant brands and should be two separate Merchant accounts — which is already the documented design (see ADR-007).
 
 **Future agents:** Do not add per-branch menu duplication to the schema. Implement `BranchMenuOverride` in Phase 2 for per-branch item availability control.
+
+---
+
+### ADR-020: UI Framework — shadcn/ui + Tailwind; CoreUI and AdminLTE Rejected
+
+**Decision:** Use Tailwind CSS + shadcn/ui as the single UI system across all apps. Use shadcn/ui Blocks for admin layout scaffolding. Do not use CoreUI, AdminLTE, or any Bootstrap-based admin template.
+
+**Alternatives considered:**
+
+| Option | Reason rejected |
+|---|---|
+| **CoreUI** | Bootstrap-based — conflicts with Tailwind CSS (competing reset stylesheets, specificity wars, doubled bundle). React version brings `@coreui/react` which ships Bootstrap CSS. |
+| **AdminLTE** | Bootstrap 4/5 + jQuery. jQuery is incompatible with React's virtual DOM model. No viable Next.js App Router integration. Dated visual aesthetic. |
+| **Ant Design** | Brings its own design system (not Tailwind-compatible). 500kb+ bundle. Conflicts with Tailwind utility classes. |
+| **Material UI (MUI)** | Same problem as Ant Design — own design system, not Tailwind-compatible, emotion/styled-components dependency. |
+
+**Why shadcn/ui wins:**
+1. **You own the code** — shadcn copies component source into your repo. No external dependency to upgrade or break.
+2. **Tailwind-native** — every component is Tailwind classes. No specificity conflicts.
+3. **Next.js App Router native** — server components, `use client` boundaries, all handled correctly.
+4. **shadcn Blocks** — full dashboard page templates (sidebar layout, data tables, settings pages) added in 2024. Replaces the "pre-built admin chrome" value proposition of CoreUI/AdminLTE.
+5. **`apps/menu` compatibility** — the same component system works for both admin and customer apps. CoreUI/AdminLTE are admin-only aesthetics.
+6. **Community dominance** — the dominant React + Tailwind component library as of 2025/2026. AI assistance, tutorials, and community support are unmatched.
+
+**Complementary libraries chosen:**
+- TanStack Table (via shadcn DataTable) — data grids
+- Recharts (via shadcn Charts) — analytics
+- Framer Motion — animation and gestures
+- Sonner — toast notifications (ships with shadcn)
+
+**Future agents:** Do not propose replacing Tailwind with Bootstrap. Do not suggest adding CoreUI or AdminLTE. If a UI component need arises that shadcn/ui does not cover, evaluate Radix UI primitives (which shadcn already wraps) before any other option.
+
+**Status:** Decided.
+
+---
+
+### ADR-021: Public API Design — REST + Webhooks, Bearer Token Auth, No GraphQL
+
+**Decision:** The FBQR public API is a REST API with bearer token authentication. Webhook subscriptions for event-driven integration. No GraphQL. No OAuth2 for server-to-server integrations.
+
+**Why REST over GraphQL:**
+1. **Target audience** — Accurate Online, Jurnal.id, and inventory systems used by Indonesian SMEs are built by teams that know REST. GraphQL adoption in Indonesia's SME software ecosystem is minimal. A REST API will be integrated by more merchants with less friction.
+2. **Simplicity** — a REST API with 10 endpoints is easier to document, easier to debug ("just curl it"), and easier for Pak Budi's nephew who maintains the accounting system.
+3. **Caching** — REST responses can be cached at the edge; GraphQL POST requests cannot without additional tooling.
+
+**Why bearer token over OAuth2:**
+1. **Use case is server-to-server** — OAuth2 is designed for delegating user authentication ("Login with Google"). Merchants are connecting their own server (Accurate Online) to their own FBQR data. Bearer tokens are the correct, simple mechanism.
+2. **OAuth2 complexity** — implementing OAuth2 properly requires authorization server, token refresh flows, and redirect URIs. The implementation cost vastly exceeds the security benefit for this use case.
+3. **Security parity** — bearer tokens over HTTPS + short expiry + per-permission scope + revocation endpoint is equivalent security to OAuth2 client credentials for this use case.
+
+**Why webhooks for events (not polling):**
+1. External systems polling FBQR's `/orders` endpoint every minute would create unnecessary load and 1-minute lag.
+2. Webhooks deliver events in near-real-time with zero polling overhead.
+3. Retry logic and delivery logs are owned by FBQR — the integrating system just needs to expose an HTTPS endpoint.
+
+**Versioning strategy:** `/api/v1/` prefix. Version bump only on breaking changes. Non-breaking additions (new fields, new endpoints) are added without version bump. Deprecated versions maintained for 6 months minimum with email notice to all merchants using the old version (tracked via `MerchantApiKey.lastUsedAt` + version header logging).
+
+**Status:** Decided.
 
 ---
 
