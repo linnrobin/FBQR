@@ -1107,31 +1107,232 @@ Photos cannot be imported via CSV — merchant uploads images per item after imp
 
 ---
 
-## ROI Analytics Dashboard ("Show Me the Value")
+## Dashboards
 
-> **Needed to justify the subscription for all three personas.** Without this, merchants can't answer "is FBQR making me more money?"
+---
 
-### Metrics shown to merchant (merchant-pos dashboard)
+### Multi-Branch (Cabang) Dashboard — Merchant Owner
+
+The schema supports `Merchant → Restaurant[] → Branch[]`. The dashboard UI reflects this hierarchy.
+
+#### Restaurant selector (top-level switcher)
+
+When a merchant owns more than one restaurant, a persistent restaurant selector appears at the top of `merchant-pos`. It shows:
+- Restaurant name + logo thumbnail
+- Quick status indicator (active orders count, any alerts)
+- "All Restaurants" aggregate option (chain view)
+
+Switching restaurants reloads the entire dashboard scoped to that restaurant. Staff accounts do not see the selector — they are scoped to one restaurant and see it directly.
+
+#### Branch selector (within a restaurant)
+
+Within a restaurant, branches are selectable via a secondary filter:
+- Default view: aggregate across all branches of that restaurant
+- Selectable individual branch for drill-down
+
+Branch-level data is always available for: orders, revenue, table status, staff activity.
+
+---
+
+### FBQRSYS Owner Dashboard
+
+Accessible to `SystemAdmin` users with `reports:read` permission.
+
+#### Overview cards (top of page)
+
+| Card | Data |
+|---|---|
+| **Total GMV** | Gross merchandise value across all merchants (today / this month / all time) |
+| **Platform MRR** | Monthly recurring revenue from active subscriptions |
+| **Platform ARR** | Annualized recurring revenue |
+| **Active Merchants** | Count of merchants with status `ACTIVE` |
+| **Trial Merchants** | Count of merchants in `TRIAL` — potential conversions |
+| **Suspended Merchants** | Count — needs attention |
+
+#### Merchant growth analytics
 
 | Metric | Description |
 |---|---|
-| Revenue this month vs last month | IDR trend with % change |
-| Orders via QRIS vs cash vs delivery | Breakdown of order sources |
-| Average order value (AOV) trend | Week-over-week |
-| Top 5 best-selling items | By revenue and by quantity |
-| Peak hours heatmap | 7-day rolling hourly order volume |
-| Table turnover rate | Average session length per table |
-| AI recommendations impact | Orders that included a recommended item vs not (if AI enabled) |
-| Loyalty program uptake | % of orders by registered customers |
+| New signups (trial starts) | Daily/weekly/monthly trend chart |
+| Trial → Active conversion rate | % of trials that converted to paid, by cohort month |
+| Churned merchants | Cancelled or suspended past grace period, by month |
+| Net merchant growth | New activations minus churn |
+| Average trial duration before conversion | How many days before merchants upgrade |
 
-### Platform-level (FBQRSYS)
+#### Subscription revenue breakdown
 
 | Metric | Description |
 |---|---|
-| Total GMV across all merchants | Platform gross merchandise value |
-| MRR / ARR | Monthly/annual recurring revenue from subscriptions |
-| Merchant growth | New signups, trial conversions, churned |
-| Top-performing merchants | For case studies / referral programme |
+| Revenue by plan tier | MRR split: Free / Starter / Pro / Enterprise |
+| Monthly vs yearly billing mix | % of revenue from annual plans (higher LTV) |
+| Upcoming renewals (next 30 days) | List of merchants renewing soon — risk: those with failed past payments |
+| Overdue / at-risk accounts | Merchants in grace period or with failed last payment |
+| Revenue forecast (next 3 months) | Based on current subscriptions + historical churn rate |
+
+#### Top merchants
+
+| Metric | Description |
+|---|---|
+| Top 10 by GMV | Highest-volume merchants on the platform — for case studies, referrals |
+| Top 10 by order count | Most active in terms of transactions |
+| Top 10 by customer ratings | Platform quality leaders |
+| Fastest growing (last 30 days) | Month-over-month GMV growth — identify rising stars |
+| Recently churned | Merchants who cancelled — surface for win-back campaigns |
+
+#### Platform-wide order analytics
+
+| Metric | Description |
+|---|---|
+| Total orders processed | Platform cumulative + daily/weekly trend |
+| Order type mix | Dine-in vs Takeaway vs Delivery (%) |
+| Payment method distribution | QRIS vs Cash vs GoPay/OVO vs VA across all merchants |
+| Average order value (platform-wide) | Trend over time |
+| Peak hours (platform-wide) | When are orders placed across all restaurants |
+
+#### Geographic distribution (future)
+
+- Map view of merchant locations by city/province
+- GMV density heatmap — where is the platform strongest
+- Identifies expansion opportunities (high-density cities with few merchants)
+
+#### Billing health
+
+| Metric | Description |
+|---|---|
+| Invoices issued this month | Count + total IDR value |
+| Invoices paid on time | % payment rate |
+| Invoices overdue | Count + total IDR at risk |
+| Average days to payment | Payment velocity trend |
+| Total outstanding (unpaid) | Sum of all overdue `MerchantBillingInvoice` amounts |
+
+---
+
+### Merchant Owner Dashboard (Single Restaurant)
+
+Accessible from `merchant-pos`. Merchant owners and staff with `reports:read` see this. Scope: one restaurant (or one branch if branch filter is applied).
+
+#### Live operations panel (top of dashboard, real-time)
+
+| Widget | Description |
+|---|---|
+| **Active orders** | Count of orders currently in `PENDING`, `CONFIRMED`, `PREPARING`, `READY` |
+| **Tables occupied** | X of Y tables currently `OCCUPIED` |
+| **Open waiter requests** | Unresolved `WaiterRequest` count |
+| **Today's revenue so far** | Running IDR total for today |
+| **Today's order count** | Running count for today |
+| **Avg wait time today** | Average time from `CONFIRMED` to `READY` |
+
+All live panel widgets update via Supabase Realtime — no refresh needed.
+
+#### Revenue analytics
+
+| Metric | Description |
+|---|---|
+| Revenue today / this week / this month / custom range | IDR with % change vs prior period |
+| Revenue trend chart | Daily bar chart for selected period |
+| Revenue by order type | Dine-in / Takeaway / Delivery split (IDR + %) |
+| Revenue by payment method | QRIS / Cash / GoPay / OVO / VA breakdown |
+| Revenue by branch | If multi-branch: compare branches side by side |
+| Tax collected | PPN amount for accounting |
+| Service charge collected | Amount for accounting |
+
+#### Order analytics
+
+| Metric | Description |
+|---|---|
+| Total orders | Count for selected period, with trend |
+| Average order value (AOV) | IDR, trend week-over-week |
+| Orders by hour (peak heatmap) | 7-day rolling hourly chart — shows breakfast rush, lunch peak, dinner peak |
+| Orders by day of week | Monday–Sunday pattern |
+| Repeat vs first-time customers | % of orders from returning registered customers (if loyalty enabled) |
+| Cancellation rate | % of orders cancelled + reasons (if captured) |
+
+#### Menu performance
+
+| Metric | Description |
+|---|---|
+| Top 10 items by revenue | IDR generated per item |
+| Top 10 items by order count | Most-ordered items |
+| Slowest-moving items | Bottom 10 by order count in selected period — candidates for removal or promotion |
+| Category performance | Revenue and order count per category |
+| Items frequently ordered together | Item affinity pairs — informs combo promotions |
+| AI recommendation impact | If AI enabled: orders that included a recommended item vs not; uplift % |
+
+#### Table & session analytics
+
+| Metric | Description |
+|---|---|
+| Table turnover rate | Average time a table is `OCCUPIED` per session |
+| Average spend per table | IDR per session |
+| Average items per order | Cart size trend |
+| Busiest tables | Tables with most sessions in period |
+| "Add More Items" frequency | How often customers place a second order in the same session |
+
+#### Staff performance (requires `staff:manage` permission)
+
+| Metric | Description |
+|---|---|
+| Orders processed by staff | If staff member handled (cashier, supervisor) |
+| Avg order handling time | From order receipt to status update |
+| Waiter requests resolved | Count per staff member |
+
+#### Customer & loyalty analytics (if loyalty enabled)
+
+| Metric | Description |
+|---|---|
+| Registered customers | Total + new this period |
+| Loyalty points issued | Total IDR equivalent |
+| Loyalty points redeemed | Total IDR equivalent redeemed |
+| Redemption rate | % of eligible orders that used loyalty points |
+| Top customers by spend | Leaderboard — for targeted promotions |
+| Customer retention rate | % of customers who return within 30/60/90 days |
+
+#### Ratings & feedback
+
+| Metric | Description |
+|---|---|
+| Average order rating | 1–5 stars, trend over time |
+| Rating distribution | Bar chart (1★ to 5★ count) |
+| Recent comments | Latest 20 comments with star rating |
+| Items with lowest ratings | Surface quality issues per item |
+
+---
+
+### Merchant Owner Dashboard — Chain / Multi-Restaurant View
+
+When "All Restaurants" is selected in the restaurant switcher, the merchant sees a consolidated view across their entire portfolio.
+
+#### Portfolio overview cards
+
+| Card | Data |
+|---|---|
+| **Total revenue (all restaurants)** | Consolidated IDR for period |
+| **Total orders (all restaurants)** | Consolidated count |
+| **Best-performing restaurant** | Highest revenue this month |
+| **Fastest-growing restaurant** | Highest month-over-month growth |
+| **Restaurants needing attention** | Any with unusually low ratings or high cancellation rates |
+
+#### Restaurant comparison table
+
+A sortable table showing each restaurant side by side:
+
+| Column | Description |
+|---|---|
+| Restaurant name | Link to drill into that restaurant's dashboard |
+| Revenue (period) | IDR |
+| Orders (period) | Count |
+| AOV | Average order value |
+| Avg rating | Star average |
+| Active tables | Currently occupied |
+| Subscription status | ACTIVE / TRIAL / SUSPENDED |
+
+Sortable by any column. Click a row to drill into that restaurant's single-restaurant dashboard.
+
+#### Consolidated accounting export
+
+When exporting, the merchant can choose:
+- Single restaurant → scoped export
+- All restaurants → one combined Excel/CSV with a `restaurantName` column added
 
 ---
 
