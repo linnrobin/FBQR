@@ -11,6 +11,7 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
+Version        : 1.1
 Current phase  : Phase 0 — Requirements complete + architecture review fixes applied. No code written yet.
 Last completed : Full pre-code architecture review: fixed 10 correctness issues, 5 logic flaws,
                  added ADRs 009–013 resolving all critical open questions. Ready for coding.
@@ -105,6 +106,8 @@ Before the session ends (and before context runs out), always:
 
 1. **Commit and push all changes** — partial work is better than lost work
 2. **Update the CURRENT STATE block** at the top of this file:
+   - Increment `Version` (patch: 1.0 → 1.1 for doc changes; minor: 1.1 → 1.2 for schema or ADR changes; major: 1.x → 2.0 for phase completion)
+   - Set `Last updated` to today's date
    - Set `Last completed` to what was just finished
    - Set `Next step` to the next uncompleted item in the Phase Tracker
    - Note any new open decisions or doc gaps discovered
