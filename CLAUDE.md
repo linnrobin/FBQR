@@ -11,27 +11,26 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 1.8
-Current phase  : Phase 0 — Requirements complete. Eighth architecture review fixes applied. No code written yet.
-Last completed : Eighth pre-code architecture review (v1.7 → v1.8): fixed 16 issues + 3 rebuttals
-                 (session expiry DIRTY/AVAILABLE conditional; orders:refund RBAC permission;
-                 webhook handler full DB transaction spec; EXPIRED→CANCELLED state machine;
-                 cron per-merchant paymentTimeoutMinutes join; EOD Payment.EXPIRED not FAILED;
-                 late webhook revival stock check; service charge PPN taxability + taxOnServiceCharge;
-                 stock decrement atomicity in webhook tx; roundingRule setting;
-                 delivery webhook idempotency via platformOrderId unique constraint;
-                 deactivated station FK fallback documented; stock restoration on cancellation;
-                 pointsCalculationBasis on loyalty; currency field scaffolding; ADR-015 redirect
-                 URL spec); 3 rebuttals (kitchen priority sequential, WaiterRequest idempotency,
-                 partial refunds/per-item status/delivery auth deferred to Phase 2);
-                 ADR-018 expanded with v1.7 rebuttals (16 items + 3 deferred).
+Version        : 1.9
+Current phase  : Phase 0 — Requirements complete. Ninth operational review fixes applied. No code written yet.
+Last completed : Ninth operational review (v1.8 → v1.9): fixed 7 issues + 1 rebuttal + 6 deferred
+                 (kitchen load control: maxActiveOrders + orderingPaused toggle;
+                 WaiterRequest.type enum: ASSISTANCE|BILL|CALL with bill-total preview;
+                 weight-based pricing: MenuItem.priceType BY_WEIGHT + full staff weighing flow;
+                 kitchen display card format: table identity, elapsed timer, customerNote field;
+                 Order.customerNote free-text field;
+                 Midtrans fee transparency in revenue dashboard: gross/fees/net;
+                 ADR-019: per-branch separate menus rejected → BranchMenuOverride pattern;
+                 6 items deferred to Phase 2: Hidang mode, label printing, booking deposit,
+                 per-branch availability override, staff order mode, inventory/COGS)
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (all Phase 1
                  blockers resolved; remaining items are Phase 2 concerns)
 Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
                  merchant first-time onboarding guided setup flow — not yet documented;
-                 refund flow full detail — deferred to Step 15 and Step 19
+                 refund flow full detail — deferred to Step 15 and Step 19;
+                 estimated wait time display for customers — deferred to Phase 2 (formula documented)
 ```
 
 ---
@@ -440,6 +439,9 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                       prevent race conditions under concurrent orders; resets at midnight
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
   │  platformOrderId (nullable) — external delivery platform reference
+  │  customerNote (string?, max 200 chars) — free-text special request entered by customer at checkout
+  │                                           (e.g. "no MSG", "extra spicy", "allergy: shrimp")
+  │                                           shown on kitchen display card and order tracking screen
   │
   ├── OrderItem      ← unitPrice (int), variantPriceDelta (int), addonPriceTotal (int), lineTotal (int)
   │                    variantSnapshot (JSON), addonSnapshot (JSON) — metadata only
@@ -451,8 +453,13 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   ├── OrderEvent     ← Immutable log of order lifecycle transitions
   │     (orderId, fromStatus, toStatus, actorId?, actorType, actorName?, cancellationReason?, note?, createdAt)
   │     cancellationReason: CUSTOMER_REQUEST | PAYMENT_FAILED | MERCHANT_CANCEL | SYSTEM_EXPIRED | REFUND
-  ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
+  ├── WaiterRequest  ← Customer pressed a waiter-call button; resolved by staff
   │                    branchId (FK), tableId (FK), notifyRoleId (FK? nullable — null = all branch staff)
+  │                    type: ASSISTANCE | BILL | CALL
+  │                      ASSISTANCE — general help ("mas, tolong ke sini")
+  │                      BILL       — customer wants to pay; staff UI shows Table total so waiter
+  │                                   arrives with the EDC machine ready
+  │                      CALL       — attention request, no specific action implied
   │                    resolvedAt (datetime? — null = open; set when staff marks resolved or session closes)
   │                    Auto-resolve rule: when a CustomerSession moves to COMPLETED or EXPIRED, all
   │                    open WaiterRequests for that session's tableId are automatically resolved
@@ -816,9 +823,17 @@ Customer can [Add More Items] → new items go to same table session, create a n
 
 ### 6. "Call Waiter" feature
 
-- Always visible button on the menu and order tracking screen
-- Creates a `WaiterRequest` record (restaurantId, tableId, message, requestedAt, resolvedAt: null)
-- Pushes real-time notification to merchant-pos floor view
+Three distinct request types are available as separate buttons in the customer UI:
+
+| Button label | `WaiterRequest.type` | Staff UI behaviour |
+|---|---|---|
+| [ Panggil Pelayan ] | `CALL` | Alert on merchant-pos: "Table 5 calls waiter" |
+| [ Butuh Bantuan ] | `ASSISTANCE` | Alert: "Table 5 needs assistance" + optional free-text message |
+| [ Minta Struk / Bill ] | `BILL` | Alert: "Table 5 requests bill" + shows current session total to approaching waiter so they arrive EDC machine ready |
+
+- All three create a `WaiterRequest` record (restaurantId, tableId, type, message?, requestedAt, resolvedAt: null)
+- Push real-time notification to merchant-pos floor view via Supabase Realtime
+- `BILL` type additionally fetches the current session `grandTotal` from confirmed orders and attaches it to the alert — waiter sees the amount before walking to the table
 - Staff marks request as resolved (`resolvedAt` set to current time)
 - Auto-resolved when the CustomerSession closes (`resolvedAt` set by SYSTEM)
 - Logged in AuditLog
@@ -1000,6 +1015,46 @@ The only realistic attack is a **prank order with real payment** — someone pay
 > Rejected as primary defence — it increases operational burden (staff must reprint QRs or customers scan a lobby display QR on arrival). Token rotation on session close is sufficient and only happens when the table is actually turned over.
 
 > **AI agent improvement suggestion area:** Consider whether table-level rate limiting (max N orders per table per hour) adds enough value to justify the configuration complexity. Also consider: should FBQR detect anomalous ordering patterns (same table, 20 orders in 10 minutes) and auto-flag for merchant review?
+
+---
+
+## Kitchen Display — Order Card Format
+
+> **The number one operational question in any kitchen: "Which table is this for?"** The kitchen display must answer this at a glance, without staff needing to cross-reference another screen.
+
+Every order card on the kitchen display must show, in this visual hierarchy:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  [ Table 8 ]   Order #042   •   Dine-in        12:34    │
+│─────────────────────────────────────────────────────────│
+│  2×  Nasi Goreng Spesial                    [Kitchen]   │
+│  1×  Teh Manis Panas                        [Bar]       │
+│  1×  Kepiting Saus Padang  ⚖️               [Kitchen]   │
+├─────────────────────────────────────────────────────────┤
+│  Note: "Nasi goreng no spicy please"                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Required fields per card:**
+
+| Element | Source | Notes |
+|---|---|---|
+| Table identifier | `Order → CustomerSession → Table.name` | e.g. "Table 8", "Counter 2", "Takeaway #042"; always the first thing visible |
+| Order number | `Order.queueNumber` | Sequential per branch per day; displayed prominently |
+| Order type badge | `Order.orderType` | 🪑 Dine-in / 🥡 Takeaway / 🛵 Delivery |
+| Time placed | `Order.createdAt` | Clock time only (HH:MM), not full date |
+| Item lines | `OrderItem` rows | Quantity × name |
+| Station badge | `OrderItem.kitchenStationId` snapshot | Colored pill; shown on "All" tab only — suppressed on per-station tabs |
+| Special badges | Per OrderItem | ⚖️ Needs weighing, ⚠️ Stock-out flag, 🔥 high priority |
+| Customer note | `Order.customerNote` (see below) | Free-text; shown only if non-empty |
+| Elapsed timer | Live, from `Order.confirmedAt` | Ticks up in real time; turns yellow at 10 min, red at 20 min (thresholds configurable per merchant) |
+
+**`Order.customerNote`** — add this field to the `Order` model: a free-text string (max 200 chars) that customers can enter at checkout for special requests ("no MSG", "extra spicy", "no cilantro"). Shown on the kitchen card and on the customer's order tracking screen.
+
+**Delivery orders** show driver ETA instead of table: "🛵 GrabFood — Driver arrives ~12:50"
+
+**Takeaway orders** show the queue number prominently: "🥡 Takeaway — #042"
 
 ---
 
@@ -1316,6 +1371,61 @@ Configurable per restaurant in `MerchantSettings`:
 | `tableSessionTimeoutMinutes` | `120` | Minutes of inactivity before CustomerSession auto-expires; configurable per merchant |
 | `eodCashCleanupHour` | `3` | Hour (0–23, Asia/Jakarta) at which the safety-net cron cancels any remaining abandoned PENDING_CASH orders; configurable for late-night venues |
 | `roundingRule` | `NONE` | Rounding applied to `grandTotal` before display and charging: `NONE` (exact integer), `ROUND_50` (nearest 50 IDR), `ROUND_100` (nearest 100 IDR). Cash merchants should use `ROUND_100` since 1 and 5 Rupiah coins are no longer in circulation. Raw (unrounded) values are always stored in DB for reconciliation; only the display and charged amount is rounded. |
+| `maxActiveOrders` | `null` | If set (int), new order placement is rejected with "Dapur sedang sibuk" when the count of orders in `CONFIRMED + PREPARING` status for this restaurant reaches this limit. Null = no cap. Overridden immediately by `orderingPaused = true`. |
+| `orderingPaused` | `false` | Manual kill-switch. When `true`, no new orders can be placed regardless of `maxActiveOrders`. Staff toggle via [ Pause New Orders ] / [ Resume Orders ] button in merchant-pos floor view. Stored in DB (not just in-memory) so it survives server restarts. New customer order creation API checks this flag first and returns HTTP 503 with a merchant-configurable message (default: "Kami sedang tidak menerima pesanan baru saat ini. Silakan coba beberapa saat lagi."). Logged in AuditLog when toggled. |
+| `orderingPausedMessage` | `null` | Optional custom message shown to customers when ordering is paused or `maxActiveOrders` is reached. Falls back to default message if null. |
+
+---
+
+## Kitchen Load Control
+
+> **Prevents kitchen overwhelm.** Without this, a 20-order backlog grows to 40 while the QR system keeps accepting. Dinner service collapses, bad reviews happen, and the owner blames the software.
+
+Two complementary mechanisms exist — merchants can use one or both:
+
+### 1. Auto-cap via `maxActiveOrders`
+
+When `MerchantSettings.maxActiveOrders` is set, the order creation API counts active orders (`CONFIRMED + PREPARING`) at the moment a new order is submitted. If the count ≥ cap, the order is rejected before an `Order` row is created:
+
+```
+Customer taps "Place Order"
+    │
+    ▼
+API: SELECT COUNT(*) FROM Order WHERE restaurantId = X AND status IN ('CONFIRMED', 'PREPARING')
+    │
+    ├── count < maxActiveOrders → proceed normally
+    │
+    └── count ≥ maxActiveOrders → HTTP 503
+            Customer sees: "Dapur sedang sibuk. Silakan coba dalam beberapa menit." (or custom message)
+            No Order row created; no Midtrans charge initiated
+```
+
+The cap auto-lifts as orders move to `READY` or `COMPLETED` — no staff action required.
+
+### 2. Manual pause via `orderingPaused`
+
+Staff can instantly stop all new orders from the merchant-pos floor view:
+
+```
+[ Pause New Orders ]  ←→  [ Resume Orders ]
+```
+
+- Toggle stored in `MerchantSettings.orderingPaused` (DB-persisted, survives server restart)
+- Takes effect immediately on all active customer sessions — the next "Place Order" attempt is rejected
+- Logged in `AuditLog` (actor: staff, action: UPDATE, entity: MerchantSettings)
+- Customer sees the `orderingPausedMessage` (custom or default)
+- Existing orders in kitchen are **not affected** — they continue to `READY` / `COMPLETED` normally
+- The merchant-pos header shows a prominent banner: 🔴 **Ordering is paused** while `orderingPaused = true`
+
+### Estimated wait time (future Phase 2)
+
+A future enhancement: derive and display an estimated wait time to the customer before they place an order, based on:
+- Current `CONFIRMED + PREPARING` order count
+- Rolling average `CONFIRMED → READY` duration for this restaurant (last 7 days)
+
+Formula: `estimatedWait = (activeOrders × avgPrepTime) / kitchenCapacity`
+
+Phase 2 addition — no schema change needed (all data is available at query time). Merchant can optionally surface this on the menu: "Estimasi waktu tunggu: ~25 menit."
 
 ---
 
@@ -1337,7 +1447,82 @@ Configurable per restaurant in `MerchantSettings`:
 | `spiceLevel` | int? | 0 = none, 1 = mild, 2 = medium, 3 = hot — shown as 🌶️ count |
 | `sortOrder` | int | Display order within category |
 | `autoResetAvailability` | bool | Default `false`. If `true`, a midnight cron job automatically sets `isAvailable = true` for this item at the start of each day. Useful for daily-stock items (e.g. "Today's Special" marked unavailable when sold out; auto-resets overnight). Items with `stockCount` set do NOT need this — their availability is controlled by stock depletion. |
+| `priceType` | enum | `FIXED` (default) \| `BY_WEIGHT` — see Weight-Based Pricing below |
+| `pricePerUnit` | int? | Required when `priceType = BY_WEIGHT`. IDR per unit (e.g. 50000 per 100g) |
+| `unitLabel` | string? | Display unit for weight items (e.g. `"per 100g"`, `"per ekor"`, `"per kg"`) |
+| `depositAmount` | int? | Upfront charge at checkout for `BY_WEIGHT` items (e.g. 50000 as a deposit). Final price is settled after weighing. |
 | `deletedAt` | datetime? | Soft delete — preserved in order history |
+
+## Weight-Based Pricing
+
+> **Required for Chef Andi's segment (seafood) and common across Indonesian F&B:** ikan bakar, udang, kepiting, and other market-price items are sold by weight, not at a fixed price. The customer cannot know the final price until the item is caught and weighed.
+
+### How it works
+
+```
+Customer orders "Kepiting Saus Padang" (priceType: BY_WEIGHT)
+    │
+    ▼
+Checkout shows: Rp 50.000 deposit (depositAmount) — not the final price
+Customer pays deposit via Midtrans (or in cash)
+    │
+    ▼
+Order → CONFIRMED → pushed to kitchen with ⚖️ "Needs weighing" flag on OrderItem
+    │
+    ▼
+Kitchen/cashier weighs the item (e.g. 1.2 kg)
+Staff opens OrderItem in merchant-pos → enters actual weight
+System calculates: finalPrice = pricePerUnit × weight = 50000/100g × 1200g = Rp 600.000
+lineTotal updated: Rp 600.000 − Rp 50.000 deposit = Rp 550.000 remaining charge
+    │
+    ▼
+[Charge Remaining Balance]
+Customer pays remaining Rp 550.000 (QRIS or cash)
+Second Payment row created linked to same Order
+Invoice updated with final amounts
+```
+
+### Schema additions for weight-based items
+
+| Model | Field | Type | Notes |
+|---|---|---|---|
+| `MenuItem` | `priceType` | enum | `FIXED` (default) \| `BY_WEIGHT` |
+| `MenuItem` | `pricePerUnit` | int? | IDR per unit; required when `priceType = BY_WEIGHT` |
+| `MenuItem` | `unitLabel` | string? | Display unit: `"per 100g"`, `"per ekor"`, `"per kg"`, `"per porsi"` |
+| `MenuItem` | `depositAmount` | int? | Upfront charge at checkout; null = Rp 0 deposit (customer pays only after weighing) |
+| `OrderItem` | `weightValue` | decimal? | Actual weight entered by staff after weighing |
+| `OrderItem` | `weightUnit` | string? | Unit matching `MenuItem.unitLabel` |
+| `OrderItem` | `needsWeighing` | bool | `true` when `priceType = BY_WEIGHT` and `weightValue` is not yet set — flags cashier |
+| `OrderItem` | `finalLineTotal` | int? | Calculated after weighing: `pricePerUnit × weight`; null until weighed |
+
+### Customer-facing display
+
+- Checkout pre-invoice shows: `"Kepiting Saus Padang — Deposit Rp 50.000 (harga akhir ditentukan setelah ditimbang)"`
+- Order tracking screen shows item with ⚖️ badge until weight is confirmed by staff
+- After staff enters weight: order tracking updates to show final price; second payment prompt if remaining balance > 0
+
+### Staff flow (merchant-pos)
+
+```
+Kitchen display shows ⚖️ "Needs weighing" badge on relevant OrderItems
+    │
+    ▼
+Staff weighs item → opens OrderItem in merchant-pos → enters weight value
+System auto-calculates finalLineTotal and remaining balance
+    │
+    ├── Remaining balance > 0 → [Charge Customer Rp XXX] button
+    │     → new Payment row created → customer pays remaining amount
+    │
+    └── Remaining balance = 0 (deposit covered or no deposit) → no action needed
+```
+
+### Constraints
+
+- `BY_WEIGHT` items can have variants (e.g. "Crab — Steamed / Padang Sauce / Butter Garlic") but variant price deltas are applied to `depositAmount`, not `pricePerUnit`
+- `BY_WEIGHT` items cannot use `stockCount` (incompatible — stock is managed by weight, not unit count)
+- If a `BY_WEIGHT` order is cancelled before weighing, only `depositAmount` is charged; Midtrans refund processes the deposit if digital payment was used
+
+---
 
 ## Menu Category — Full Field Specification
 
@@ -1985,10 +2170,11 @@ Accessible from `merchant-pos`. Merchant owners and staff with `reports:read` se
 |---|---|
 | **Active orders** | Count of orders currently in `PENDING`, `CONFIRMED`, `PREPARING`, `READY` |
 | **Tables occupied** | X of Y tables currently `OCCUPIED` |
-| **Open waiter requests** | Unresolved `WaiterRequest` count |
-| **Today's revenue so far** | Running IDR total for today |
+| **Open waiter requests** | Unresolved `WaiterRequest` count — grouped by type (🔔 Call / 🤝 Assistance / 💳 Bill) |
+| **Today's revenue so far** | Running IDR total for today (gross) |
 | **Today's order count** | Running count for today |
 | **Avg wait time today** | Average time from `CONFIRMED` to `READY` |
+| **Ordering status** | 🟢 Accepting orders / 🔴 Paused — prominent toggle; shows active order count vs `maxActiveOrders` cap if set |
 
 All live panel widgets update via Supabase Realtime — no refresh needed.
 
@@ -2003,6 +2189,12 @@ All live panel widgets update via Supabase Realtime — no refresh needed.
 | Revenue by branch | If multi-branch: compare branches side by side |
 | Tax collected | PPN amount for accounting |
 | Service charge collected | Amount for accounting |
+| **Gross revenue** | Sum of all `Order.grandTotal` for confirmed orders in period |
+| **Estimated payment gateway fees** | Calculated display (not stored): QRIS orders × 0.7%, EWALLET orders × 2%, VA orders × Rp 4.000 flat, CARD orders × 2.9%. Shown as an estimate — actual fees confirmed in Midtrans dashboard |
+| **Net revenue (est.)** | Gross revenue − estimated gateway fees − tax collected. This is the merchant's approximate pocket revenue. |
+| **Cash vs digital split** | IDR and % — useful for reconciliation: cash must match physical till |
+
+> **Fee transparency rationale:** Indonesian restaurant owners ask "berapa yang saya terima?" (how much do I actually receive?) immediately. Without a net revenue figure, they do not trust the system and manually calculate fees in Excel. Showing the breakdown builds trust and reduces churn. The fees are estimates — exact amounts are always confirmed via the Midtrans merchant dashboard, and we must label them clearly as estimates in the UI.
 
 #### Order analytics
 
@@ -2189,6 +2381,12 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Menu templates** | 📋 Nice-to-have | Warung | Pre-built menus to accelerate setup |
 | **Branded QR code design** | 📋 Nice-to-have | Seafood, chain | Styled QR with restaurant logo |
 | **Shareable menu URL** | 📋 Nice-to-have | All | Digital menu link without scanning |
+| **Hidang / hybrid ordering mode** | ⚠️ High friction | Padang restaurants | Padang-style "Hidang" means waiter brings 15–20 pre-plated dishes to the table; customer only pays for what they ate. Current QR flow requires pre-ordering. Solution: a "Hidang Mode" toggle in `MerchantSettings` where the customer scans to start a session but does not order — the waiter uses merchant-pos to add consumed items post-meal. Uses `PAY_AT_CASHIER` flow; waiter acts as order-taker after the meal. Schema supports this today; the UI flow needs design in Phase 2. |
+| **Thermal label printing for cup/item labels** | ⚠️ High friction | Boba, kiosk | High-volume counter service needs a sticker label printed on each cup at the moment the order is CONFIRMED — staff cannot look at an iPad for every drink. ESC/POS label printer support (Bluetooth or USB) for Ibu Sari's boba kiosk use case. Distinct from kitchen ticket printing (which is a larger A6/thermal receipt). Phase 2. |
+| **Booking deposit / down payment** | ⚠️ High friction | Private dining, catering | Tante Lina (home dining) needs a 50% DP before cooking. Requires: `Order.depositRate` (%, e.g. 50%), partial Midtrans charge at booking, remaining charge triggered by staff. Closely related to table reservation and pre-order flow. Full design deferred to Phase 2 when reservation system is built. |
+| **Per-branch item availability override** | ⚠️ High friction | Chain (Kevin) | Menu is shared across all branches (by design), but Branch A may run out of a specific item while Branch B still has it. Solution: a `BranchMenuOverride` junction model (`branchId`, `menuItemId`, `isAvailable`) that overrides per-branch without duplicating the menu. This is the correct pattern — NOT separate menus per branch (see ADR-019). Phase 2. |
+| **Waiter-assisted / staff order mode** | ⚠️ High friction | All | Older customers, families, and tourists often say "Mas, saya pesan lewat kamu aja." Staff need to input orders on behalf of customers from merchant-pos. Flow: staff opens table → selects items → submits → goes straight to `CONFIRMED` (no payment step for dine-in; cashier handles payment at table close). Uses existing PAY_AT_CASHIER flow. Phase 2 UI; schema supports it today. |
+| **Inventory / COGS tracking** | 📋 Nice-to-have | Chain (Kevin) | Kevin wants to reconcile sales vs. raw ingredient purchases to detect shrinkage. This is an ERP-level feature (stock in / stock out per ingredient, linked to recipes). Out of FBQR's core scope — recommend integration with Accurate Online or Jurnal.id rather than building in-house. Track as Phase 3 consideration only. |
 
 ---
 
@@ -2591,7 +2789,50 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 | Per-item `OrderItem.status` not designed | 📋 Deferred to Phase 2 | Phase 1 design keeps order-level status for simplicity. Per-item status (PENDING/PREPARING/READY per item) is a Phase 2 enhancement. Adding `OrderItem.status` in Phase 2 is a non-breaking schema addition. |
 | Delivery platform webhook auth specifics | 📋 Research at implementation time | GrabFood: HMAC-SHA256; GoFood: OAuth 2.0 bearer token; ShopeeFood: similar. Implement per-platform at Step 22 per each platform's current API documentation. Credentials stored per-branch in `Branch` settings. |
 
+**Fixed before v1.9 review (operational gaps from owner personas):**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| No kitchen load control — kitchen overwhelm with no way to pause orders | ✅ Fixed in v1.9 | `maxActiveOrders` + `orderingPaused` + `orderingPausedMessage` added to MerchantSettings; Kitchen Load Control section added; live panel toggle documented |
+| WaiterRequest has no type — "panggil bill" treated same as general help | ✅ Fixed in v1.9 | `WaiterRequest.type` enum added: `ASSISTANCE \| BILL \| CALL`; BILL type fetches session total for approaching waiter; customer UI updated with three distinct buttons |
+| Weight-based pricing missing — seafood/ikan bakar sold by weight (50k/100g) | ✅ Fixed in v1.9 | `MenuItem.priceType`, `pricePerUnit`, `unitLabel`, `depositAmount` added; `OrderItem.needsWeighing`, `weightValue`, `weightUnit`, `finalLineTotal` added; Weight-Based Pricing section with full staff flow documented |
+| Kitchen display format unspecified — "which table is this order?" not answered | ✅ Fixed in v1.9 | Kitchen Display Order Card Format section added: table name, queue number, order type badge, elapsed timer, station badges, ⚖️/⚠️/🔥 item badges; `Order.customerNote` field added |
+| No customer special request / free-text note field | ✅ Fixed in v1.9 | `Order.customerNote` (string?, max 200 chars) added to Order model and kitchen display card spec |
+| Revenue dashboard missing Midtrans fee breakdown — owners ask "berapa yang saya terima?" | ✅ Fixed in v1.9 | Gross revenue, estimated gateway fees, net revenue (est.), cash vs digital split added to merchant revenue analytics; fee estimation rationale documented |
+| WaiterRequest type not grouped in live panel | ✅ Fixed in v1.9 | Live panel widget updated to show waiter requests grouped by type (🔔 Call / 🤝 Assistance / 💳 Bill) |
+| Per-branch separate menus requested by chain owner | ❌ Rejected — ADR-019 | Per-branch menus violate the 1 Restaurant = 1 Menu invariant. Correct pattern: `BranchMenuOverride` junction for per-branch item availability. See ADR-019. |
+| No Padang "Hidang" / hybrid post-pay ordering mode | 📋 Deferred to Phase 2 | Added to backlog; schema supports it via PAY_AT_CASHIER + staff order mode; UI design deferred |
+| No thermal label printer for boba cup stickers | 📋 Deferred to Phase 2 | Added to backlog; distinct from kitchen ticket printing; ESC/POS label printer support |
+| No booking deposit / down payment for private dining | 📋 Deferred to Phase 2 | Added to backlog; requires reservation system + partial Midtrans charge; full design at Phase 2 |
+| Per-branch item availability override not designed | 📋 Deferred to Phase 2 | Added to backlog as `BranchMenuOverride` junction model; non-breaking schema addition; see ADR-019 |
+| Waiter-assisted / staff order mode not designed | 📋 Deferred to Phase 2 | Added to backlog; schema supports it today via PAY_AT_CASHIER flow; UI is Phase 2 |
+| Inventory / COGS tracking not designed | 📋 Out of scope | ERP-level feature; recommend Accurate Online / Jurnal.id integration over building in-house |
+
 **Future agents:** If you are about to raise any of these as issues, read the referenced ADRs first.
+
+---
+
+### ADR-019: Per-Branch Separate Menus — Rejected; Correct Pattern is Per-Branch Availability Override
+
+**Challenge received (v1.9 operational review):** Kevin (chain owner) wants "Branch A menu, Branch B menu" — implying each branch should have its own independent menu.
+
+**Decision: REJECTED — menu remains shared at restaurant level.**
+
+**Reasoning:**
+
+1. **The 1 Restaurant = 1 Menu invariant is a core architectural pillar.** It is what makes multi-branch manageable. If a chain owner had to maintain 6 separate menus, they would spend more time on menu management than running the restaurant. The entire value of the branch architecture is that a central menu change (price update, new item, seasonal promotion) propagates to all branches instantly.
+
+2. **The legitimate use case is item availability, not menu structure.** Kevin's actual problem is not "Branch A has a completely different menu" — it is "Branch A ran out of ayam goreng today." The correct solution is a per-branch item availability override, not per-branch menu duplication.
+
+3. **`BranchMenuOverride` junction model is the correct pattern:**
+   ```
+   BranchMenuOverride (branchId FK, menuItemId FK, isAvailable bool)
+   ```
+   This allows any item to be toggled off at a specific branch without affecting others or duplicating the menu. Adding this in Phase 2 is a non-breaking schema addition.
+
+4. **If a chain genuinely needs completely different menus** (different concept, different pricing, different items), those are two different restaurant brands and should be two separate Merchant accounts — which is already the documented design (see ADR-007).
+
+**Future agents:** Do not add per-branch menu duplication to the schema. Implement `BranchMenuOverride` in Phase 2 for per-branch item availability control.
 
 ---
 
