@@ -232,7 +232,7 @@ FBQR/                              # Monorepo root
 | **Customer (anonymous)** | QR token | Table-scoped session |
 | **Customer (registered)** | Email + password / Google OAuth | Loyalty points, order history |
 
-> **Important:** One email = one restaurant. If a merchant owns multiple restaurants, they register a separate account for each. This may be revisited in future.
+> **Important:** One email = one restaurant. This is a firm design decision, not a temporary constraint. If a merchant owns two different restaurant brands, they register a separate Merchant account for each. Multiple physical locations of the *same* restaurant are handled as `Branch[]` records within one account — see the Multi-Branch section.
 
 > **Customer login is optional.** Anonymous QR sessions work for all ordering features. Login unlocks loyalty point earning and order history. This is a future implementation — design the schema for it now, build the UI later.
 
@@ -360,20 +360,23 @@ Merchant             ← Restaurant owner account (email + hashed password)
   │  status: TRIAL | ACTIVE | SUSPENDED | CANCELLED
   │  trialEndsAt, suspendedAt, suspendedReason, suspendedByAdminId
   │  multiBranchEnabled (bool) — set by FBQRSYS admin only; default false
-  │  restaurantLimit (int)     — max restaurants allowed; set by FBQRSYS admin
+  │  branchLimit (int)         — max branches allowed; set by FBQRSYS admin
+  │
+  │  RULE: 1 Merchant = 1 Restaurant (strict). A second restaurant requires a
+  │        new Merchant account with a different email.
   │
   ├── MerchantSubscription   ← Active plan (planId, cycle, currentPeriodEnd, autoRenew)
   │     └── MerchantBillingInvoice ← FBQR → merchant invoices (NOT customer invoices)
   │                                   (invoiceNumber, amount, dueAt, paidAt, pdfUrl)
   │
-  └── Restaurant[]   ← One merchant can own multiple restaurants (requires multiBranchEnabled)
+  └── Restaurant             ← Exactly one per Merchant
         ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
         ├── MerchantSettings     ← Feature flags, payment methods, tax, service charge
         ├── MerchantRole         ← User-created staff roles ([permissions])
         ├── MerchantRoleAssignment ← Links Staff → MerchantRole
         ├── KitchenStation       ← Merchant-defined stations (Bar, Kitchen, Patisserie, etc.)
         │     name, displayColor, isActive
-        ├── Branch               ← Physical locations
+        ├── Branch[]             ← Physical locations (multiple if multiBranchEnabled)
         │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/CLOSED)
         ├── MenuCategory         ← layout override, availableFrom/availableTo, kitchenStationId
         │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
@@ -1327,65 +1330,78 @@ Delivery-specific fields on `Order`:
 
 ## Multi-Branch Per Merchant Account
 
-> **Deal-breaker for chains.** A chain owner with 8 branches cannot manage 8 separate accounts. However, multi-branch capability is a premium feature controlled by FBQRSYS — merchants do not self-provision additional restaurants.
+> **Deal-breaker for chains.** A chain owner operating 8 branches under one restaurant name cannot manage them as separate disconnected accounts.
+
+### Core rule
+
+**1 Merchant account = 1 Restaurant. Always.**
+
+If a merchant wants to register a second restaurant (different brand / different concept), they register a new Merchant account with a different email. The two restaurants are completely independent on the platform.
+
+Multi-branch means: **one restaurant, multiple physical Branch locations** (e.g. "Ayam Bakar Sari — Sudirman", "Ayam Bakar Sari — Kelapa Gading", "Ayam Bakar Sari — BSD").
 
 ### Data model
 
 ```
-Merchant (owner account)
-  └── Restaurant[]    ← can own multiple restaurants (enabled by FBQRSYS admin)
-        └── Branch[]  ← each restaurant has branches (also added by FBQRSYS admin)
+Merchant (owner account)  — 1-to-1 with Restaurant
+  └── Restaurant           — exactly one per Merchant
+        └── Branch[]       — multiple physical locations (gated by multiBranchEnabled)
 ```
 
 ### How multi-branch is enabled (EOI flow)
 
-Multi-branch is **not self-service**. The merchant cannot add restaurants or branches themselves. This keeps FBQRSYS in control of plan enforcement and prevents feature abuse.
+Multi-branch is **not self-service**. The merchant cannot add branches themselves. This keeps FBQRSYS in control of plan enforcement.
 
 ```
 Merchant submits an Expression of Interest (EOI)
-    │  (via email, contact form, or phone — no in-app flow required)
+    │  (via email, contact form, or phone — no in-app flow required for Phase 1)
     │
     ▼
 FBQRSYS admin reviews the request
     │
     ├── Approves → admin opens merchant's account in FBQRSYS panel
-    │               → enables multi-branch flag on the Merchant record
-    │               → adds each Restaurant one by one (name, address, contact)
-    │               → adds each Branch under the appropriate Restaurant
-    │               → merchant immediately sees new restaurant(s) in their switcher
+    │               → sets multiBranchEnabled = true on Merchant record
+    │               → sets branchLimit to the number of branches allowed
+    │               → adds each Branch one by one (name, address)
+    │               → merchant immediately sees new branches in their branch selector
     │
     └── Rejects / requests more info → admin contacts merchant directly
 ```
 
 FBQRSYS admin controls:
-- Whether the merchant has multi-branch capability (`Merchant.multiBranchEnabled: bool`)
-- How many restaurants / branches the merchant is allowed (`Merchant.restaurantLimit: int`, driven by their plan)
-- Which plan tier the new restaurant is on (each restaurant billed separately, or chain plan covers all)
+- Whether the merchant can have multiple branches (`Merchant.multiBranchEnabled: bool`)
+- How many branches are allowed (`Merchant.branchLimit: int`, driven by their plan)
 
 ### What the merchant sees after activation
 
-- A persistent restaurant switcher at the top of `merchant-pos`
-- Each restaurant and its branches listed, switchable with one click
-- "All Restaurants" aggregate view in the dashboard
-- Staff accounts remain scoped to one restaurant — they do not see the switcher
+- A **branch selector** in `merchant-pos` — switches the dashboard view to a specific branch or "All Branches" aggregate
+- Staff accounts are scoped to one branch — they do not see the selector
+- No "restaurant switcher" exists — a merchant has exactly one restaurant
 
-### What each restaurant owns independently
+### What each branch owns
 
-- Menu, branding, promotions, staff, tables
-- Subscription (each restaurant can be on a different plan, or covered by a chain plan)
-- Reports (viewable individually or aggregated in the chain view)
-- Audit log (scoped per restaurant)
+Each `Branch` has its own:
+- Tables (and their QR codes)
+- Staff assignments
+- Branch-level order history and reports
+
+The following are **shared across all branches** (set at restaurant level):
+- Menu (categories, items, variants, add-ons)
+- Branding
+- Promotions
+- Kitchen stations
+- Merchant settings (tax, service charge, payment methods)
 
 ### Schema fields
 
 | Model | Field | Notes |
 |---|---|---|
-| `Merchant` | `multiBranchEnabled` | bool — set by FBQRSYS admin only |
-| `Merchant` | `restaurantLimit` | int — max restaurants allowed under this merchant account |
-| `Restaurant` | `merchantId` | FK to owning Merchant |
+| `Merchant` | `multiBranchEnabled` | bool — set by FBQRSYS admin only; default false |
+| `Merchant` | `branchLimit` | int — max branches allowed; set by FBQRSYS admin |
+| `Restaurant` | `merchantId` | FK to owning Merchant (unique — enforces 1-to-1) |
 | `Branch` | `restaurantId` | FK to owning Restaurant |
 
-Permissions, subscriptions, and audit logs are **restaurant-scoped**, not merchant-scoped.
+Permissions, subscriptions, and audit logs are **restaurant-scoped**, not branch-scoped.
 
 ### Design rationale
 
@@ -1433,7 +1449,7 @@ Add to tech stack:
 |---|---|
 | **CSV import** | Merchant exports from existing POS/Excel; FBQR provides a template CSV with required columns |
 | **Manual bulk entry UI** | Streamlined form for quickly entering many items without uploading a file |
-| **Copy menu from another restaurant** | For chain operators — clone an entire restaurant's menu to a new branch |
+| **Copy menu to a new branch** | Menu is shared across branches (restaurant-level), so this is mainly useful when a merchant registers a second restaurant under a new account |
 
 ### CSV Template Format
 
@@ -1453,24 +1469,21 @@ Photos cannot be imported via CSV — merchant uploads images per item after imp
 
 ### Multi-Branch (Cabang) Dashboard — Merchant Owner
 
-The schema supports `Merchant → Restaurant[] → Branch[]`. The dashboard UI reflects this hierarchy.
+1 Merchant = 1 Restaurant. Multi-branch means multiple `Branch` records under that one restaurant. There is no restaurant switcher — only a branch selector.
 
-#### Restaurant selector (top-level switcher)
+#### Branch selector
 
-When a merchant owns more than one restaurant, a persistent restaurant selector appears at the top of `merchant-pos`. It shows:
-- Restaurant name + logo thumbnail
-- Quick status indicator (active orders count, any alerts)
-- "All Restaurants" aggregate option (chain view)
+When `multiBranchEnabled = true`, a branch selector appears at the top of `merchant-pos`:
+- "All Branches" (default) — aggregate view across the entire restaurant
+- Individual branch — drill-down to one physical location
 
-Switching restaurants reloads the entire dashboard scoped to that restaurant. Staff accounts do not see the selector — they are scoped to one restaurant and see it directly.
+Staff accounts are scoped to one branch and see that branch's view directly, with no selector shown.
 
-#### Branch selector (within a restaurant)
+#### Branch-level data
 
-Within a restaurant, branches are selectable via a secondary filter:
-- Default view: aggregate across all branches of that restaurant
-- Selectable individual branch for drill-down
+Each branch has its own: orders, revenue, table status, staff activity, queue display.
 
-Branch-level data is always available for: orders, revenue, table status, staff activity.
+Shared across all branches (no per-branch override): menu, branding, promotions, kitchen stations, tax/service charge settings.
 
 ---
 
@@ -1638,41 +1651,40 @@ All live panel widgets update via Supabase Realtime — no refresh needed.
 
 ---
 
-### Merchant Owner Dashboard — Chain / Multi-Branch View
+### Merchant Owner Dashboard — Multi-Branch Aggregate View
 
-When "All Restaurants" is selected in the restaurant switcher, the merchant sees a consolidated view across their entire portfolio.
+When "All Branches" is selected in the branch selector, the merchant sees a consolidated view across all physical locations of their one restaurant.
 
-#### Portfolio overview cards
+#### Overview cards
 
 | Card | Data |
 |---|---|
-| **Total revenue (all restaurants)** | Consolidated IDR for period |
-| **Total orders (all restaurants)** | Consolidated count |
-| **Best-performing restaurant** | Highest revenue this month |
-| **Fastest-growing restaurant** | Highest month-over-month growth |
-| **Restaurants needing attention** | Any with unusually low ratings or high cancellation rates |
+| **Total revenue (all branches)** | Consolidated IDR for period |
+| **Total orders (all branches)** | Consolidated count |
+| **Best-performing branch** | Highest revenue this month |
+| **Fastest-growing branch** | Highest month-over-month growth |
+| **Branches needing attention** | Any with unusually low ratings or high cancellation rates |
 
-#### Restaurant comparison table
+#### Branch comparison table
 
-A sortable table showing each restaurant side by side:
+A sortable table showing each branch side by side:
 
 | Column | Description |
 |---|---|
-| Restaurant name | Link to drill into that restaurant's dashboard |
+| Branch name | Link to drill into that branch's view |
 | Revenue (period) | IDR |
 | Orders (period) | Count |
 | AOV | Average order value |
 | Avg rating | Star average |
 | Active tables | Currently occupied |
-| Subscription status | ACTIVE / TRIAL / SUSPENDED |
 
-Sortable by any column. Click a row to drill into that restaurant's single-restaurant dashboard.
+Sortable by any column. Click a row to drill into that branch's individual view.
 
 #### Consolidated accounting export
 
 When exporting, the merchant can choose:
-- Single restaurant → scoped export
-- All restaurants → one combined Excel/CSV with a `restaurantName` column added
+- Single branch → scoped export
+- All branches → one combined Excel/CSV with a `branchName` column added
 
 ---
 
@@ -1836,17 +1848,19 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 
 ---
 
-### ADR-007: Multi-Branch via FBQRSYS EOI (Not Self-Service)
+### ADR-007: 1 Merchant = 1 Restaurant; Multi-Branch via FBQRSYS EOI
 
-**Decision:** Merchants cannot self-add restaurants or branches. They submit an Expression of Interest (email/phone); FBQRSYS admin manually enables the feature and adds each restaurant/branch.
+**Decision:** One Merchant account always maps to exactly one Restaurant. A second restaurant (different brand/concept) requires a new Merchant account with a different email. Multiple physical locations of the same restaurant are supported as `Branch[]` records under that one Restaurant, gated by `multiBranchEnabled` and `branchLimit` set by FBQRSYS admin via EOI.
 
-**Rationale:** Self-service branch creation bypasses plan enforcement. Manual approval ensures each branch is on the correct plan and billed appropriately. At current stage (few merchants), EOI volume is low and manual processing is faster to build than an automated approval workflow with plan enforcement logic.
+**Rationale:** Strict 1-to-1 simplifies the entire permission, billing, and subscription model — everything is restaurant-scoped with no ambiguity. A merchant wanting a genuinely different restaurant concept has different branding, menu, and potentially different subscription needs anyway, so a separate account is the right boundary. Multi-branch (same restaurant, multiple locations) is the legitimate scaling use case and is fully supported within one account.
 
-**Tradeoffs accepted:** Friction for the merchant (they cannot instantly add a branch). Mitigated by fast turnaround — FBQRSYS admin adds the branch and merchant sees it immediately.
+**Tradeoffs accepted:** A merchant with two different restaurant brands must manage two separate accounts. This is an intentional constraint, not an oversight. If a merchant outgrows this and wants a true multi-brand account, that is an Enterprise-tier feature to design separately.
 
-**Open question / improvement area:** If EOI volume grows, an in-app `MerchantRequest` queue for FBQRSYS admins would replace the email process. No schema changes needed — just a new `MerchantRequest` model and a FBQRSYS admin review UI.
+**On EOI being manual:** Self-service branch creation bypasses plan enforcement. Manual approval ensures `branchLimit` is set correctly per plan. At current scale, EOI volume is low enough that manual processing is faster to build than an automated workflow.
 
-**Status:** Decided for Phase 1. In-app EOI form is a clean Phase 2 addition.
+**Open question / improvement area:** If EOI volume grows, an in-app `MerchantRequest` queue for FBQRSYS admins would replace email. No schema conflicts — just a new `MerchantRequest` model and admin review UI.
+
+**Status:** Decided. In-app EOI form is a clean Phase 2 addition.
 
 ---
 
