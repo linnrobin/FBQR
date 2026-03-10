@@ -4,6 +4,137 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ---
 
+## CURRENT STATE — Read This First
+
+> **Every AI agent must read this block before doing anything else.**
+> Update this block at the END of every session before pushing.
+
+```
+Last updated   : 2026-03-10
+Current phase  : Phase 0 — Requirements complete. No code written yet.
+Last completed : Requirements, data models, flows, dashboards, ADRs all documented in CLAUDE.md
+Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
+Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
+Open decisions : See "Open Questions for Future AI Agents" in the ADR section
+Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
+                 merchant first-time onboarding guided setup flow — not yet documented;
+                 payment timeout / error states in end-user-system — not yet documented
+```
+
+---
+
+## Phase Tracker
+
+Work through phases in order. Do not start a phase until all steps in the previous phase are committed and pushed.
+
+### Phase 0 — Requirements & Documentation
+- [x] CLAUDE.md created with full project spec
+- [x] Data models, flows, RBAC, billing, dashboards documented
+- [x] Architecture Decision Records (ADRs) written
+- [x] Kitchen station routing designed
+- [x] QR order security designed
+- [x] Multi-branch EOI flow designed
+
+### Phase 1 — Foundation
+- [ ] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
+- [ ] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
+
+### Phase 2 — Auth & Platform Admin (FBQRSYS)
+- [ ] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
+- [ ] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
+- [ ] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
+- [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
+
+### Phase 3 — Merchant POS
+- [ ] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
+- [ ] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
+- [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import (`apps/web/(merchant)`)
+- [ ] **Step 10** — merchant-pos: table management, QR generation, floor map (`apps/web/(merchant)`)
+- [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
+
+### Phase 4 — Customer Ordering (end-user-system)
+- [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in (`apps/menu`)
+- [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`)
+- [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`)
+- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option (`apps/menu`)
+- [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`)
+
+### Phase 5 — Kitchen & Operations
+- [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
+- [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
+- [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
+- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display (`apps/web/(kitchen)`)
+
+### Phase 6 — Analytics & Intelligence
+- [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`)
+- [ ] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
+- [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
+
+### Phase 7 — Platform Hardening
+- [ ] **Step 24** — Audit log: logging middleware + viewer UI (all)
+- [ ] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
+- [ ] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
+- [ ] **Step 27** — WhatsApp Business integration (shared)
+- [ ] **Step 28** — Remaining backlog items (TBD)
+
+---
+
+## AI Agent Operating Protocols
+
+### Session Start Protocol
+
+Run these checks at the start of every session before writing any code:
+
+1. **Read the CURRENT STATE block** (top of this file) — find `Next step` and `Open decisions`
+2. **Check the Phase Tracker** — confirm which step is next and that all previous steps are checked off
+3. **Run `git status`** — make sure you are on the correct branch and there are no uncommitted changes from a previous agent
+4. **Read the relevant section(s)** of this file for the step you are about to build — do not rely on memory
+5. **Read the existing code files** that you will be modifying before editing them — never edit blind
+
+Only after these 5 steps should you begin writing code.
+
+---
+
+### Session End Protocol
+
+Before the session ends (and before context runs out), always:
+
+1. **Commit and push all changes** — partial work is better than lost work
+2. **Update the CURRENT STATE block** at the top of this file:
+   - Set `Last completed` to what was just finished
+   - Set `Next step` to the next uncompleted item in the Phase Tracker
+   - Note any new open decisions or doc gaps discovered
+3. **Check off completed steps** in the Phase Tracker
+4. **If new decisions were made** (new packages chosen, schema changes, conventions added) — update the relevant section of this file
+5. **Push CLAUDE.md** as the final commit of the session
+
+---
+
+### Context Recovery Protocol
+
+If a session ran out of context mid-task and you are resuming:
+
+1. Read the CURRENT STATE block — it tells you where the previous session stopped
+2. Run `git log --oneline -10` — read the last few commit messages to understand what was done
+3. Run `git diff HEAD~1` if the last commit was partial — see what changed
+4. Read the specific code files that were being worked on (named in the commit messages)
+5. Do **not** re-read the entire CLAUDE.md from scratch — jump to the section relevant to the current step
+6. If genuinely unclear what state the code is in, ask the user: *"I can see the last session was working on [X]. Should I continue from [specific point] or review the current state first?"*
+
+---
+
+### Context Limit Warning Signs
+
+If you notice any of these, start the Session End Protocol immediately — do not wait:
+- You are struggling to recall details from earlier in the conversation
+- Tool results are being truncated or summarised automatically
+- You have made more than ~15 tool calls in the session
+- The user's messages are taking noticeably longer to process
+
+Do not try to finish one more thing. Stop, commit, update CURRENT STATE, push.
+
+---
+
 ## Project Overview
 
 **FBQR** is a SaaS platform for cafes and restaurants in Indonesia.
@@ -228,21 +359,26 @@ SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
 Merchant             ← Restaurant owner account (email + hashed password)
   │  status: TRIAL | ACTIVE | SUSPENDED | CANCELLED
   │  trialEndsAt, suspendedAt, suspendedReason, suspendedByAdminId
+  │  multiBranchEnabled (bool) — set by FBQRSYS admin only; default false
+  │  restaurantLimit (int)     — max restaurants allowed; set by FBQRSYS admin
   │
   ├── MerchantSubscription   ← Active plan (planId, cycle, currentPeriodEnd, autoRenew)
   │     └── MerchantBillingInvoice ← FBQR → merchant invoices (NOT customer invoices)
   │                                   (invoiceNumber, amount, dueAt, paidAt, pdfUrl)
   │
-  └── Restaurant[]   ← One merchant can own multiple restaurants (chain support)
+  └── Restaurant[]   ← One merchant can own multiple restaurants (requires multiBranchEnabled)
         ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
         ├── MerchantSettings     ← Feature flags, payment methods, tax, service charge
         ├── MerchantRole         ← User-created staff roles ([permissions])
         ├── MerchantRoleAssignment ← Links Staff → MerchantRole
+        ├── KitchenStation       ← Merchant-defined stations (Bar, Kitchen, Patisserie, etc.)
+        │     name, displayColor, isActive
         ├── Branch               ← Physical locations
         │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/CLOSED)
-        ├── MenuCategory         ← layout override, availableFrom/availableTo (time window)
+        ├── MenuCategory         ← layout override, availableFrom/availableTo, kitchenStationId
         │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
         │           │              estimatedPrepTime, stockCount, isAvailable
+        │           │              kitchenStationOverride (optional per-item station override)
         │           ├── MenuItemVariant   ← e.g. Small/Medium/Large + price delta
         │           └── MenuItemAddon     ← e.g. Extra Cheese (+5k), No Onion (0)
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
@@ -255,7 +391,7 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
   │  platformOrderId (nullable) — external delivery platform reference
   │
-  ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority
+  ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority, kitchenStationId (snapshot)
   ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
   ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
   ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
