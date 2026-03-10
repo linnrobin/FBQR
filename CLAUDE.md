@@ -11,14 +11,18 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Requirements, data models, flows, dashboards, ADRs all documented in CLAUDE.md
+Version        : 1.1
+Current phase  : Phase 0 — Requirements complete + architecture review fixes applied. No code written yet.
+Last completed : Full pre-code architecture review: fixed 10 correctness issues, 5 logic flaws,
+                 added ADRs 009–013 resolving all critical open questions. Ready for coding.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
-Open decisions : See "Open Questions for Future AI Agents" in the ADR section
+Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining items
+                 are Phase 2 concerns — all Phase 1 blockers resolved)
 Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
                  merchant first-time onboarding guided setup flow — not yet documented;
-                 payment timeout / error states in end-user-system — not yet documented
+                 refund flow full detail — deferred to Step 15 and Step 19;
+                 branch branchCode assignment UX — not yet documented
 ```
 
 ---
@@ -34,6 +38,7 @@ Work through phases in order. Do not start a phase until all steps in the previo
 - [x] Kitchen station routing designed
 - [x] QR order security designed
 - [x] Multi-branch EOI flow designed
+- [x] Pre-code architecture review: correctness issues, logic flaws, and open questions resolved (ADRs 009–013 added)
 
 ### Phase 1 — Foundation
 - [ ] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
@@ -101,6 +106,8 @@ Before the session ends (and before context runs out), always:
 
 1. **Commit and push all changes** — partial work is better than lost work
 2. **Update the CURRENT STATE block** at the top of this file:
+   - Increment `Version` (patch: 1.0 → 1.1 for doc changes; minor: 1.1 → 1.2 for schema or ADR changes; major: 1.x → 2.0 for phase completion)
+   - Set `Last updated` to today's date
    - Set `Last completed` to what was just finished
    - Set `Next step` to the next uncompleted item in the Phase Tracker
    - Note any new open decisions or doc gaps discovered
@@ -386,21 +393,25 @@ Merchant             ← Restaurant owner account (email + hashed password)
         │           └── MenuItemAddon     ← e.g. Extra Cheese (+5k), No Onion (0)
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
         └── Staff                ← Staff accounts (PIN auth)
+                                   branchId (string?) — scoped to one Branch if set; null = restaurant-level access
 
 ── ORDERS ────────────────────────────────────────────────────────────
-Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED
+Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED | EXPIRED
   │  orderType: DINE_IN | TAKEAWAY | DELIVERY
-  │  queueNumber (int) — auto-increments per restaurant per day for counter/takeaway
+  │  branchId (string) — FK to Branch; required; enables per-branch reporting
+  │  queueNumber (int) — auto-increments per branch per day for counter/takeaway
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
   │  platformOrderId (nullable) — external delivery platform reference
   │
-  ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority, kitchenStationId (snapshot)
+  ├── OrderItem      ← price snapshot, variant/addon snapshot (JSON), kitchenPriority (per-station), kitchenStationId (snapshot)
+  ├── OrderEvent     ← Immutable log of order lifecycle transitions
+  │     (orderId, fromStatus, toStatus, actorId?, actorType, note?, createdAt)
   ├── WaiterRequest  ← Customer pressed "Call Waiter"; resolved by staff
   ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
   ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
-  └── Payment        ← method: QRIS | GOPAY | OVO | DANA | VA | CASH | CARD
-                        status: PENDING | SUCCESS | FAILED | REFUNDED
+  └── Payment        ← method: QRIS | EWALLET | VA | CARD | CASH
+                        status: PENDING | PENDING_CASH | SUCCESS | FAILED | EXPIRED | REFUNDED
 
 ── CUSTOMERS ─────────────────────────────────────────────────────────
 Customer             ← Optional registered account (email / Google OAuth)
@@ -408,7 +419,13 @@ Customer             ← Optional registered account (email / Google OAuth)
   └── MerchantLoyaltyBalance  ← Per-restaurant points + earned title
 
 CustomerSession      ← Scoped to Restaurant + Table + QR token
-  └── status: ACTIVE | COMPLETED | EXPIRED
+  │  status: ACTIVE | COMPLETED | EXPIRED
+  │  ipAddress (string)       — client IP at session creation
+  │  userAgent (string)       — browser/device fingerprint
+  │  deviceHash (string?)     — optional hashed device identifier for fraud detection
+  │  sessionCookie (string)   — unique cookie value stored client-side; allows page refresh
+  │                             recovery without re-scanning QR
+  └── (multiple Orders can be linked to one CustomerSession)
 
 MerchantLoyaltyProgram ← Per-restaurant loyalty config (name, IDR per point, redemption rate)
   └── LoyaltyTier    ← Tier name, threshold, multiplier, custom title, badge (Phase 2)
@@ -420,13 +437,33 @@ AuditLog             ← Immutable. actor, action, entity, oldValue, newValue, I
 ### Order Status Lifecycle
 
 ```
-PENDING     → customer submitted cart, payment not yet initiated
-CONFIRMED   → payment successful (Midtrans webhook received)
+PENDING     → order row created in DB; payment initiated but not yet confirmed
+              (kitchen does NOT see this order; auto-expires after 15 min if no webhook)
+CONFIRMED   → payment verified (Midtrans webhook) OR cashier confirmed cash payment
+              (order becomes visible to kitchen)
 PREPARING   → kitchen acknowledged and started preparing
 READY       → all items marked ready by kitchen
 COMPLETED   → order closed (customer received food / table cleared)
-CANCELLED   → cancelled before or during preparation (triggers refund flow if CONFIRMED)
+CANCELLED   → cancelled before or during preparation (triggers refund flow if was CONFIRMED)
+EXPIRED     → PENDING order where no payment webhook arrived within 15 min (terminal state)
 ```
+
+> **When is an Order row created?** At cart submission, before payment. The customer taps
+> "Place Order" → an `Order` record is immediately created with status `PENDING` → payment
+> is initiated → Midtrans webhook flips it to `CONFIRMED`. This means a `PENDING` order
+> always has payment initiated. If payment fails or times out, the order becomes `EXPIRED`.
+> There is no state where an order exists but payment has not been initiated.
+
+### Payment → Order Status Mapping
+
+| Payment.status | Resulting Order.status | Notes |
+|---|---|---|
+| `PENDING` | `PENDING` | Awaiting Midtrans callback |
+| `SUCCESS` | `CONFIRMED` | Midtrans webhook verified — pushed to kitchen |
+| `FAILED` | `CANCELLED` | Payment declined; customer notified |
+| `EXPIRED` | `EXPIRED` | No webhook within 15 min; order silently cleaned up |
+| `REFUNDED` | `CANCELLED` | Post-confirmation cancellation; triggers refund flow |
+| `PENDING_CASH` | `PENDING` | Cashier approval pending (cash orders only) |
 
 ### Merchant Account Status
 
@@ -644,7 +681,35 @@ Customer can [Add More Items] → new items go to same table session, create a n
 - FBQRSYS or merchant-pos can close a table session (e.g. after customer leaves)
 - Table status reverts to AVAILABLE
 - CustomerSession status → COMPLETED
-- Loyalty points (if applicable) are credited at session close
+- Loyalty points are credited per order at the moment each Order moves to CONFIRMED (not at session close)
+
+### 9. CustomerSession state transitions
+
+```
+[QR scan]
+    │
+    ▼
+ACTIVE ──────────────────────────────────────────────────────┐
+    │                                                         │
+    ├── Staff closes table → COMPLETED → Table: AVAILABLE     │
+    │                                                         │
+    ├── Session TTL expires (default: 2 hours of inactivity)  │
+    │   → EXPIRED → Table: AVAILABLE                          │
+    │                                                         │
+    └── Restaurant suspended mid-session → session preserved  │
+        but new orders blocked; existing orders continue      │
+        to display on customer tracking screen                │
+```
+
+**Edge cases:**
+
+| Scenario | Behaviour |
+|---|---|
+| Token rotation (staff closes session) | Old session → COMPLETED; old token immediately invalid; new token issued on next scan; any in-flight `PENDING` orders of the old session are auto-cancelled |
+| Customer refreshes page | Session cookie re-links to existing ACTIVE session — no new QR scan required |
+| Table set to RESERVED while session is ACTIVE | Staff cannot set an OCCUPIED table to RESERVED; RESERVED only applies to AVAILABLE tables |
+| Restaurant suspended while session ACTIVE | New orders blocked with "Restaurant unavailable" message; customer can still view existing order status |
+| Two phones scan same QR simultaneously | Second scan resumes the same ACTIVE session — one session per table at all times (see ADR-009) |
 
 ---
 
@@ -744,8 +809,8 @@ Additional safeguards for cash:
 
 | Defence | How it works |
 |---|---|
-| **Token rotation on session close** | When staff close a table session, the table's QR token is regenerated. The old saved QR becomes immediately invalid. New customers get a fresh QR with a new UUID. |
-| **Session expiry** | `CustomerSession` has a configurable TTL (default: 4 hours). An expired session rejects new orders even with a valid token. |
+| **Token rotation on session close** | When staff close a table session, the table's QR token is regenerated. The old token is immediately invalid for new sessions. Any `PENDING` orders belonging to the old session are auto-cancelled. Customers mid-order (page open) see "Your session has ended. Please scan the new QR code." |
+| **Session expiry** | `CustomerSession` has a configurable TTL (default: 2 hours of inactivity). An expired session rejects new orders even with a valid token. |
 | **Token scoped to table + restaurant** | The URL encodes `restaurantId + tableId + token`. Even if someone brute-forces a token, it only works for one specific table at one restaurant — not the whole platform. |
 | **Rate limiting per session** | Max N `PENDING` orders per `CustomerSession` at one time (configurable, default: 3). Prevents order flooding. |
 | **Midtrans webhook signature verification** | All webhook calls are verified using Midtrans's SHA512 signature. Only legitimate Midtrans callbacks can flip an order to `CONFIRMED`. |
@@ -775,15 +840,17 @@ The only realistic attack is a **prank order with real payment** — someone pay
 
 ## Kitchen Order Priority
 
-The kitchen display shows all active `OrderItem` rows, grouped by order but sortable globally.
+The kitchen display shows all active `OrderItem` rows, grouped by order but sortable within each station.
 
 - Each `OrderItem` has a `kitchenPriority` integer field (default: order of insertion)
-- Kitchen staff can drag-and-drop or use up/down controls to reprioritize
-- Priority changes are real-time (Supabase Realtime broadcast) so all kitchen screens stay in sync
+- **Priority is scoped per station** — reordering items at the Bar does not affect the Kitchen queue, and vice versa. Global priority reordering across all stations is not supported and would be confusing for multi-station kitchens.
+- Kitchen staff can drag-and-drop or use up/down controls to reprioritize within their station tab
+- Priority changes are real-time (Supabase Realtime broadcast) so all screens viewing the same station stay in sync
 - Priority reordering is logged in `AuditLog` with actor = kitchen staff
+- In the "All" tab (no station filter), items are shown sorted by station then by priority — not globally sortable from this view
 
-**Example:** Three items arrive — Burger (pos 1), French Fries (pos 2), Salad (pos 3).
-Kitchen moves Salad to pos 2 and French Fries to pos 3. Burger and Salad are prepared first.
+**Example:** Bar has: Coffee (pos 1), Juice (pos 2). Kitchen has: Burger (pos 1), Salad (pos 2).
+Bar staff reprioritizes Juice to pos 1 → only Bar queue changes. Kitchen queue unaffected.
 
 ---
 
@@ -869,8 +936,19 @@ If a `MenuCategory` has no `kitchenStationId` set, its items route to the restau
 - Can be sent via WhatsApp link or email (future)
 
 ### Invoice Numbering
-Format: `INV-{YYYYMMDD}-{sequence}` — e.g. `INV-20260309-0042`
-Sequence resets daily per restaurant.
+Format: `INV-{branchCode}-{YYYYMMDD}-{sequence}` — e.g. `INV-JKT1-20260309-0042`
+
+- `branchCode` is a short 4-character code set when the Branch is created (e.g. `JKT1`, `BDG2`)
+- Sequence resets daily **per branch** — each branch maintains its own counter
+- For single-branch restaurants, `branchCode` defaults to the first 4 characters of the restaurant ID
+- This prevents number collision when two branches issue invoices on the same day
+
+### Invoice URL Security
+Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring URLs** — not permanent public URLs.
+- URL validity: 24 hours from generation
+- Customer receives the URL immediately after payment; it is valid for the day
+- Re-generation: calling the invoice endpoint again issues a fresh signed URL
+- Rationale: invoice numbers are sequential and guessable; a permanent public URL would allow enumeration of all invoices
 
 ---
 
@@ -1053,7 +1131,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `price` | int | IDR, no decimals |
 | `imageUrl` | string | Supabase Storage path |
 | `isAvailable` | bool | Soft toggle — hides from menu without deleting |
-| `stockCount` | int? | If set, decrements per order; auto-marks unavailable at 0 |
+| `stockCount` | int? | If set, decrements per order; auto-marks unavailable at 0. Decrement uses a DB-level atomic operation (`UPDATE ... WHERE stockCount > 0`) to prevent overselling under concurrent orders. If the decrement fails (stock = 0), the order item is rejected and the customer sees "Item is sold out" before payment. |
 | `estimatedPrepTime` | int? | Minutes — shown to customer ("~15 min") |
 | `isHalal` | bool | Shows Halal badge |
 | `isVegetarian` | bool | Shows Vegetarian badge |
@@ -1095,13 +1173,20 @@ Each `Table` has a `status` field:
 
 | Status | Description |
 |---|---|
-| `AVAILABLE` | No active session |
-| `OCCUPIED` | Active customer session |
-| `RESERVED` | Reserved (future: reservation system) |
-| `CLOSED` | Temporarily unavailable |
+| `AVAILABLE` | No active session — QR scan starts a new CustomerSession |
+| `OCCUPIED` | Active customer session in progress |
+| `RESERVED` | Reserved (future: reservation system) — QR scan blocked; customer sees "This table is reserved. Please ask staff." |
+| `CLOSED` | Temporarily unavailable — QR scan blocked; customer sees "This table is currently unavailable. Please ask staff." |
 
-Status updates automatically when a `CustomerSession` starts or ends.
-merchant-pos shows a real-time floor map of table statuses.
+### Table status rules
+
+- Status updates automatically: `AVAILABLE → OCCUPIED` when a CustomerSession starts; `OCCUPIED → AVAILABLE` when session ends
+- **A RESERVED table cannot be scanned** — the QR validation server rejects the request. Only staff can manually move it to AVAILABLE or OCCUPIED
+- **A CLOSED table cannot be scanned** — same rejection behaviour
+- Staff can only set a table to `RESERVED` if it is currently `AVAILABLE` (cannot reserve an occupied table)
+- `RESERVED` status is manual-only (Phase 1). Future reservation system (Phase 2) may set this automatically
+
+merchant-pos shows a real-time floor map of table statuses via Supabase Realtime.
 
 ---
 
@@ -1394,6 +1479,19 @@ Permissions, subscriptions, and audit logs are **restaurant-scoped**, not branch
 - **In-app sound:** Web Audio API plays an alert sound when a new `Order` record is created (Supabase Realtime subscription)
 - **Browser push notification:** Web Push API — merchant-pos asks for notification permission on first login; sends push even when tab is not in focus
 - **WhatsApp fallback (Phase 2):** If merchant has WhatsApp Business configured, send new order summary via WA message
+
+### Realtime reliability
+
+Supabase Realtime is the primary channel for all live updates (kitchen display, order tracking, floor map). To guard against missed events:
+- **Kitchen display** and **merchant-pos**: on mount, fetch current order state via REST API, then subscribe to Realtime delta. This ensures no orders are missed if a connection drop occurred before the component mounted.
+- **Customer order tracking**: same pattern — REST fetch on load, Realtime for updates. Additionally, customer page polls every 30 seconds as a fallback (silent, no visible loading state).
+- **Connection drop handling**: on Supabase Realtime disconnect, show a subtle "Reconnecting…" banner. On reconnect, re-fetch current state before resuming subscription.
+
+### Midtrans webhook reliability
+
+- Midtrans retries failed webhooks up to 5 times with exponential backoff
+- FBQR must respond with HTTP 200 within 10 seconds; use a background job queue if processing takes longer
+- A daily **reconciliation job** (Vercel Cron) compares `PENDING` orders older than 30 minutes against Midtrans transaction status API and resolves any discrepancies. This catches webhooks that were missed or delivered out of order.
 
 Add to tech stack:
 - **Push notifications:** Web Push API (native, no extra service needed for browser notifications)
@@ -1835,18 +1933,88 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 
 ---
 
+---
+
+### ADR-009: One CustomerSession per Table (not per device)
+
+**Decision:** Exactly one `CustomerSession` can be ACTIVE per table at any time. If a second device scans the same QR code while a session is already ACTIVE, the second scan resumes the existing session (using the session cookie).
+
+**Rationale:** A single-session model is simpler to implement, simpler to reason about for reporting, and matches how restaurants think ("Table 5 has one bill"). Group ordering (multiple phones adding to the same cart) is a Phase 2 feature; the schema supports it but the UI does not implement it in Phase 1. The session cookie allows any phone that scanned to reconnect without re-scanning.
+
+**Consequence:** In Phase 1, "group ordering" means: one person orders, others view the tracking screen. This is the common case in Indonesian casual dining. Full collaborative cart (each person adds items from their own phone) is deferred to Phase 2 but the schema is designed to support it.
+
+**Status:** Decided.
+
+---
+
+### ADR-010: Table Occupancy on First Confirmed Order (not on QR Scan)
+
+**Decision:** A table's status changes from `AVAILABLE` to `OCCUPIED` when the first `Order` for that session is `CONFIRMED` (payment successful), not when the QR is scanned.
+
+**Rationale:** QR scanning is cheap and accidental — a customer might scan to look at the menu and leave without ordering. Marking the table `OCCUPIED` on scan would pollute the floor map with false occupancies. A confirmed payment is the definitive signal that a customer is actually at the table and has committed.
+
+**Consequence:** There is a brief window where a customer has scanned and is browsing but the table still shows `AVAILABLE`. This is acceptable — the floor map is a rough guide for staff, not a real-time seat sensor. Staff can always manually update table status.
+
+**Status:** Decided.
+
+---
+
+### ADR-011: Customer Session Continuity via Cookie
+
+**Decision:** On QR scan, a session cookie (`fbqr_session_id`) is set on the customer's browser. On subsequent page loads (including refresh), the server checks for this cookie before creating a new session. If a valid ACTIVE session exists for that cookie+table, it is resumed without requiring a re-scan.
+
+**Rationale:** Without this, a customer who refreshes the page loses their order tracking. This is a critical UX failure. The cookie approach is the simplest implementation — no login required, no QR re-scan, no user action needed.
+
+**Security:** The cookie contains only the `CustomerSession.id` (a UUID). It has no elevated permissions. Even if stolen, it only allows viewing the menu and order status for one table — no payment information is accessible.
+
+**Status:** Decided.
+
+---
+
+### ADR-012: Delivery Order Branch Assignment
+
+**Decision:** Delivery orders (GrabFood/GoFood/ShopeeFood) are assigned to a specific `Branch` based on the merchant's configuration. Each delivery platform account is linked to exactly one branch. FBQRSYS admin or merchant sets this mapping in the restaurant settings.
+
+**Rationale:** A merchant with 3 branches may have separate delivery platform accounts per branch. The webhook must know which branch to route to. Hardcoding a restaurant-level default (without branch routing) would be wrong for multi-branch operators. The mapping is set once during setup and rarely changes.
+
+**Consequence for Phase 1:** Manual entry of delivery orders in merchant-pos allows the staff to select which branch the order belongs to. Phase 2 automated webhook uses the pre-configured mapping.
+
+**Status:** Decided.
+
+---
+
+### ADR-013: Tax-Inclusive Price Computation
+
+**Decision:** When `MerchantSettings.pricesIncludeTax = true`, displayed prices are tax-inclusive. The tax amount is back-calculated as: `taxAmount = round(price * taxRate / (1 + taxRate))`. Subtotal = sum of item prices. Tax = back-calculated from subtotal. Total = subtotal (prices already include tax — no addition needed).
+
+When `pricesIncludeTax = false` (default): subtotal = sum of prices, tax = `round(subtotal * taxRate)`, total = subtotal + tax + serviceCharge.
+
+**Example (tax-inclusive, 11% PPN):**
+- Item price: Rp 55,000 (tax-inclusive)
+- Tax back-calculated: `round(55000 * 0.11 / 1.11)` = Rp 5,450
+- Net price (ex-tax): Rp 49,550
+
+**Rationale:** Indonesia's PPN regulation allows either tax-inclusive or tax-exclusive pricing. Most warungs and casual restaurants display tax-inclusive prices. The formula is standard and must be documented precisely to avoid rounding discrepancies between the pre-invoice and the final invoice.
+
+**All amounts stored as integers (IDR, no decimals).** Rounding uses `Math.round()` (round half up).
+
+**Status:** Decided.
+
+---
+
 ### Open Questions for Future AI Agents
 
 The following are areas where the design is incomplete or where a future AI agent is explicitly invited to propose an approach:
 
 | Area | Current state | Question |
 |---|---|---|
-| **Table-level rate limiting** | Not yet specified | What is the right limit (N pending orders per table per hour) to balance fraud prevention against legitimate multi-round ordering (mains then desserts)? |
+| **Table-level rate limiting** | Not yet specified | What is the right limit (N pending orders per table per hour) to balance fraud prevention against legitimate multi-round ordering (mains then desserts)? Suggested starting point: max 5 PENDING orders per session at one time, configurable per merchant. |
 | **Anomaly detection for fake orders** | Not designed | Should FBQR auto-flag suspicious sessions (e.g. 10+ orders in 5 minutes from one table token)? What should the trigger threshold and response be? |
-| **In-app EOI form for multi-branch** | Not built | When should this replace email EOI? What fields should it capture? Should it create a `MerchantRequest` model or reuse an existing model? |
+| **In-app EOI form for multi-branch** | Not built | When should this replace email EOI? Fields: restaurant name, number of branches needed, locations, timeline. Creates a `MerchantRequest` model. Phase 2 addition. |
 | **Accurate / Jurnal.id accounting integration** | Phase 2 only | Which integration method (API, CSV export, webhook) best fits Accurate Online's API capabilities? |
 | **FBQR Points cross-restaurant redemption** | Phase 2, not fully designed | What is the IDR-to-points exchange rate? Are points redeemable for cash, credits, or items only? Who funds the redemption cost — FBQR or the merchant? |
-| **Delivery platform webhook auth** | Not designed | How should FBQR verify that an incoming webhook is genuinely from GrabFood/GoFood and not a spoofed request? |
+| **Delivery platform webhook authentication** | Not designed | Use platform-specific signature verification: GrabFood uses HMAC-SHA256 with a shared secret, GoFood uses a bearer token. Each platform's auth method must be implemented separately. Reference each platform's API documentation at implementation time. |
+| **Refund flow** | Not designed | Who can trigger a refund (merchant owner, FBQRSYS admin)? Is partial refund supported? Midtrans supports full and partial refunds via their Refund API. Refund triggers Order → CANCELLED, Payment → REFUNDED, and generates a credit note. Design the full flow in Step 15 (payment) and Step 19 (invoicing). |
 
 ---
 
