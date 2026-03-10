@@ -613,12 +613,33 @@ Midtrans webhook → FBQR API
 
 A saved QR code gives someone access to the ordering UI — but they still have to pay real money for any order to be processed. There is no way to inject a fake `CONFIRMED` status without controlling the Midtrans server or the FBQR webhook endpoint (which requires the Midtrans server key, server-side only).
 
-**For cash orders ("Bayar di Kasir"):** cash is a deliberate exception to the payment-first rule — the customer pays at the counter after the order is placed. This creates a gap where a fake order could reach the kitchen. Mitigated by:
-- `CASH` payment method is **off by default**. Merchants must explicitly enable it per restaurant. Most QR-ordering restaurants should not need it.
-- Cash orders are created with `paymentStatus: PENDING_CASH` and a distinct visual badge in `merchant-pos`. **They route to the kitchen immediately** (the kitchen can't wait for payment confirmation at a counter), but the cashier must manually mark as paid.
-- The practical risk is low: someone would have to walk in, scan the QR, place a fake cash order, and leave — the staff would see an uncollected cash order within minutes and cancel it. The financial damage is a wasted preparation cost (labour + ingredients), not a financial loss since payment was never collected.
-- Rate limiting (see below) caps simultaneous `PENDING_CASH` orders per session to reduce kitchen disruption from a prank.
-- If cash fraud becomes a pattern at a specific merchant, the merchant can disable `CASH` payment entirely from settings.
+**For cash orders ("Bayar di Kasir"):** cash follows the same gate logic — the kitchen only receives the order after explicit confirmation. The confirming party is the cashier instead of Midtrans.
+
+```
+Customer selects "Bayar di Kasir" → submits cart
+    │
+    ▼
+Order created: status PENDING, paymentStatus: PENDING_CASH
+Kitchen does NOT see this order yet
+    │
+    ▼
+Alert sent to merchant-pos: "New cash order at Table X — awaiting cashier approval"
+    │
+    ▼
+Cashier reviews order → collects cash → taps [Confirm & Send to Kitchen]
+    │
+    ├── Confirmed → Order status: CONFIRMED → routed to kitchen (same flow as digital)
+    └── Rejected  → Order cancelled, customer notified on their screen
+```
+
+**The rule is simple: no order — digital or cash — ever reaches the kitchen without a confirmation step.**
+- Digital: Midtrans webhook confirms payment
+- Cash: cashier taps confirm after collecting money
+
+Additional safeguards for cash:
+- `CASH` payment method is **off by default** — merchant must explicitly enable it per restaurant
+- Rate limiting caps simultaneous `PENDING_CASH` orders per session
+- Merchant can disable `CASH` entirely from settings if misuse occurs
 
 ### Secondary defences
 
@@ -1131,11 +1152,11 @@ A separate screen/view (`/kitchen/queue-display`) for customer-facing use:
 
 Some customers — especially at warungs and older demographics — pay cash.
 
-- Merchant can enable `CASH` as a payment option per restaurant
-- Customer selects "Bayar di Kasir" at checkout — order is submitted without online payment
-- Order appears on merchant-pos with `paymentStatus: PENDING_CASH`
-- Cashier marks as paid when cash is collected
-- `Payment.method: CASH`, `Payment.amount` entered manually by cashier
+- Merchant can enable `CASH` as a payment option per restaurant (off by default)
+- Customer selects "Bayar di Kasir" at checkout — order submitted with `paymentStatus: PENDING_CASH`
+- Order sits in `merchant-pos` queue, **not yet sent to kitchen**
+- Cashier collects cash → taps [Confirm & Send to Kitchen] → order status moves to `CONFIRMED` → routed to kitchen
+- `Payment.method: CASH`, `Payment.amount` entered by cashier at confirmation
 - Cash orders appear in reports separately from QRIS/digital payments
 
 ---
@@ -1651,7 +1672,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 
 **Rationale:** See the QR Order Security section for full detail. Summary: payment IS the approval. Cashier gates re-introduce human bottleneck and degrade customer experience at exactly the moment when self-service value is highest (peak hours with multiple simultaneous orders). Midtrans webhook verification is cryptographically stronger than a human check anyway.
 
-**Exception:** Cash orders require cashier confirmation by design — the cashier collects the money and marks `PENDING_CASH` → paid.
+**Exception:** Cash orders use the same gate — cashier confirms after collecting money, which routes the order to kitchen. The confirming party differs (cashier vs Midtrans webhook) but the principle is identical: kitchen never sees an order until it is confirmed.
 
 **Status:** Decided. This is a core product philosophy, not just an implementation detail.
 
