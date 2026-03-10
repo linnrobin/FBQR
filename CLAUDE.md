@@ -683,46 +683,6 @@ Real-time order status visible → reports updated
 Loyalty points credited to customer (if registered + loyalty enabled)
 ```
 
-```
-Customer scans QR (encoded: restaurantId + tableId + token)
-    │
-    ▼
-end-user-system loads branded menu for that restaurant/table
-    │
-    ▼
-Customer builds cart (sees best-seller highlights, upsell prompts, personalized suggestions)
-    │
-    ▼
-Customer reviews cart → Pre-invoice generated (itemized, shows tax + service charge)
-    │
-    ▼
-Customer optionally logs in to earn loyalty points
-    │
-    ▼
-Payment via Midtrans (QRIS recommended — 0.7% fee)
-    │
-    ▼
-Midtrans webhook → FBQR API marks Order as PAID
-    │
-    ▼
-Invoice generated (PDF) → available via link / shareable / email
-    │
-    ▼
-Supabase Realtime pushes new order to merchant-kitchen display
-    │
-    ▼
-Kitchen sees order queue → can reorder item priority (drag or arrow controls)
-    │
-    ▼
-Kitchen marks items as PREPARING → READY
-    │
-    ▼
-merchant-pos sees real-time order status + can generate reports
-    │
-    ▼
-(if customer registered) loyalty points credited to their account
-```
-
 ---
 
 ## QR Order Security
@@ -1114,6 +1074,7 @@ Configurable per restaurant in `MerchantSettings`:
 | `availableFrom` | time? | If set, category only shows after this time (e.g. `06:00`) |
 | `availableTo` | time? | If set, category only shows before this time (e.g. `11:00`) |
 | `isActive` | bool | Toggle entire category without deleting |
+| `kitchenStationId` | string? | Routes all items in this category to the specified kitchen station; null = default station |
 
 **Time-based availability example:** A "Sarapan" category with `availableFrom: 06:00`, `availableTo: 11:00` is only shown to customers between 6am and 11am WIB. Outside that window, the category is hidden entirely from the menu.
 
@@ -1233,7 +1194,7 @@ Research into the two most mature QR ordering markets informs key FBQR decisions
 | 5 | **AI upselling has proven, measurable ROI** — TabSquare 25% AOV lift is the strongest industry data point | ✅ AI recommendation engine planned (all 4 types, merchant-configurable) |
 | 6 | **Forced data collection is a trust and reputation risk** — China's backlash is a clear warning | ✅ Customer login is opt-in; anonymous QR sessions are first-class |
 | 7 | **Loyalty unification is a market gap in SEA** — Singapore's fragmented loyalty is an opportunity | ✅ FBQR loyalty layer tied to customer account, not platform-specific |
-| 8 | **Kitchen multi-station routing matters at scale** — needed for larger restaurants | 🔲 Add to backlog: route `OrderItem` to kitchen station by category |
+| 8 | **Kitchen multi-station routing matters at scale** — needed for larger restaurants | ✅ Designed — see Kitchen Station Routing section; category-level assignment, per-item override, station snapshot on OrderItem |
 | 9 | **Warung/informal segment needs a simplified mode** — Singapore's hawker programme confirms this | 🔲 Add to backlog: "Lite mode" for single-stall operators, minimal setup |
 | 10 | **Privacy by design must be foundational** — build explicit consent and minimal data collection from day one | 🔲 Add to backlog: privacy consent flow, clear opt-in for loyalty data |
 
@@ -1406,7 +1367,7 @@ Permissions, subscriptions, and audit logs are **restaurant-scoped**, not branch
 ### Design rationale
 
 > **Why not self-service branch creation?**
-> Allowing merchants to freely add restaurants bypasses plan enforcement (e.g. a Starter plan merchant adding 10 restaurants). Manual FBQRSYS approval keeps plan limits enforced without building a complex automated guard. At current scale, the volume of EOIs is low enough that manual processing is faster to build and maintain than an automated approval workflow.
+> Allowing merchants to freely add branches bypasses plan enforcement (e.g. a Starter plan merchant adding 10 branches). Manual FBQRSYS approval keeps `branchLimit` enforced without building a complex automated guard. At current scale, the volume of EOIs is low enough that manual processing is faster to build and maintain than an automated approval workflow.
 
 > **Why EOI via email/phone rather than an in-app request form?**
 > An in-app form adds development work for a flow that happens rarely (a merchant opens one restaurant — not ten). At scale or if EOI volume grows, an in-app form can be added. The outcome is identical; the delivery mechanism is simpler for Phase 1.
@@ -1929,6 +1890,8 @@ Claude has a finite context window per session. To work efficiently:
 5. **Paste only the relevant code** when asking Claude to help debug — not the entire codebase.
 
 ### Recommended build order
+
+> **See the Phase Tracker at the top of this file** for the live checkbox state of each step. The table below is the canonical sequence — the Phase Tracker is the authoritative record of what has been completed.
 
 Work through this sequence, one session at a time:
 
