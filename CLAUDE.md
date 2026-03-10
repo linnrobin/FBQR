@@ -586,6 +586,73 @@ merchant-pos sees real-time order status + can generate reports
 
 ---
 
+## QR Order Security
+
+> **Common concern: a customer saves the QR code and makes a fake or repeated order without being present.**
+> The design deliberately avoids requiring cashier approval for every order — that re-introduces human bottleneck and defeats the self-service model. Instead, the system uses layered defences that make a "fake order" either harmless or economically irrational.
+
+### Primary defence: payment confirms the order
+
+**An order does not reach the kitchen until Midtrans confirms payment.**
+
+```
+Customer submits cart
+    │
+    ▼
+Order created with status: PENDING   ← exists in DB, invisible to kitchen
+    │
+    ▼
+Customer completes payment (Midtrans QRIS / GoPay / VA / etc.)
+    │
+    ▼
+Midtrans webhook → FBQR API
+    │
+    ├── Payment verified → Order status: CONFIRMED → pushed to kitchen
+    └── No webhook / failed payment → Order stays PENDING → auto-expires after 15 min
+```
+
+A saved QR code gives someone access to the ordering UI — but they still have to pay real money for any order to be processed. There is no way to inject a fake `CONFIRMED` status without controlling the Midtrans server or the FBQR webhook endpoint (which requires the Midtrans server key, server-side only).
+
+**For cash orders ("Bayar di Kasir"):** cash is a deliberate exception to the payment-first rule — the customer pays at the counter after the order is placed. This creates a gap where a fake order could reach the kitchen. Mitigated by:
+- `CASH` payment method is **off by default**. Merchants must explicitly enable it per restaurant. Most QR-ordering restaurants should not need it.
+- Cash orders are created with `paymentStatus: PENDING_CASH` and a distinct visual badge in `merchant-pos`. **They route to the kitchen immediately** (the kitchen can't wait for payment confirmation at a counter), but the cashier must manually mark as paid.
+- The practical risk is low: someone would have to walk in, scan the QR, place a fake cash order, and leave — the staff would see an uncollected cash order within minutes and cancel it. The financial damage is a wasted preparation cost (labour + ingredients), not a financial loss since payment was never collected.
+- Rate limiting (see below) caps simultaneous `PENDING_CASH` orders per session to reduce kitchen disruption from a prank.
+- If cash fraud becomes a pattern at a specific merchant, the merchant can disable `CASH` payment entirely from settings.
+
+### Secondary defences
+
+| Defence | How it works |
+|---|---|
+| **Token rotation on session close** | When staff close a table session, the table's QR token is regenerated. The old saved QR becomes immediately invalid. New customers get a fresh QR with a new UUID. |
+| **Session expiry** | `CustomerSession` has a configurable TTL (default: 4 hours). An expired session rejects new orders even with a valid token. |
+| **Token scoped to table + restaurant** | The URL encodes `restaurantId + tableId + token`. Even if someone brute-forces a token, it only works for one specific table at one restaurant — not the whole platform. |
+| **Rate limiting per session** | Max N `PENDING` orders per `CustomerSession` at one time (configurable, default: 3). Prevents order flooding. |
+| **Midtrans webhook signature verification** | All webhook calls are verified using Midtrans's SHA512 signature. Only legitimate Midtrans callbacks can flip an order to `CONFIRMED`. |
+| **Server-side key isolation** | `MIDTRANS_SERVER_KEY` is server-only (never in client bundle). Client only receives a one-time `snap_token` per transaction. |
+
+### What a "fake order" actually achieves
+
+If someone scans a saved QR and submits a cart:
+- They see the menu (read-only — no business harm)
+- They create a `PENDING` order that auto-expires after 15 minutes
+- **Nothing reaches the kitchen** unless they actually pay
+- If they pay, the merchant receives real revenue for a real order — not "fake" at all
+
+The only realistic attack is a **prank order with real payment** — someone pays to send food to a table they are not at. This is the same risk as any restaurant that accepts phone-in or online orders. It is considered acceptable risk; a cashier-approval gate would not meaningfully prevent it (the prank caller could pay anyway).
+
+### Design rationale
+
+> **Why not require cashier approval for every order?**
+> Cashier approval re-introduces a human bottleneck that the QR system is designed to eliminate. It also fails at scale (multiple simultaneous orders, understaffed shifts) and degrades customer experience (customer waits for acknowledgement before kitchen even starts). Payment confirmation by Midtrans is a stronger, faster, and fully automated guard.
+
+> **Alternative considered: time-lock the QR (expire token every 30 min).**
+> Rejected as primary defence — it increases operational burden (staff must reprint QRs or customers scan a lobby display QR on arrival). Token rotation on session close is sufficient and only happens when the table is actually turned over.
+
+> **AI agent improvement suggestion area:** Consider whether table-level rate limiting (max N orders per table per hour) adds enough value to justify the configuration complexity. Also consider: should FBQR detect anomalous ordering patterns (same table, 20 orders in 10 minutes) and auto-flag for merchant review?
+
+---
+
 ## Kitchen Order Priority
 
 The kitchen display shows all active `OrderItem` rows, grouped by order but sortable globally.
@@ -597,6 +664,71 @@ The kitchen display shows all active `OrderItem` rows, grouped by order but sort
 
 **Example:** Three items arrive — Burger (pos 1), French Fries (pos 2), Salad (pos 3).
 Kitchen moves Salad to pos 2 and French Fries to pos 3. Burger and Salad are prepared first.
+
+---
+
+## Kitchen Station Routing
+
+> **Upgraded from backlog to core feature.** Any restaurant with a bar, patisserie, or separate prep area needs orders routed to the right station automatically. Without this, staff manually relay items — which is error-prone and defeats the purpose of a digital system.
+
+### How it works
+
+Merchants create named **Kitchen Stations** from `merchant-pos` settings. Each station maps to one or more `MenuCategory` records. When an order is placed, `OrderItem`s are automatically routed to the station that owns their category.
+
+```
+KitchenStation  ← merchant-defined (free-form name, e.g. "Bar", "Kitchen", "Patisserie")
+    ↑
+MenuCategory    ← assigned to one KitchenStation (or null = default kitchen)
+    ↑
+MenuItem        ← inherits station from its category (override optional per item)
+    ↑
+OrderItem       ← routed to station at order time; station stored as snapshot
+```
+
+### Schema additions
+
+| Model | Field | Type | Notes |
+|---|---|---|---|
+| `KitchenStation` | `id` | string | UUID |
+| `KitchenStation` | `restaurantId` | string | Scoped to restaurant |
+| `KitchenStation` | `name` | string | Free-form, e.g. "Bar", "Hot Kitchen", "Cold Kitchen", "Patisserie" |
+| `KitchenStation` | `displayColor` | string? | Hex color for UI badge — helps staff visually distinguish stations |
+| `KitchenStation` | `isActive` | bool | Toggle station without deleting |
+| `MenuCategory` | `kitchenStationId` | string? | Null = route to default station |
+| `MenuItem` | `kitchenStationOverride` | string? | Per-item override (e.g. a drink item in a food category) |
+| `OrderItem` | `kitchenStationId` | string | Snapshot at order time — not a live FK |
+
+### Display behaviour
+
+- `merchant-kitchen` shows a **station filter tab bar** at the top: "All" + one tab per active station
+- Each station tab shows only the `OrderItem`s routed to it
+- Station badge (colored pill) is shown on each `OrderItem` card in the "All" view so staff know at a glance which station is responsible
+- A station can optionally be set to a **dedicated device** — e.g. the bar tablet only shows the "Bar" tab by default. This is set in the station config, not locked — staff can always switch tabs
+
+### Configuration flow (merchant-pos)
+
+```
+Settings → Kitchen Stations
+    │
+    ├── Create station: name + color
+    ├── Assign categories to station (multi-select dropdown)
+    └── Per-item overrides available in menu item edit view
+```
+
+### Default station
+
+If a `MenuCategory` has no `kitchenStationId` set, its items route to the restaurant's designated **default station** (configurable, defaults to the first created station). This ensures no order item is ever unrouted.
+
+### Design rationale
+
+> **Why assign at the category level rather than item level?**
+> In practice, a merchant thinks "all Drinks go to the Bar" — not item by item. Category-level assignment covers 95% of cases with zero per-item configuration. Per-item override exists for edge cases (e.g. a "Mocktail" item inside a "Dessert" category that should actually go to the bar). This matches how real kitchens are organized and minimises setup friction.
+
+> **Why snapshot the stationId on OrderItem instead of joining live?**
+> Same reason prices are snapshotted — if a merchant later reassigns a category to a different station, historical orders must still show the station that actually received them. Immutable historical records are more important than normalisation here.
+
+> **Alternative considered: route by item tag instead of category.**
+> Rejected — more flexible but significantly more configuration burden. Tags would require merchants to tag every item. Categories are already a natural grouping they maintain.
 
 ---
 
@@ -1038,24 +1170,75 @@ Delivery-specific fields on `Order`:
 
 ## Multi-Restaurant Per Merchant Account
 
-> **Deal-breaker for chains.** Currently one email = one restaurant. A chain owner with 8 branches cannot manage 8 separate accounts.
+> **Deal-breaker for chains.** A chain owner with 8 branches cannot manage 8 separate accounts. However, multi-branch capability is a premium feature controlled by FBQRSYS — merchants do not self-provision additional restaurants.
 
-### Revised Model
+### Data model
 
 ```
 Merchant (owner account)
-  └── Restaurant[]    ← can own multiple restaurants
-        └── Branch[]  ← each restaurant has branches
+  └── Restaurant[]    ← can own multiple restaurants (enabled by FBQRSYS admin)
+        └── Branch[]  ← each restaurant has branches (also added by FBQRSYS admin)
 ```
 
-The owner logs in once and switches between restaurants from a top-level selector. Each restaurant has its own:
+### How multi-branch is enabled (EOI flow)
+
+Multi-branch is **not self-service**. The merchant cannot add restaurants or branches themselves. This keeps FBQRSYS in control of plan enforcement and prevents feature abuse.
+
+```
+Merchant submits an Expression of Interest (EOI)
+    │  (via email, contact form, or phone — no in-app flow required)
+    │
+    ▼
+FBQRSYS admin reviews the request
+    │
+    ├── Approves → admin opens merchant's account in FBQRSYS panel
+    │               → enables multi-restaurant flag on the Merchant record
+    │               → adds each Restaurant one by one (name, address, contact)
+    │               → adds each Branch under the appropriate Restaurant
+    │               → merchant immediately sees new restaurant(s) in their switcher
+    │
+    └── Rejects / requests more info → admin contacts merchant directly
+```
+
+FBQRSYS admin controls:
+- Whether the merchant has multi-restaurant capability (`Merchant.multiRestaurantEnabled: bool`)
+- How many restaurants / branches the merchant is allowed (`Merchant.restaurantLimit: int`, driven by their plan)
+- Which plan tier the new restaurant is on (each restaurant billed separately, or chain plan covers all)
+
+### What the merchant sees after activation
+
+- A persistent restaurant switcher at the top of `merchant-pos`
+- Each restaurant and its branches listed, switchable with one click
+- "All Restaurants" aggregate view in the dashboard
+- Staff accounts remain scoped to one restaurant — they do not see the switcher
+
+### What each restaurant owns independently
+
 - Menu, branding, promotions, staff, tables
-- Subscription (each restaurant billed separately, or a chain plan covers all)
-- Reports (viewable individually or aggregated)
+- Subscription (each restaurant can be on a different plan, or covered by a chain plan)
+- Reports (viewable individually or aggregated in the chain view)
+- Audit log (scoped per restaurant)
 
-Staff accounts are scoped to a specific restaurant (they don't see other restaurants under the same owner).
+### Schema fields
 
-> **Schema change:** `Merchant` has a one-to-many relationship with `Restaurant`. Permissions, subscriptions, and audit logs are restaurant-scoped, not merchant-scoped. Update Prisma schema accordingly.
+| Model | Field | Notes |
+|---|---|---|
+| `Merchant` | `multiRestaurantEnabled` | bool — set by FBQRSYS admin only |
+| `Merchant` | `restaurantLimit` | int — max restaurants allowed under this merchant account |
+| `Restaurant` | `merchantId` | FK to owning Merchant |
+| `Branch` | `restaurantId` | FK to owning Restaurant |
+
+Permissions, subscriptions, and audit logs are **restaurant-scoped**, not merchant-scoped.
+
+### Design rationale
+
+> **Why not self-service branch creation?**
+> Allowing merchants to freely add restaurants bypasses plan enforcement (e.g. a Starter plan merchant adding 10 restaurants). Manual FBQRSYS approval keeps plan limits enforced without building a complex automated guard. At current scale, the volume of EOIs is low enough that manual processing is faster to build and maintain than an automated approval workflow.
+
+> **Why EOI via email/phone rather than an in-app request form?**
+> An in-app form adds development work for a flow that happens rarely (a merchant opens one restaurant — not ten). At scale or if EOI volume grows, an in-app form can be added. The outcome is identical; the delivery mechanism is simpler for Phase 1.
+
+> **AI agent improvement suggestion area:** If EOI volume grows significantly, consider an in-app "Request Multi-Branch Access" form that creates a `MerchantRequest` record in FBQRSYS, so admins have a structured queue rather than processing emails. This is a clean Phase 2 addition with no schema conflict.
 
 ---
 
@@ -1410,7 +1593,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Discount codes / vouchers** | 📋 Nice-to-have | All | Customer-facing promo codes |
 | **Export reports** | 📋 Nice-to-have | All | Excel/PDF download (see Accounting Export above) |
 | **Group ordering (collaborative cart)** | 📋 Nice-to-have | Seafood | Multiple phones, shared cart, per-person attribution |
-| **Kitchen multi-station routing** | 📋 Nice-to-have | Chain | Route by category to grill/cold/drinks station |
+| **Kitchen multi-station routing** | ⚠️ High friction | All multi-station restaurants | Promoted from nice-to-have — see Kitchen Station Routing section; route by category to bar/kitchen/patisserie |
 | **Privacy consent flow** | 📋 Nice-to-have | All | Data collection opt-in; minimal principle |
 | **Table merge / split bill** | 📋 Nice-to-have | Seafood | Group dining; split payment between people |
 | **Table reservation** | 📋 Nice-to-have | Seafood | Book in advance |
@@ -1419,6 +1602,119 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Menu templates** | 📋 Nice-to-have | Warung | Pre-built menus to accelerate setup |
 | **Branded QR code design** | 📋 Nice-to-have | Seafood, chain | Styled QR with restaurant logo |
 | **Shareable menu URL** | 📋 Nice-to-have | All | Digital menu link without scanning |
+
+---
+
+## Architecture Decision Records (ADRs)
+
+> **For AI agents reading this document:** This section exists to help you understand *why* decisions were made — not just *what* was decided. You are encouraged to challenge these decisions if you have evidence that a better approach exists, or to suggest improvements. Where a decision is marked **open**, it has not been finalised and your input is explicitly welcome.
+
+### ADR-001: Monorepo (Turborepo) over Microservices
+
+**Decision:** Use a Turborepo monorepo with two Next.js apps (`apps/web`, `apps/menu`) and shared packages.
+
+**Rationale:** Microservices add significant operational overhead (separate deployments, inter-service auth, distributed tracing, network latency on every internal call). At the current stage — one developer, no traffic yet — that overhead provides no benefit. Turborepo gives clean domain separation (each sub-system is its own app/package) without the infra complexity. Individual apps can be extracted into independent services later if specific scaling pain points emerge (e.g. the customer menu app needs to scale independently of the admin panel).
+
+**Tradeoffs accepted:** A monorepo means a single deployment pipeline. If one sub-system has a critical bug, all sub-systems may be affected by a bad deploy. Mitigated by: separate Vercel projects for `apps/web` and `apps/menu`.
+
+**Status:** Decided. Open for revision if the team scales past ~10 engineers or if sub-systems require independent scaling.
+
+---
+
+### ADR-002: Supabase over Self-Managed PostgreSQL
+
+**Decision:** Use Supabase for PostgreSQL, Realtime, and Storage.
+
+**Rationale:** Supabase provides three critical services in one: managed PostgreSQL (removes infra burden), Realtime subscriptions (required for live kitchen display and order tracking), and file Storage (menu images, invoice PDFs). The free tier is sufficient for initial launch. Self-managing these three separately would require more infrastructure work with no product benefit at this stage.
+
+**Tradeoffs accepted:** Supabase Realtime is constrained by their pricing tiers at high concurrent connections. If the kitchen display needs to support hundreds of simultaneous connections, Supabase Realtime costs could become a concern. Mitigation: monitor connection counts; switch to a dedicated Ably/Pusher subscription or self-hosted socket server if Supabase becomes a bottleneck.
+
+**Status:** Decided. Re-evaluate if Realtime connection costs become material.
+
+---
+
+### ADR-003: Prisma ORM over Raw SQL or Drizzle
+
+**Decision:** Use Prisma as the ORM.
+
+**Rationale:** Prisma's type-safe client and migration system reduce an entire class of bugs (runtime type mismatches between DB and TypeScript). The schema file doubles as documentation. The developer ecosystem is well-established. Drizzle was considered — it has a smaller runtime footprint and is arguably faster for large queries, but Prisma's migration tooling and schema clarity are more valuable for a solo developer building a complex schema from scratch.
+
+**Tradeoffs accepted:** Prisma's query builder occasionally requires raw SQL for complex aggregations (e.g. dashboard queries joining many tables with window functions). Use `prisma.$queryRaw` for these cases.
+
+**Status:** Decided. Open to Drizzle migration if Prisma query performance becomes a bottleneck on complex dashboard queries.
+
+---
+
+### ADR-004: Payment-First Order Confirmation (No Cashier Approval Gate)
+
+**Decision:** Orders are only confirmed (and routed to kitchen) after Midtrans payment webhook. No cashier must manually approve digital orders.
+
+**Rationale:** See the QR Order Security section for full detail. Summary: payment IS the approval. Cashier gates re-introduce human bottleneck and degrade customer experience at exactly the moment when self-service value is highest (peak hours with multiple simultaneous orders). Midtrans webhook verification is cryptographically stronger than a human check anyway.
+
+**Exception:** Cash orders require cashier confirmation by design — the cashier collects the money and marks `PENDING_CASH` → paid.
+
+**Status:** Decided. This is a core product philosophy, not just an implementation detail.
+
+---
+
+### ADR-005: Dynamic RBAC (Permissions Hardcoded, Roles User-Created)
+
+**Decision:** Permissions are system-defined atomic capability keys (e.g. `menu:manage`). Roles are fully user-created free-form names with any combination of permissions. Templates are suggestions only.
+
+**Rationale:** Hardcoding roles (e.g. `CASHIER`, `SUPERVISOR`) creates a rigid system that does not match real Indonesian restaurant operations — every restaurant organises its staff differently. A "Koordinator Dapur" at one restaurant has different responsibilities than a "Kepala Dapur" at another. Permissions must be hardcoded because they correspond directly to code-level `requirePermission()` gate calls. Roles must be flexible because naming conventions and responsibility bundles vary by merchant.
+
+**Tradeoffs accepted:** More complex UI for role management. Mitigated by showing pre-built template suggestions that cover 90% of common use cases — a merchant can use a template as-is and never need to understand the underlying permissions system.
+
+**Status:** Decided. This is a core differentiator from simpler POS systems.
+
+---
+
+### ADR-006: Per-Category Kitchen Station Assignment (not per-item tagging)
+
+**Decision:** Kitchen stations are assigned at the `MenuCategory` level. Per-item override is available but category is the primary assignment unit.
+
+**Rationale:** See the Kitchen Station Routing section. Summary: merchants think in categories ("all Drinks go to Bar"), not individual items. Category-level assignment requires one setting per category, not one per item. Reduces configuration friction by ~90% for a typical 40-item menu.
+
+**Status:** Decided.
+
+---
+
+### ADR-007: Multi-Branch via FBQRSYS EOI (Not Self-Service)
+
+**Decision:** Merchants cannot self-add restaurants or branches. They submit an Expression of Interest (email/phone); FBQRSYS admin manually enables the feature and adds each restaurant/branch.
+
+**Rationale:** Self-service branch creation bypasses plan enforcement. Manual approval ensures each branch is on the correct plan and billed appropriately. At current stage (few merchants), EOI volume is low and manual processing is faster to build than an automated approval workflow with plan enforcement logic.
+
+**Tradeoffs accepted:** Friction for the merchant (they cannot instantly add a branch). Mitigated by fast turnaround — FBQRSYS admin adds the branch and merchant sees it immediately.
+
+**Open question / improvement area:** If EOI volume grows, an in-app `MerchantRequest` queue for FBQRSYS admins would replace the email process. No schema changes needed — just a new `MerchantRequest` model and a FBQRSYS admin review UI.
+
+**Status:** Decided for Phase 1. In-app EOI form is a clean Phase 2 addition.
+
+---
+
+### ADR-008: Only end-user-system is Merchant-Branded
+
+**Decision:** FBQRSYS and `merchant-pos` always display FBQR's own UI. Only the `apps/menu` (customer-facing) app applies merchant branding (logo, colors, font).
+
+**Rationale:** FBQRSYS is a B2B platform admin tool — merchants and FBQRSYS staff both need to know they are operating the FBQR platform. Branding FBQRSYS with merchant colors would cause confusion. `merchant-pos` retains FBQR UI chrome so support staff can recognise the system immediately when assisting merchants. Customers, however, should feel they are at the restaurant's own digital experience — they may not know or care that FBQR is the underlying platform.
+
+**Status:** Decided. This is a deliberate product positioning choice.
+
+---
+
+### Open Questions for Future AI Agents
+
+The following are areas where the design is incomplete or where a future AI agent is explicitly invited to propose an approach:
+
+| Area | Current state | Question |
+|---|---|---|
+| **Table-level rate limiting** | Not yet specified | What is the right limit (N pending orders per table per hour) to balance fraud prevention against legitimate multi-round ordering (mains then desserts)? |
+| **Anomaly detection for fake orders** | Not designed | Should FBQR auto-flag suspicious sessions (e.g. 10+ orders in 5 minutes from one table token)? What should the trigger threshold and response be? |
+| **In-app EOI form for multi-branch** | Not built | When should this replace email EOI? What fields should it capture? Should it create a `MerchantRequest` model or reuse an existing model? |
+| **Accurate / Jurnal.id accounting integration** | Phase 2 only | Which integration method (API, CSV export, webhook) best fits Accurate Online's API capabilities? |
+| **FBQR Points cross-restaurant redemption** | Phase 2, not fully designed | What is the IDR-to-points exchange rate? Are points redeemable for cash, credits, or items only? Who funds the redemption cost — FBQR or the merchant? |
+| **Delivery platform webhook auth** | Not designed | How should FBQR verify that an incoming webhook is genuinely from GrabFood/GoFood and not a spoofed request? |
 
 ---
 
