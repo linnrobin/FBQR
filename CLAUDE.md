@@ -11,16 +11,18 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.2
+Version        : 2.3
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : docs/ reference directory created and gap-fixed:
-                 docs/data-models.md — authoritative Prisma schema reference for Step 2
-                 docs/platform-owner.md — FBQRSYS billing, subscriptions, cron jobs, PDP compliance
-                 docs/merchant.md — merchant onboarding, RBAC, registration, UI standards
-                 docs/customer.md — customer session, ordering flow, loyalty, registration
-                 docs/architecture.md — tech stack, ADRs, monorepo structure
-                 data-models.md gap-fixed: CronRunLog table added; 17 missing fields
-                 consolidated (Merchant, Customer, MerchantSubscription, MerchantBillingInvoice)
+Last completed : CLAUDE.md promoted to full command center for AI agents (v2.3):
+                 Added ## Reference Documentation section with:
+                   - Per-file ownership table (what each docs/ file is authoritative on)
+                   - Complete Step→Doc routing table (all 28 steps mapped to docs/ files)
+                   - Write rules (when to update each docs/ file)
+                   - Conflict resolution rule (most recently updated file wins)
+                 Session Start Protocol: step 4 now references routing table
+                 Session End Protocol: step 4 now mandates updating docs/ files;
+                   step 6 requires pushing both CLAUDE.md and docs/ together
+                 Context Recovery Protocol: step 4 now reads relevant docs/ file first
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining
@@ -100,12 +102,7 @@ Run these checks at the start of every session before writing any code:
 1. **Read the CURRENT STATE block** (top of this file) — find `Next step` and `Open decisions`
 2. **Check the Phase Tracker** — confirm which step is next and that all previous steps are checked off
 3. **Run `git status`** — make sure you are on the correct branch and there are no uncommitted changes from a previous agent
-4. **Read the relevant `docs/` file for the step you are about to build** — do not rely on CLAUDE.md alone or on memory:
-   - Step 2 (Prisma schema): read `docs/data-models.md` — this is the authoritative schema reference
-   - Steps 3–6 (auth, RBAC, FBQRSYS, billing): read `docs/platform-owner.md`
-   - Steps 7–11 (merchant onboarding, menu, tables, promotions): read `docs/merchant.md`
-   - Steps 12–16 (customer ordering, cart, payment, tracking): read `docs/customer.md`
-   - Any step (architecture questions, ADRs, tech stack): read `docs/architecture.md`
+4. **Read the relevant `docs/` file(s) for the step you are about to build** — see the **Step→Doc routing table** in `## Reference Documentation` below. Do not rely on CLAUDE.md alone or on memory. CLAUDE.md is the index and command center; the `docs/` files are the detailed specs.
 5. **Read the existing code files** that you will be modifying before editing them — never edit blind
 
 Only after these 5 steps should you begin writing code.
@@ -118,14 +115,20 @@ Before the session ends (and before context runs out), always:
 
 1. **Commit and push all changes** — partial work is better than lost work
 2. **Update the CURRENT STATE block** at the top of this file:
-   - Increment `Version` (patch: 1.0 → 1.1 for doc changes; minor: 1.1 → 1.2 for schema or ADR changes; major: 1.x → 2.0 for phase completion)
+   - Increment `Version` (patch: 2.x → 2.y for doc/config changes; minor bump for schema or ADR changes; major bump for phase completion)
    - Set `Last updated` to today's date
    - Set `Last completed` to what was just finished
    - Set `Next step` to the next uncompleted item in the Phase Tracker
    - Note any new open decisions or doc gaps discovered
 3. **Check off completed steps** in the Phase Tracker
-4. **If new decisions were made** (new packages chosen, schema changes, conventions added) — update the relevant section of this file
-5. **Push CLAUDE.md** as the final commit of the session
+4. **Update the relevant `docs/` file(s)** if any of the following occurred:
+   - You added, removed, or changed a Prisma model or field → update `docs/data-models.md`
+   - You changed platform billing logic, cron jobs, FBQRSYS flows, or PDP compliance → update `docs/platform-owner.md`
+   - You changed merchant RBAC, menu management, kitchen, promotions, or onboarding flows → update `docs/merchant.md`
+   - You changed customer session, ordering, QR flow, or loyalty logic → update `docs/customer.md`
+   - You added or revised an ADR, changed the tech stack, or updated the backlog → update `docs/architecture.md`
+5. **Update CLAUDE.md** with any conventions, packages, or decisions not captured in a docs/ file
+6. **Push CLAUDE.md and any updated docs/ files** as the final commit of the session — both together, never just one
 
 ---
 
@@ -136,9 +139,10 @@ If a session ran out of context mid-task and you are resuming:
 1. Read the CURRENT STATE block — it tells you where the previous session stopped
 2. Run `git log --oneline -10` — read the last few commit messages to understand what was done
 3. Run `git diff HEAD~1` if the last commit was partial — see what changed
-4. Read the specific code files that were being worked on (named in the commit messages)
-5. Do **not** re-read the entire CLAUDE.md from scratch — jump to the section relevant to the current step
-6. If genuinely unclear what state the code is in, ask the user: *"I can see the last session was working on [X]. Should I continue from [specific point] or review the current state first?"*
+4. Read the relevant `docs/` file for the step being worked on (see Step→Doc routing table in `## Reference Documentation`)
+5. Read the specific code files that were being worked on (named in the commit messages)
+6. Do **not** re-read the entire CLAUDE.md from scratch — jump to the relevant docs/ file and the CURRENT STATE block
+7. If genuinely unclear what state the code is in, ask the user: *"I can see the last session was working on [X]. Should I continue from [specific point] or review the current state first?"*
 
 ---
 
@@ -150,7 +154,79 @@ If you notice any of these, start the Session End Protocol immediately — do no
 - You have made more than ~15 tool calls in the session
 - The user's messages are taking noticeably longer to process
 
-Do not try to finish one more thing. Stop, commit, update CURRENT STATE, push.
+Do not try to finish one more thing. Stop, commit, update CURRENT STATE and docs/, push.
+
+---
+
+## Reference Documentation
+
+> **CLAUDE.md is the command center.** It holds the CURRENT STATE, Phase Tracker, protocols, and project-wide conventions. The `docs/` files hold the detailed specifications. An AI agent should always start here and then navigate to the relevant `docs/` file. Never rely on CLAUDE.md alone for implementation details — it summarises; `docs/` specifies.
+
+### What each file owns
+
+| File | Authoritative on | Do NOT duplicate in CLAUDE.md |
+|---|---|---|
+| `docs/data-models.md` | Every Prisma model and field, schema conventions, seed script spec, DB indexes, caching strategy, fraud/rate-limit rules | Model field lists, index definitions |
+| `docs/platform-owner.md` | FBQRSYS permissions/roles, merchant subscription & billing, cron job specs, PDP/regulatory compliance, platform owner dashboard, monitoring, data retention | Billing flow details, cron SQL, compliance rules |
+| `docs/merchant.md` | Merchant RBAC, onboarding wizard, branding, menu management, kitchen routing, promotions, table management, analytics dashboard, delivery integration (merchant side) | Menu field specs, kitchen display format, role templates |
+| `docs/customer.md` | QR flow (all 9 sections), customer session, order lifecycle, payment flow, customer-facing UI requirements, loyalty (customer side), AI recommendations (customer side) | QR validation steps, payment→order mapping, customer UI rules |
+| `docs/architecture.md` | All ADRs, tech stack decisions, competitive research, feature backlog, open questions for future agents | ADR content, backlog items, open design questions |
+
+### Step → Doc routing table
+
+When starting a step, read **all** listed files before writing code.
+
+| Step(s) | What it builds | Read these docs/ files |
+|---|---|---|
+| **Step 1** | Monorepo scaffold (Turborepo, packages, apps) | `architecture.md` (repo structure, tech stack) |
+| **Step 2** | Prisma schema + migrations + seed | `data-models.md` ← primary; `architecture.md` (ADRs explaining why) |
+| **Step 3** | Auth: email+password JWT, PIN auth, NextAuth | `data-models.md` (Merchant, Staff, Customer models); `architecture.md` (ADR-005) |
+| **Step 4** | Dynamic RBAC — role/permission engine | `merchant.md` (RBAC section); `platform-owner.md` (FBQRSYS permissions); `architecture.md` (ADR-005) |
+| **Step 5** | FBQRSYS — merchant management UI | `platform-owner.md` ← primary; `data-models.md` (Merchant model) |
+| **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs) |
+| **Step 7** | Merchant onboarding — trial/free tier flow | `merchant.md` (onboarding wizard, checklist) |
+| **Step 8** | Restaurant branding + CSS variable injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu) |
+| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec) |
+| **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015) |
+| **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec) |
+| **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, menu layouts) |
+| **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs) |
+| **Step 14** | Item detail modal: variants, add-ons, allergens | `customer.md`; `merchant.md` (variant/addon field specs) |
+| **Step 15** | Cart + pre-invoice + Midtrans QRIS + cash | `customer.md` ← primary (payment flow, pre-invoice); `data-models.md` (Payment model) |
+| **Step 16** | Order tracking + real-time status + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types) |
+| **Step 17** | Takeaway/counter mode, queue numbers, display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter) |
+| **Step 18** | Push notifications — Web Push API | `architecture.md` (push notification design); `merchant.md` (notification routing) |
+| **Step 19** | Invoice + MerchantBillingInvoice PDF + storage | `platform-owner.md` (MerchantBillingInvoice); `merchant.md` (customer Invoice format) |
+| **Step 20** | merchant-kitchen: real-time queue, priorities | `merchant.md` ← primary (kitchen display, station routing, priority) |
+| **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, accounting export) |
+| **Step 22** | Delivery platform integration (GrabFood/GoFood) | `merchant.md` (delivery flows); `architecture.md` (ADR-012, webhook idempotency) |
+| **Step 23** | AI recommendation engine | `customer.md` (AI, customer-facing); `merchant.md` (AI settings per merchant) |
+| **Step 24** | Audit log — middleware + viewer UI | `platform-owner.md` ← primary (audit log spec); `data-models.md` (AuditLog model) |
+| **Step 25** | Merchant loyalty program + customer account | `merchant.md` (loyalty program config); `customer.md` (customer account, loyalty balance) |
+| **Step 26** | Platform loyalty + gamification | `customer.md` (loyalty tiers); `platform-owner.md` (platform loyalty) |
+| **Step 27** | WhatsApp Business integration | `platform-owner.md` (MerchantIntegration model); `merchant.md` (WA notification flows) |
+| **Step 28** | Remaining backlog | `architecture.md` (backlog); read relevant domain docs per specific item |
+| **Any step** | Schema cross-check | `data-models.md` — always re-confirm model fields before writing Prisma queries |
+| **Any step** | Design question / ADR lookup | `architecture.md` — check if the question was already decided |
+
+### Write rules — when to update docs/ files
+
+> **Rule:** Every session that changes behaviour, adds models, or makes a new design decision **must** update the relevant `docs/` file before pushing. Stale docs are worse than no docs — a future agent will implement against them.
+
+| What you changed | Update this file |
+|---|---|
+| Added / removed / renamed a Prisma model or field | `docs/data-models.md` |
+| Changed a cron job, billing flow, or invoice logic | `docs/platform-owner.md` |
+| Changed RBAC rules, permissions, or role templates | `docs/merchant.md` (merchant roles) or `docs/platform-owner.md` (FBQRSYS roles) |
+| Changed menu field specs, kitchen display, or promotions | `docs/merchant.md` |
+| Changed QR flow, session lifecycle, or payment logic | `docs/customer.md` |
+| Made a new architecture decision (new package, pattern, constraint) | `docs/architecture.md` — add a new ADR |
+| Resolved an open question | `docs/architecture.md` (move from Open Questions to Resolved); also update CLAUDE.md CURRENT STATE |
+| Discovered a new doc gap | CLAUDE.md `Known doc gaps` in CURRENT STATE block |
+
+### Conflict resolution
+
+If CLAUDE.md and a `docs/` file contradict each other: **the more recently updated file is correct.** Always update both together. If you spot a stale contradiction, fix the out-of-date file and note it in the commit message.
 
 ---
 
