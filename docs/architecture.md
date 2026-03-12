@@ -25,15 +25,32 @@
 | **QR Codes** | [`qrcode`](https://www.npmjs.com/package/qrcode) npm package | Generate per-table QR codes |
 | **PDF** | [`@react-pdf/renderer`](https://react-pdf.org/) | Invoice and pre-invoice generation |
 | **Email** | [Resend](https://resend.com/) | Transactional email — billing reminders, invoices, notifications |
-| **Scheduled Jobs** | [Vercel Cron](https://vercel.com/docs/cron-jobs) | Daily billing checks, auto-lock overdue accounts |
+| **Scheduled Jobs** | [Vercel Cron](https://vercel.com/docs/cron-jobs) | Daily billing checks, auto-lock overdue accounts. **⚠️ Vercel Pro required** for sub-daily cron intervals (e.g. order expiry every 15 min). Free tier: 1 invocation/day only. See ADR-023 and the Cron section in `docs/platform-owner.md`. |
 | **File Storage** | Supabase Storage | Menu item images, restaurant logos, invoice PDFs |
+| **Input validation** | [Zod](https://zod.dev/) | Schema validation on every API route and server action. Mandatory — not optional. See ADR-024. Schemas also feed `zod-to-openapi` for Phase 2 API docs. |
 | **API docs** | [Zod-to-OpenAPI](https://github.com/asteasolutions/zod-to-openapi) + Swagger UI | Auto-generated from Zod schemas; served at `/api/docs` (Phase 2) |
+| **Timezone handling** | [`date-fns-tz`](https://github.com/marnusw/date-fns-tz) | WIB (Asia/Jakarta) timezone conversion for category time windows, queue counter resets, cron jobs. All time comparisons must use this library — never `new Date().getHours()` without timezone context. |
 | **i18n** | [next-intl](https://next-intl-docs.vercel.app/) | Bahasa Indonesia default; multi-language expansion path |
-| **Hosting** | [Vercel](https://vercel.com/) (Next.js) + [Supabase](https://supabase.com/) | Generous free tiers, auto-scaling |
+| **Hosting** | [Vercel](https://vercel.com/) (Next.js) + [Supabase](https://supabase.com/) | Separate Vercel projects for `apps/web` and `apps/menu`. See platform limits below. |
 
 > **Architecture note:** This project uses a **modular monolith** (not microservices). The Turborepo structure enforces clean domain boundaries between sub-systems. Individual apps can be extracted into independent services later if scaling demands it.
 >
 > **UI framework decision:** CoreUI and AdminLTE are explicitly rejected — both are Bootstrap-based and conflict with Tailwind CSS. shadcn/ui Blocks + TanStack Table + Recharts + Framer Motion replaces all admin template needs without framework lock-in. See ADR-020.
+
+### Platform Limits to Know Before Launch
+
+| Platform | Limit | Impact | Mitigation |
+|---|---|---|---|
+| **Supabase Free** | 500 MB database storage | ~2M rows; fine for launch | Upgrade to Pro ($25/mo) when approaching |
+| **Supabase Free** | 1 GB file storage | ~500 menu images at 2 MB each | Compress to WebP at upload time (≤300 KB target) |
+| **Supabase Free** | 200 concurrent Realtime connections | ~200 simultaneous kitchen/order screens | Upgrade or switch to Ably if hit |
+| **Supabase Free** | 50,000 monthly active users | Customer sessions count | Monitor; upgrade at scale |
+| **Vercel Free (Hobby)** | 1 Cron invocation per day | Cannot run order-expiry cron every 15 min | **Vercel Pro required from Step 15** |
+| **Vercel Free (Hobby)** | 100 GB bandwidth/month | Fine for launch | Monitor |
+| **Vercel Free (Hobby)** | 10 second serverless function timeout | Webhook handler + PDF gen must complete in <10s | Keep handlers lean; PDF gen async |
+| **Midtrans Sandbox** | No real transactions | Dev/test only | Switch `MIDTRANS_IS_PRODUCTION=true` at launch |
+
+> **Recommendation:** Start on Supabase Free + Vercel Hobby. Upgrade to Vercel Pro ($20/mo) at Step 15 (payment integration) for the order-expiry cron. Budget ~$45/mo total at launch (Vercel Pro + Supabase Free).
 
 ---
 
@@ -436,6 +453,239 @@ apps/menu/messages/en.json
 - RTL language support — not planned.
 
 **Status:** Decided.
+
+---
+
+### ADR-023: Database Connection Pooling — PgBouncer (Transaction Mode) for Serverless
+
+**Context:** Vercel serverless functions open a new database connection on every invocation. At 50 concurrent customer requests (lunch rush), that is 50+ simultaneous connections. Supabase free tier allows ~60 total Postgres connections. Without pooling, the app will return `"too many connections"` errors at modest load.
+
+**Decision:** Use Supabase's built-in **PgBouncer in Transaction mode** as the connection pooler for all serverless runtime code. Use the direct Postgres connection string only for Prisma migrations.
+
+**Implementation — two connection strings are required:**
+
+```env
+# Pooled connection (PgBouncer) — used by all serverless API routes and server actions
+DATABASE_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true
+
+# Direct connection — used ONLY by Prisma migrations (prisma migrate deploy/dev)
+DATABASE_DIRECT_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].supabase.com:5432/postgres
+```
+
+**`schema.prisma` configuration:**
+
+```prisma
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")        // pooled — used at runtime
+  directUrl = env("DATABASE_DIRECT_URL") // direct — used only for migrations
+}
+```
+
+**Rules for all AI agents:**
+- `DATABASE_URL` must always point to the PgBouncer (port 6543, `?pgbouncer=true`).
+- `DATABASE_DIRECT_URL` must point to the direct connection (port 5432, no pgbouncer param).
+- **Never** remove `directUrl` from `schema.prisma` — Prisma migrations fail over PgBouncer (Transaction mode does not support DDL statement sequences).
+- In `packages/database/src/index.ts`, export the PrismaClient singleton with the standard pattern to prevent multiple instances in development:
+  ```ts
+  import { PrismaClient } from '@prisma/client'
+  const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
+  export const prisma = globalForPrisma.prisma ?? new PrismaClient()
+  if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+  ```
+
+**Supabase PgBouncer connection string location:** Supabase Dashboard → Project → Settings → Database → Connection string → select "Transaction" mode.
+
+**Status:** Decided. Must be implemented in Step 1 before any DB work begins.
+
+---
+
+### ADR-024: Mandatory Zod Validation on All API Routes and Server Actions
+
+**Context:** TypeScript types are compile-time only. Prisma types are compile-time only. Neither prevents a malformed HTTP request body (e.g. `price: -50000`, `qty: 9999999`, `status: "HACKED"`) from reaching the database layer. In a payment system, malformed inputs without server-side validation create data corruption and potential exploits.
+
+**Decision:** Every API route handler and every Next.js server action **must** validate all inputs with a Zod schema before any business logic runs. This is a hard rule, not a guideline.
+
+**Pattern for API routes (`apps/web/app/api/...`):**
+
+```ts
+import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server'
+
+const CreateOrderSchema = z.object({
+  customerSessionId: z.string().uuid(),
+  items: z.array(z.object({
+    menuItemId: z.string().uuid(),
+    qty: z.number().int().min(1).max(20),
+    variantId: z.string().uuid().optional(),
+    addonIds: z.array(z.string().uuid()).max(10).default([]),
+  })).min(1).max(20),
+  customerNote: z.string().max(200).optional(),
+  idempotencyKey: z.string().uuid(),
+})
+
+export async function POST(req: NextRequest) {
+  const body = await req.json()
+  const parsed = CreateOrderSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  }
+  // parsed.data is now fully typed and validated
+  const { customerSessionId, items, customerNote, idempotencyKey } = parsed.data
+  // ... business logic
+}
+```
+
+**Pattern for server actions:**
+
+```ts
+'use server'
+import { z } from 'zod'
+
+const UpdateMenuItemSchema = z.object({
+  id: z.string().uuid(),
+  price: z.number().int().min(0).max(100_000_000),
+  isAvailable: z.boolean(),
+})
+
+export async function updateMenuItem(formData: unknown) {
+  const parsed = UpdateMenuItemSchema.safeParse(formData)
+  if (!parsed.success) throw new Error('Invalid input')
+  // ...
+}
+```
+
+**Standard error response shape (all APIs must use this):**
+
+```ts
+// Success
+{ data: T }
+
+// Validation error (400)
+{ error: { code: 'VALIDATION_ERROR', fields: ZodError.flatten() } }
+
+// Auth error (401/403)
+{ error: { code: 'UNAUTHORIZED' | 'FORBIDDEN', message: string } }
+
+// Business logic error (422)
+{ error: { code: string, message: string } }  // e.g. { code: 'ORDERING_PAUSED', message: '...' }
+
+// Server error (500)
+{ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' } }
+// Never expose stack traces or DB errors to the client
+```
+
+**Rules for all AI agents:**
+- `safeParse()` not `parse()` — never let a Zod throw propagate to the client unhandled.
+- Validate at the **HTTP boundary** — not deeper in the call stack. Validation lives in the route/action handler.
+- Zod schemas for shared entities (Order, MenuItem, etc.) belong in `packages/types/src/schemas/` and are imported by both apps.
+- The same Zod schema used for API validation **is** the source for `zod-to-openapi` Phase 2 API docs — no duplication.
+- Prisma's `@db.VarChar(n)` constraints are DB-layer enforcement only; Zod enforces them at the API layer first.
+
+**Status:** Decided. Apply from Step 3 onward on every new route/action.
+
+---
+
+## CI/CD Pipeline
+
+> **For AI agents:** Set this up in Step 1 alongside the monorepo scaffold. Every commit to any branch should be validated automatically.
+
+### GitHub Actions Workflows
+
+**File: `.github/workflows/ci.yml`** — runs on every push and PR:
+
+```yaml
+jobs:
+  validate:
+    steps:
+      - Checkout
+      - Install dependencies (npm ci)
+      - Run TypeScript check (npm run typecheck)
+      - Run ESLint (npm run lint)
+      - Run unit + integration tests (npm run test)
+      - Build all apps (npm run build)
+```
+
+**File: `.github/workflows/deploy-web.yml`** — runs on push to `master`:
+- Vercel deploys `apps/web` automatically via Vercel Git integration (no manual step needed)
+- Post-deploy: run smoke test against `NEXT_PUBLIC_WEB_APP_URL/api/health`
+
+**File: `.github/workflows/deploy-menu.yml`** — runs on push to `master`:
+- Vercel deploys `apps/menu` automatically via Vercel Git integration
+- Post-deploy: run smoke test against `NEXT_PUBLIC_MENU_APP_URL/api/health`
+
+### Branch Protection (GitHub Settings)
+
+Set on `master`:
+- Require PR before merging (no direct push)
+- Require CI to pass before merge
+- Require at least 1 approval (if team grows)
+
+### Database Migrations in Production
+
+Never run `prisma migrate dev` in production. The correct flow:
+
+```bash
+# In GitHub Actions (or manually before deploy):
+npx prisma migrate deploy   # applies pending migrations
+npx prisma generate         # regenerates client
+```
+
+Add `prisma migrate deploy` as a build step in the Vercel project settings (`Build Command`):
+```
+npx prisma migrate deploy && npm run build
+```
+
+Vercel will run this before the Next.js build on every deploy. Migrations are idempotent — running `deploy` twice is safe.
+
+---
+
+## Testing Strategy
+
+> **For AI agents:** Every step must include tests for its core logic. This is a payment-critical system — the order state machine and Midtrans webhook handler must be tested before shipping.
+
+### Testing Stack
+
+| Tool | Purpose |
+|---|---|
+| [Vitest](https://vitest.dev/) | Unit and integration tests — fast, TypeScript-native, compatible with Turborepo |
+| [Playwright](https://playwright.dev/) | E2E tests — full browser automation; mobile viewport for `apps/menu` |
+| [MSW (Mock Service Worker)](https://mswjs.io/) | Mock Midtrans API and Supabase Realtime in integration tests |
+
+### What Must Be Tested Per Step
+
+| Step | Required tests |
+|---|---|
+| **Step 2 (schema)** | Seed script idempotency (run twice = same result) |
+| **Step 3 (auth)** | JWT sign/verify; PIN hash/compare; session expiry |
+| **Step 4 (RBAC)** | `requirePermission()` — allow with correct permission, reject without; test each permission |
+| **Step 6 (billing cron)** | Each cron step in isolation with mocked DB; double-fire idempotency; suspension trigger |
+| **Step 10 (QR)** | HMAC signature generation and verification; expired sig rejection; invalid token rejection |
+| **Step 12 (QR flow)** | Session creation; session resume with `tableId` guard; cross-table leakage prevention |
+| **Step 15 (payment)** | Midtrans webhook handler — valid sig; duplicate webhook idempotency; atomic `WHERE PENDING`; stock decrement; full rollback on failure |
+| **Step 15 (payment)** | Pre-invoice computation: tax, service charge, rounding rules; BY_WEIGHT deposit display |
+| **Step 16 (order tracking)** | Order state machine — all valid transitions allowed; all invalid transitions rejected |
+| **Step 20 (kitchen)** | Real-time event shape from Supabase channel matches what kitchen display subscribes to |
+
+### Test Conventions
+
+- **Unit tests:** Pure functions only (validators, state machine transitions, price calculations, HMAC signing). No DB.
+- **Integration tests:** DB interactions with a real test database (separate `TEST_DATABASE_URL`). Run with `NODE_ENV=test`. Reset between test runs with `prisma migrate reset --force`.
+- **E2E tests (Playwright):** Full user journeys — scan QR → place order → kitchen display shows order. Run against local dev server or staging.
+- **Test file location:** Co-locate with the code being tested: `src/lib/payment.ts` → `src/lib/payment.test.ts`.
+- **CI gate:** Unit + integration tests run on every PR. E2E runs on merge to `master` only (slower).
+
+### The One Test That Must Never Be Skipped
+
+The Midtrans webhook handler must be integration-tested with:
+1. A valid signature → order confirmed
+2. A duplicate signature (same `midtransTransactionId`) → HTTP 200, no double-confirm
+3. An invalid signature → HTTP 403, no state change
+4. A `settlement` status → order confirmed (not just `success`)
+5. A `deny` / `cancel` / `expire` status → order cancelled
+6. Concurrent identical webhooks → only one confirmation (race condition test)
+
+This test prevents the most expensive class of production bug in payment systems.
 
 ---
 

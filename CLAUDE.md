@@ -11,27 +11,34 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.5
+Version        : 2.6
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : docs/ crosscheck + gap-fill + settings + i18n (v2.5):
-                 docs/merchant.md — in-app help FAQ (15 rows), Display typography level,
-                   apps/menu branding override note, i18n section (next-intl, no hardcoded strings),
-                   Merchant Settings Panel (General, Contact & Socials, Opening Hours, Tax,
-                   Payment & Orders, Notifications, Branding, AI, Loyalty, Billing).
-                 docs/architecture.md — Persona column added to Feature Backlog table;
-                   ADR-022 added: next-intl i18n strategy, Bahasa Indonesia default locale.
-                 docs/platform-owner.md — PlatformSettings singleton model (full Prisma spec);
-                   FBQRSYS Settings Panel section (tabs, UI requirements, seed defaults).
-                 docs/data-models.md — PlatformSettings added to schema tree + seed spec;
-                   new Phase 1 fields: Branch.openingHours, Restaurant contact/social fields,
-                   MerchantSettings pushNotifications/emailNotifications/allowPromotionStacking.
+Last completed : Pre-implementation gap-fix pass (v2.6) — all 6 blocking gaps resolved:
+                 GAP 1 — DB connection pooling: ADR-023 (PgBouncer Transaction mode,
+                   DATABASE_URL vs DATABASE_DIRECT_URL, PrismaClient singleton pattern).
+                 GAP 2 — Input validation: ADR-024 (mandatory Zod on every API route and
+                   server action; standard error response shape documented).
+                 GAP 3 — Testing strategy: Vitest + Playwright + MSW; per-step test
+                   requirements table; 6 mandatory Midtrans webhook test cases.
+                 GAP 4 — Missing env vars: QR_SIGNING_SECRET, DATABASE_DIRECT_URL,
+                   TEST_DATABASE_URL; all vars annotated; CRON_SECRET validation pattern.
+                 GAP 5 — Vercel Cron: tier table (Pro required from Step 15); order-expiry
+                   cron spec; autoResetAvailability cron spec; session cleanup cron spec;
+                   vercel.json config; UTC offset documented.
+                 GAP 6 — Midtrans: Snap redirect chosen over popup (iOS Safari compat);
+                   SHA512 webhook sig verification code; transaction_status mapping
+                   (settlement/capture/pending/deny/cancel/expire); custom_expiry sync.
+                 MINOR — SSR branding (Server Component style-in-head, no flash);
+                   Supabase free tier limits table; CI/CD pipeline section; date-fns-tz
+                   and Zod added to tech stack; db:deploy and test commands added.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  estimated wait time display — formula in docs/merchant.md, UI Phase 2;
                  Hidang mode full flow — deferred to Phase 2;
-                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message
+                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
+                 BY_WEIGHT remaining-balance second-charge mechanism — deferred to Step 15
 ```
 
 ---
@@ -336,7 +343,10 @@ npm run dev          # Start all apps in development
 npm run build        # Build all apps
 npm run lint         # Lint all packages
 npm run typecheck    # TypeScript check across all packages
-npm run db:migrate   # Run Prisma migrations
+npm run test         # Run unit + integration tests (Vitest)
+npm run test:e2e     # Run E2E tests (Playwright)
+npm run db:migrate   # Run Prisma migrations (dev)
+npm run db:deploy    # Apply migrations in production (prisma migrate deploy)
 npm run db:studio    # Open Prisma Studio (DB browser)
 npm run db:seed      # Seed development data
 npm run dev --filter=web    # apps/web only
@@ -357,38 +367,62 @@ Full seed spec → `docs/data-models.md` § Seed Script Specification.
 ## Environment Variables
 
 ```env
-# Database (Supabase PostgreSQL)
-DATABASE_URL=
+# ── Database (Supabase PostgreSQL) ───────────────────────────────────────────
+# Pooled connection via PgBouncer — used by all serverless API routes at runtime
+# Get from: Supabase Dashboard → Settings → Database → Connection string → Transaction mode
+DATABASE_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true
 
-# Supabase
+# Direct connection — used ONLY by Prisma migrations (prisma migrate deploy/dev)
+# Get from: Supabase Dashboard → Settings → Database → Connection string → Session mode
+DATABASE_DIRECT_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].supabase.com:5432/postgres
+
+# Test database — used by integration tests (separate Supabase project or local Postgres)
+# Must NOT point to production or dev database
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fbqr_test
+
+# ── Supabase ─────────────────────────────────────────────────────────────────
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 
-# Auth
+# ── Auth ─────────────────────────────────────────────────────────────────────
 NEXTAUTH_URL=
-NEXTAUTH_SECRET=
+NEXTAUTH_SECRET=                  # min 32 random chars; generate with: openssl rand -base64 32
 
-# Midtrans (customer payments + merchant billing)
-MIDTRANS_SERVER_KEY=
-MIDTRANS_CLIENT_KEY=
-MIDTRANS_IS_PRODUCTION=false
+# ── Security ─────────────────────────────────────────────────────────────────
+# HMAC-SHA256 secret for QR signed URL generation and verification (ADR-015)
+# Used by: apps/web redirect handler (sign) + apps/menu middleware (verify)
+# Must be identical in both apps. Generate with: openssl rand -base64 32
+QR_SIGNING_SECRET=
 
-# Email (Resend)
+# ── Midtrans (customer payments + merchant billing) ───────────────────────────
+MIDTRANS_SERVER_KEY=              # Server-side only — NEVER expose to client
+MIDTRANS_CLIENT_KEY=              # Safe to expose — used in Snap.js on the browser
+MIDTRANS_IS_PRODUCTION=false      # Set to true only in production Vercel env vars
+
+# ── Email (Resend) ───────────────────────────────────────────────────────────
 RESEND_API_KEY=
 EMAIL_FROM=noreply@fbqr.app
 
-# App URLs
-NEXT_PUBLIC_MENU_APP_URL=
-NEXT_PUBLIC_WEB_APP_URL=
+# ── App URLs ─────────────────────────────────────────────────────────────────
+NEXT_PUBLIC_MENU_APP_URL=         # e.g. https://menu.fbqr.app (or http://localhost:3001 in dev)
+NEXT_PUBLIC_WEB_APP_URL=          # e.g. https://app.fbqr.app  (or http://localhost:3000 in dev)
 
-# Cron (Vercel Cron Jobs)
+# ── Cron (Vercel Cron Jobs) ──────────────────────────────────────────────────
+# Passed as Authorization: Bearer {CRON_SECRET} header — validated in every cron route
+# Generate with: openssl rand -base64 32
 CRON_SECRET=
 
-# First FBQRSYS admin (seed script only)
+# ── First FBQRSYS admin (seed script only) ───────────────────────────────────
 FBQRSYS_ADMIN_EMAIL=
-FBQRSYS_ADMIN_PASSWORD=
+FBQRSYS_ADMIN_PASSWORD=           # Change immediately on first production login
 ```
+
+> **Security notes:**
+> - `QR_SIGNING_SECRET` and `NEXTAUTH_SECRET` must be identical across `apps/web` and `apps/menu` Vercel projects (both verify QR signatures).
+> - `MIDTRANS_SERVER_KEY` must NEVER appear in any `NEXT_PUBLIC_*` variable or client-side bundle.
+> - Rotate `QR_SIGNING_SECRET` intentionally only — rotation invalidates all existing QR physical prints (customers must re-scan or staff must reprint QR codes).
+> - `CRON_SECRET` validation pattern: every cron API route must check `req.headers.get('authorization') === \`Bearer ${process.env.CRON_SECRET}\`` before executing. Return HTTP 401 if missing or wrong.
 
 ---
 

@@ -141,6 +141,48 @@ Renewal date → payment attempted (auto-charge via saved method, or manual invo
             └── Grace period expired → status: SUSPENDED (auto-lock, logged in AuditLog)
 ```
 
+### Vercel Cron — Tier Requirements
+
+**Vercel Hobby (free):** Maximum 1 cron invocation per day. Suitable only for the daily billing cron.
+
+**Vercel Pro ($20/mo) — required from Step 15 onward** for sub-daily cron intervals:
+
+| Cron Job | Frequency | Vercel Tier Required |
+|---|---|---|
+| Daily billing (billing reminders, renewal, trial expiry) | Daily `00:01 WIB` | Hobby (free) |
+| Order expiry (PENDING → EXPIRED after timeout) | Every 5 minutes | **Pro required** |
+| `autoResetAvailability` (reset items to available at midnight) | Daily `00:05 WIB` | Hobby (free) |
+| Session cleanup (EXPIRED CustomerSessions older than 7 days) | Daily `01:00 WIB` | Hobby (free) |
+
+> **Action:** Upgrade to Vercel Pro before implementing Step 15 (payment integration). Budget ~$20/mo.
+> The order-expiry cron is not optional — without it, PENDING orders from abandoned payment sessions accumulate indefinitely, block table sessions, and inflate stock hold counts.
+
+**All cron routes must validate the `CRON_SECRET` header before executing:**
+```ts
+// apps/web/app/api/cron/[job]/route.ts
+export async function GET(req: Request) {
+  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+    return new Response('Unauthorized', { status: 401 })
+  }
+  // ... cron logic
+}
+```
+
+**`vercel.json` cron configuration:**
+```json
+{
+  "crons": [
+    { "path": "/api/cron/billing",        "schedule": "1 17 * * *"  },
+    { "path": "/api/cron/order-expiry",   "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/availability-reset", "schedule": "5 17 * * *" },
+    { "path": "/api/cron/session-cleanup","schedule": "0 18 * * *"  }
+  ]
+}
+```
+> Vercel Cron runs in UTC. `00:01 WIB` = `17:01 UTC` (WIB = UTC+7).
+
+---
+
 ### Billing Cron Full Specification
 
 The billing cron runs daily via Vercel Cron. This is the most revenue-critical scheduled job.
@@ -223,6 +265,85 @@ STEP 4 — Send 3-day-before reminders (subset of STEP 1 for closer window)
 | `MerchantSubscription` | `gracePeriodDays` | int default 3 — configurable per merchant |
 | `MerchantBillingInvoice` | `status` | enum: `PENDING \| PAID \| OVERDUE \| CANCELLED` |
 | `MerchantBillingInvoice` | `periodStart` | datetime — subscription period start (for uniqueness) |
+
+### Order Expiry Cron Specification
+
+Runs every 5 minutes (requires Vercel Pro). Transitions PENDING orders past their payment timeout to EXPIRED.
+
+```
+Every 5 minutes:
+
+STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
+  SELECT o.id, o.customerSessionId
+  FROM Order o
+  JOIN Payment p ON p.orderId = o.id
+  JOIN MerchantSettings ms ON ms.restaurantId = o.restaurantId
+  WHERE o.status = 'PENDING'
+    AND p.method != 'CASH'                          -- never expire cash orders
+    AND o.createdAt < NOW() - (ms.paymentTimeoutMinutes * INTERVAL '1 minute')
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Order SET status = 'EXPIRED' WHERE id = o.id AND status = 'PENDING'
+      -- if affectedRows = 0: already processed (race condition guard)
+      UPDATE Payment SET status = 'EXPIRED' WHERE orderId = o.id AND status = 'PENDING'
+      INSERT OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
+      INSERT AuditLog(action: UPDATE, entity: Order, actorType: SYSTEM)
+    COMMIT
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'order-expiry', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `WHERE status = 'PENDING'` atomic update means double-runs are safe.
+**Default `paymentTimeoutMinutes`:** 15 minutes. Also passed as `custom_expiry` to Midtrans at order creation so Midtrans expires the payment session at the same time — keeps FBQR and Midtrans in sync.
+
+### autoResetAvailability Cron Specification
+
+Runs daily at `00:05 WIB` (`17:05 UTC`). Resets items that were manually marked unavailable for the day.
+
+```
+Daily at 00:05 WIB:
+
+STEP 1 — Reset available items
+  UPDATE MenuItem
+  SET isAvailable = true
+  WHERE autoResetAvailability = true
+    AND isAvailable = false
+    AND stockCount IS NULL          -- constraint: autoResetAvailability ignored when stockCount is set
+
+  Returns affected rows for CronRunLog.
+
+STEP 2 — Log run to CronRunLog
+```
+
+**Constraint reminder:** If `stockCount IS NOT NULL` AND `autoResetAvailability = true`, the API must return a validation error at save time — these flags are mutually exclusive. The cron skips `stockCount IS NOT NULL` rows as an additional guard.
+
+### Session Cleanup Cron Specification
+
+Runs daily at `01:00 WIB` (`18:00 UTC`). Lightweight maintenance job.
+
+```
+Daily at 01:00 WIB:
+
+STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
+  UPDATE CustomerSession
+  SET status = 'EXPIRED'
+  WHERE status = 'ACTIVE'
+    AND expiresAt < NOW()
+
+STEP 2 — Auto-resolve orphaned WaiterRequests for expired sessions
+  UPDATE WaiterRequest
+  SET resolvedAt = NOW()
+  WHERE resolvedAt IS NULL
+    AND tableId IN (
+      SELECT tableId FROM CustomerSession
+      WHERE status IN ('EXPIRED', 'COMPLETED')
+        AND updatedAt < NOW() - INTERVAL '1 hour'
+    )
+
+STEP 3 — Log run to CronRunLog
+```
 
 ### FBQRSYS Admin Controls (Billing)
 
