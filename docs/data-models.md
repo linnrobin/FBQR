@@ -141,10 +141,16 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                                   arrives with the EDC machine ready
   │                      CALL       — attention request, no specific action implied
   │                    resolvedAt (datetime? — null = open; set when staff marks resolved or session closes)
-  │                    Auto-resolve rule: when a CustomerSession moves to COMPLETED or EXPIRED, all
-  │                    open WaiterRequests for that session's tableId are automatically resolved
-  │                    (resolvedAt = session close time, resolver = SYSTEM). This prevents stale
-  │                    waiter alerts cluttering the merchant-pos dashboard after a table turns over.
+  │                    Auto-resolve rule: SYNCHRONOUS — when the API updates CustomerSession.status
+  │                    to COMPLETED or EXPIRED, the SAME DB transaction must also execute:
+  │                      UPDATE WaiterRequest SET resolvedAt = NOW()
+  │                      WHERE tableId = :tableId AND resolvedAt IS NULL
+  │                    This runs inside the session-close transaction, not via cron. A stale open
+  │                    WaiterRequest on an active table (e.g. next customer at Table 5 at 19:30)
+  │                    would appear as a ghost alert on the merchant-pos until the cron fires at
+  │                    01:00 WIB — unacceptable. The daily session-cleanup cron in
+  │                    docs/platform-owner.md handles only leak-recovery for edge cases where the
+  │                    synchronous path failed (e.g. server crash mid-transaction).
   ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
   │   PreInvoice     ← NOT a DB model. Computed on-the-fly at checkout and returned in the
   │                    API response. Not persisted. The Order record already stores subtotal,
@@ -477,7 +483,7 @@ Define these indexes at migration time (Step 2). Missing indexes on these tables
 | `Order` | `(branchId, createdAt DESC)` | Dashboard date-range queries |
 | `Order` | `(status)` | Filtering active orders for kitchen display |
 | `Order` | `(customerSessionId)` | Fetching all orders for a session |
-| `Order` | `(idempotencyKey)` — unique partial (WHERE NOT NULL) | Client-side duplicate prevention on Place Order |
+| `Order` | `(idempotencyKey)` — `@unique` on the field in Prisma | Client-side duplicate prevention on Place Order. PostgreSQL naturally ignores NULL values in UNIQUE constraints, so multiple rows with `idempotencyKey = NULL` are permitted. Do not attempt a raw `WHERE NOT NULL` partial index — Prisma's schema.prisma does not support it and the `@unique` annotation is sufficient. |
 | `Payment` | `(orderId)` | Join from Order to Payment |
 | `Payment` | `(midtransTransactionId)` — unique | Idempotency guard; DB-level duplicate prevention |
 | `CustomerSession` | `(tableId, status)` | Finding active session for a table |

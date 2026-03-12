@@ -165,6 +165,19 @@ ACTIVE ────────────────────────�
         but new orders blocked; existing orders continue on tracking screen
 ```
 
+**IMPORTANT — WaiterRequest synchronous auto-resolve (Ghost Waiter prevention):**
+
+Whenever the API sets `CustomerSession.status` to `COMPLETED` or `EXPIRED`, the **same DB transaction** must also resolve all open WaiterRequests for that table:
+
+```sql
+-- Inside the session-close transaction:
+UPDATE "WaiterRequest"
+SET "resolvedAt" = NOW()
+WHERE "tableId" = :tableId AND "resolvedAt" IS NULL
+```
+
+**Do not rely on the nightly cron for this.** If Table 5 closes at 19:00 and a new customer sits down at 19:30, unresolved WaiterRequests from the previous session would ghost on the merchant-pos until 01:00 WIB. The cron in `docs/platform-owner.md` is leak-recovery only — a fallback for edge cases (server crash, uncaught exception) not the primary mechanism.
+
 ---
 
 ## CustomerSession Model
@@ -394,6 +407,8 @@ Reasoning:
 **Implementation (Step 15):**
 
 ```ts
+import { formatInTimeZone } from 'date-fns-tz'
+
 // 1. Server: create Snap token via Midtrans API
 const snapResponse = await midtransSnap.createTransaction({
   transaction_details: {
@@ -401,7 +416,10 @@ const snapResponse = await midtransSnap.createTransaction({
     gross_amount: order.grandTotal,
   },
   custom_expiry: {
-    order_time: order.createdAt.toISOString(),
+    // Midtrans requires "YYYY-MM-DD HH:mm:ss Z" format, NOT ISO 8601 / toISOString()
+    // toISOString() outputs "2026-03-12T15:21:44.000Z" which Midtrans rejects or
+    // misinterprets as UTC, causing expiry-sync mismatch with the WIB-based cron.
+    order_time: formatInTimeZone(order.createdAt, 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss xx'),
     expiry_duration: merchantSettings.paymentTimeoutMinutes,
     unit: 'minute',
   },
