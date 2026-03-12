@@ -758,6 +758,8 @@ If remaining balance > 0:
   (QRIS generates new Midtrans charge; or cashier handles cash)
 ```
 
+> **Same-channel constraint:** The `BALANCE_CHARGE` Payment must use the **same `method` and `provider`** as the original `DEPOSIT` Payment. Do not offer a different payment channel for the balance charge. If the deposit was paid via QRIS/GoPay, the balance charge must also be QRIS/GoPay. If the deposit was cash, the balance must be collected as cash. This is enforced server-side: the balance-charge API reads `Payment.method` and `Payment.provider` from the original DEPOSIT row and passes them through — the customer is never shown a channel selector for the balance payment.
+
 **OrderItem fields for BY_WEIGHT:**
 
 | Field | Type | Notes |

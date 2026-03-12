@@ -89,8 +89,13 @@ Merchant             ← Restaurant owner account (email + hashed password)
         │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/DIRTY/CLOSED)
         ├── MenuCategory         ← layout override, availableFrom/availableTo, kitchenStationId
         │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
-        │           │              estimatedPrepTime, stockCount, isAvailable
+        │           │              estimatedPrepTime, stockCount, isAvailable,
+        │           │              autoResetAvailability, priceType (FIXED|BY_WEIGHT)
         │           │              kitchenStationOverride (optional per-item station override)
+        │           │              CONSTRAINT: autoResetAvailability and stockCount are mutually
+        │           │              exclusive. The API must return a validation error if both are
+        │           │              set. autoResetAvailability is ignored (treated as false) when
+        │           │              stockCount IS NOT NULL. See merchant.md for full field spec.
         │           ├── MenuItemVariant   ← e.g. Small/Medium/Large + price delta
         │           └── MenuItemAddon     ← e.g. Extra Cheese (+5k), No Onion (0)
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
@@ -176,12 +181,19 @@ Customer             ← Optional registered account (email / Google OAuth)
   └── MerchantLoyaltyBalance  ← Per-restaurant points + earned title
 
 CustomerSession      ← Scoped to Restaurant + Table + QR token
+  │  restaurantId (string FK → Restaurant.id) — owning restaurant
+  │  tableId (string FK → Table.id)           — physical table this session is for
+  │  customerId (string? FK → Customer.id)    — nullable; set when customer logs in mid-session
   │  status: ACTIVE | COMPLETED | EXPIRED
+  │  expiresAt (datetime)     — hard expiry; Session Cleanup Cron queries
+  │                             `WHERE expiresAt < NOW()` — this field MUST exist in Prisma schema
+  │                             or the cron will fail at runtime; extended while needsWeighing = true
   │  ipAddress (string)       — client IP at session creation
   │  userAgent (string)       — browser/device fingerprint
   │  deviceHash (string?)     — optional hashed device identifier for fraud detection
   │  sessionCookie (string)   — unique cookie value stored client-side; allows page refresh
   │                             recovery without re-scanning QR
+  │  createdAt (datetime)     — standard audit timestamp
   └── (multiple Orders can be linked to one CustomerSession)
 
 MerchantLoyaltyProgram ← Per-restaurant loyalty config (name, IDR per point, redemption rate,
@@ -493,6 +505,7 @@ Define these indexes at migration time (Step 2). Missing indexes on these tables
 | `Payment` | `(midtransTransactionId)` — unique | Idempotency guard; DB-level duplicate prevention |
 | `CustomerSession` | `(tableId, status)` | Finding active session for a table |
 | `CustomerSession` | `(sessionCookie)` | Cookie-based session lookup on page load |
+| `Order` | `(platformName, platformOrderId)` — unique partial `WHERE platformOrderId IS NOT NULL` | Delivery webhook idempotency — prevents duplicate orders from GrabFood/GoFood/ShopeeFood webhook retries. Note: Prisma does not support raw partial index syntax; implement via `@@unique([platformName, platformOrderId])` with application-level guard (skip insert if `platformOrderId IS NULL`). |
 | `MenuItem` | `(categoryId, isAvailable, deletedAt)` | Menu render query |
 | `OrderItem` | `(orderId)` | Fetching items for an order |
 | `OrderItem` | `(kitchenStationId, kitchenPriority)` | Kitchen display per-station query |

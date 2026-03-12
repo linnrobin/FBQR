@@ -218,7 +218,9 @@ STEP 2 — Attempt auto-renewal for subscriptions due today
     │       UPDATE MerchantSubscription SET
     │         currentPeriodEnd = currentPeriodEnd + interval(billingCycle),
     │         lastRenewalAt = NOW(),
-    │         failedAttempts = 0
+    │         failedAttempts = 0,
+    │         reminderSentAt = NULL,       -- ← REQUIRED: reset so next cycle's reminders fire
+    │         reminderSentAt3d = NULL      -- ← REQUIRED: reset so 3-day reminder fires next cycle
     │       INSERT MerchantBillingInvoice(status: PAID, paidAt: NOW(), ...)
     │       AuditLog(action: CREATE, entity: MerchantBillingInvoice, actorType: SYSTEM)
     │     COMMIT
@@ -268,7 +270,9 @@ STEP 4 — Send 3-day-before reminders (subset of STEP 1 for closer window)
 
 ### Order Expiry Cron Specification
 
-Runs every 5 minutes (requires Vercel Pro). Transitions PENDING orders past their payment timeout to EXPIRED.
+Runs on a short interval to transition PENDING orders past their payment timeout to EXPIRED.
+
+> **Vercel plan note:** Vercel Hobby supports only daily/hourly crons. **Vercel Pro** supports 1-minute intervals. Recommended: run every **1 minute** on Pro. If constrained to Hobby, a 5-minute interval is acceptable because the default `paymentTimeoutMinutes` is 15 minutes — worst-case expiry lag is 5 minutes, which is tolerable. **Upgrade to Vercel Pro before Step 15 (payment integration).** Budget ~$20/mo.
 
 ```
 Every 5 minutes:
@@ -333,6 +337,24 @@ STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
   SET status = 'EXPIRED'
   WHERE status = 'ACTIVE'
     AND expiresAt < NOW()
+  RETURNING tableId, restaurantId   -- capture for STEP 1b
+
+STEP 1b — Update Table.status for newly expired sessions
+  -- Without this step, tables stay OCCUPIED indefinitely after session timeout:
+  -- staff see ghost-occupied tables on the floor map and cannot reassign them.
+  UPDATE "Table" t
+  SET status = CASE
+    WHEN ms.enableDirtyState = true THEN 'DIRTY'
+    ELSE 'AVAILABLE'
+  END
+  FROM CustomerSession cs
+  JOIN Branch b ON b.id = t.branchId
+  JOIN Restaurant r ON r.id = b.restaurantId
+  JOIN MerchantSettings ms ON ms.restaurantId = r.id
+  WHERE t.id = cs.tableId
+    AND cs.status = 'EXPIRED'
+    AND cs.updatedAt >= NOW() - INTERVAL '5 minutes'   -- only rows just expired in STEP 1
+    AND t.status = 'OCCUPIED'
 
 STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled synchronously at session close)
   UPDATE WaiterRequest
@@ -346,6 +368,90 @@ STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled syn
 
 STEP 3 — Log run to CronRunLog
 ```
+
+### EOD PENDING_CASH Cleanup Cron Specification
+
+Runs nightly at `03:00 WIB` (`20:00 UTC`), or at the hour configured in `MerchantSettings.eodCashCleanupHour` (default: 3). Two-part process: an operator-triggered "Close Register" flow followed by a safety-net batch cleanup.
+
+#### Close Register Button (manual trigger, per-branch)
+
+A "Close Register" button in `apps/web/(kitchen)` allows a cashier to initiate end-of-day cash reconciliation:
+
+```
+Cashier clicks "Close Register" for their branch:
+
+STEP 1 — Load all PENDING_CASH orders for this branch
+  SELECT o.id, o.totalAmount, o.customerNote, cs.tableId
+  FROM Order o
+  JOIN CustomerSession cs ON cs.id = o.customerSessionId
+  JOIN Payment p ON p.orderId = o.id
+  WHERE o.branchId = $branchId
+    AND p.method = 'CASH'
+    AND o.status = 'PENDING'
+    AND p.status = 'PENDING_CASH'
+  ORDER BY o.createdAt ASC
+
+  → Display each order as a card:
+      Table {number} | {itemCount} items | Rp {totalAmount}
+      [Mark as Paid] [Cancel Order]
+
+STEP 2 — For each order the cashier processes:
+  ├── [Mark as Paid]:
+  │     BEGIN TRANSACTION
+  │       UPDATE Payment SET status = 'SUCCESS' WHERE orderId = o.id
+  │       UPDATE Order SET status = 'CONFIRMED' WHERE id = o.id AND status = 'PENDING'
+  │       INSERT OrderEvent(fromStatus: PENDING, toStatus: CONFIRMED, actorType: STAFF)
+  │       INSERT AuditLog(action: UPDATE, entity: Order, actorType: STAFF)
+  │     COMMIT
+  │     → Order sent to kitchen (Supabase Realtime broadcast on channel orders:{branchId})
+  │
+  └── [Cancel Order]:
+        BEGIN TRANSACTION
+          UPDATE Payment SET status = 'FAILED' WHERE orderId = o.id
+          UPDATE Order SET status = 'CANCELLED', cancelledAt = NOW()
+            WHERE id = o.id AND status = 'PENDING'
+          INSERT OrderEvent(fromStatus: PENDING, toStatus: CANCELLED, actorType: STAFF)
+          INSERT AuditLog(action: CANCEL, entity: Order, actorType: STAFF)
+        COMMIT
+        → Restore stockCount for any item where stockCount IS NOT NULL:
+            UPDATE MenuItem SET stockCount = stockCount + qty WHERE id = $itemId
+
+STEP 3 — Log run to CronRunLog
+```
+
+#### Safety-Net Batch Cleanup Cron (automatic, nightly)
+
+Runs after `eodCashCleanupHour` to batch-cancel any PENDING_CASH orders that were not manually processed. This is a fallback — the Close Register button is the preferred path.
+
+```
+Nightly at eodCashCleanupHour WIB (default 03:00):
+
+STEP 1 — Batch-cancel stale PENDING_CASH orders
+  SELECT o.id
+  FROM Order o
+  JOIN Payment p ON p.orderId = o.id
+  WHERE o.status = 'PENDING'
+    AND p.method = 'CASH'
+    AND p.status = 'PENDING_CASH'
+    AND o.createdAt < NOW() - INTERVAL '12 hours'  -- safety: never cancel same-day orders
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Payment SET status = 'FAILED' WHERE orderId = o.id
+      UPDATE Order SET status = 'CANCELLED', cancelledAt = NOW()
+        WHERE id = o.id AND status = 'PENDING'
+      INSERT OrderEvent(fromStatus: PENDING, toStatus: CANCELLED, actorType: SYSTEM,
+        actorNote: 'EOD cash cleanup — not confirmed before close of business')
+      INSERT AuditLog(action: CANCEL, entity: Order, actorType: SYSTEM)
+    COMMIT
+    → Restore stockCount: UPDATE MenuItem SET stockCount = stockCount + qty
+        WHERE id = $itemId AND stockCount IS NOT NULL
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'eod-cash-cleanup', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `WHERE status = 'PENDING'` atomic update prevents double-cancellation. If the cron fires twice, the second pass finds no matching rows.
 
 ### FBQRSYS Admin Controls (Billing)
 

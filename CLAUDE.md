@@ -11,16 +11,36 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 3.0
+Version        : 3.1
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Phase 0 complete — final gap closed (v3.0):
-                 iOS Web Push limitation documented in two places:
-                   docs/merchant.md § Notifications: full note covering iOS 15 (no support),
-                   iOS 16.4+ (PWA/Add to Home Screen required), Android/desktop (standard),
-                   kitchen display iPad implications, and onboarding banner requirement.
-                   docs/architecture.md tech stack table: Web Push row updated with iOS
-                   limitation summary and cross-reference to merchant.md.
-                 All 100% of v2.0 content now present, refined, and consistent across docs/.
+Last completed : Docs bug-fix pass (v3.1) — 6 bugs and 3 gaps from post-migration audit fixed:
+                 BUG 1 (CRITICAL) — platform-owner.md billing cron STEP 2 SUCCESS now resets
+                   reminderSentAt = NULL and reminderSentAt3d = NULL on successful renewal.
+                   Without this fix, merchants would stop receiving renewal reminder emails
+                   after the first billing cycle.
+                 BUG 2 (HIGH) — platform-owner.md: full EOD PENDING_CASH cleanup cron spec
+                   added — "Close Register" button flow (per-order Mark as Paid / Cancel),
+                   safety-net nightly batch cleanup SQL, stockCount restore on cancellation,
+                   idempotency guard. Now implementable from docs alone.
+                 BUG 3 (HIGH) — data-models.md CustomerSession expanded with all missing
+                   fields: restaurantId FK, tableId FK, customerId FK (nullable), expiresAt
+                   (datetime — required by Session Cleanup Cron), createdAt. Without expiresAt
+                   the cron SQL `WHERE expiresAt < NOW()` would fail at runtime.
+                 BUG 4 (MEDIUM) — data-models.md index table: added (platformName,
+                   platformOrderId) unique constraint for delivery webhook idempotency.
+                   Prevents duplicate GrabFood/GoFood orders under webhook retries.
+                 BUG 5 (MEDIUM) — platform-owner.md Session Cleanup Cron: added STEP 1b
+                   to update Table.status (DIRTY or AVAILABLE) for newly expired sessions.
+                   Without this, tables stay OCCUPIED indefinitely after session timeout —
+                   ghost-occupied tables on the floor map, table unassignable.
+                 BUG 6 (LOW) — platform-owner.md Order Expiry Cron: clarified Vercel Hobby
+                   (5-min max) vs Pro (1-min) distinction with worst-case lag calculation.
+                 GAP 1 — customer.md Weight-Based Pricing: added same-channel constraint
+                   note — BALANCE_CHARGE must use same method/provider as DEPOSIT.
+                 GAP 2 — data-models.md MenuItem: added autoResetAvailability + stockCount
+                   mutual exclusion constraint (API must reject if both set).
+                 GAP 3 — CLAUDE.md Known doc gaps: added QueueCounter row pruning note.
+                 Previously (v3.0): Phase 0 complete — iOS Web Push limitation documented.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
@@ -29,7 +49,9 @@ Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  Hidang mode full flow — deferred to Phase 2;
                  customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
                  BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
-                   refund API integration detail deferred to Step 15
+                   refund API integration detail deferred to Step 15;
+                 QueueCounter row pruning — ~365 rows/branch/year; low priority but add
+                   a cleanup cron or TTL policy before reaching significant scale (Phase 2)
 ```
 
 ---
