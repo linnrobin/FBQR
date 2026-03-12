@@ -165,7 +165,38 @@ After wizard, a dismissible checklist card appears on the merchant-pos home dash
   - First visit to kitchen display → highlight station tabs + priority drag handle
   - First visit to floor map → highlight "Pause Orders" toggle + table status colours
   - First visit to reports → highlight date range filter + export button
-- **In-app help panel:** shadcn `Sheet` with 15 searchable FAQs, video guides, and WhatsApp support contact
+- **In-app help panel:** shadcn `Sheet` accessible from the `?` button in the main navigation. Contains:
+
+  **FAQ — Top 15 questions (searchable, all content in locale files):**
+
+  | # | Question (id locale default) | Category |
+  |---|---|---|
+  | 1 | Bagaimana cara membuat QR code untuk meja? | Setup |
+  | 2 | Bagaimana cara menambahkan item menu? | Menu |
+  | 3 | Bagaimana cara memberi akses ke staff? | Staff |
+  | 4 | Pelanggan tidak bisa scan QR, kenapa? | Troubleshooting |
+  | 5 | Bagaimana cara pause pesanan saat dapur sibuk? | Operations |
+  | 6 | Bagaimana cara set harga diskon / promo? | Menu |
+  | 7 | Bagaimana cara melihat laporan penjualan? | Reports |
+  | 8 | Bagaimana cara mengatur pajak (PPN)? | Settings |
+  | 9 | Bagaimana cara cetak struk? | Hardware |
+  | 10 | Pesanan sudah dibayar tapi tidak muncul di dapur? | Troubleshooting |
+  | 11 | Bagaimana cara tandai item habis terjual? | Menu |
+  | 12 | Bagaimana cara tutup meja setelah tamu selesai? | Operations |
+  | 13 | Bagaimana cara export laporan ke Excel? | Reports |
+  | 14 | Bagaimana cara upgrade plan? | Billing |
+  | 15 | Bagaimana cara menghubungi support FBQR? | Support |
+
+  **Video guides** (embedded, 60–90 seconds each):
+  - "Setup pertama: dari daftar sampai terima pesanan pertama" (onboarding overview)
+  - "Cara menambahkan dan mengatur menu"
+  - "Cara menggunakan kitchen display"
+  - "Cara membaca laporan penjualan"
+
+  **Support contact** (values pulled from `PlatformSettings` — not hardcoded):
+  - WhatsApp Business button → `PlatformSettings.supportWhatsapp`
+  - Email → `PlatformSettings.supportEmail` (default: `support@fbqr.app`)
+  - Response time label → `PlatformSettings.supportResponseMessage` (default: "Biasanya kami balas dalam 2 jam (07:00–22:00 WIB)")
 
 ### Empty State Guidance
 
@@ -1030,17 +1061,22 @@ info:      '#2563EB'   // blue-600
 // Border radius: --radius: 0.625rem (shadcn default)
 ```
 
+> **`apps/menu` branding override:** Every color token above can be overridden per restaurant via CSS custom properties injected at session load time (`--color-primary`, `--color-surface`, etc.). The palette above is FBQR's default — applied to the demo restaurant and to merchants who have not customised branding. Overrides are applied within 50ms of session load (no flash of unstyled menu). See `docs/customer.md` for implementation detail.
+
 ### Typography Scale
 
 ```
+Display:  36px / 40px / 700   — hero headings (apps/menu only — item spotlight, welcome banners)
 H1:       30px / 36px / 700   — page titles
 H2:       24px / 32px / 600   — section headings
 H3:       20px / 28px / 600   — card headings
 Body:     16px / 24px / 400   — default body text
 Small:    14px / 20px / 400   — secondary labels, metadata
 Micro:    12px / 16px / 400   — badges, timestamps, table captions
-Mono:     14px / 20px / 400   — invoice numbers, order IDs
+Mono:     14px / 20px / 400   — invoice numbers, order IDs, code
 ```
+
+> The `Display` level is used only in `apps/menu` — it is not used in merchant-pos or FBQRSYS. For `apps/menu`, the font family is overridden per restaurant via `RestaurantBranding.fontFamily`.
 
 ### Component Rules
 
@@ -1110,6 +1146,138 @@ FBQRSYS:                   Desktop only (1280px+) — platform admin at workstat
 - Business-aware components live in each app's `components/` directory
 - Every new page component needs a `loading.tsx` (Next.js built-in skeleton)
 - Every new page component needs an `error.tsx` (Next.js built-in error boundary)
+
+---
+
+## Internationalisation (i18n)
+
+> **No Indonesian strings hardcoded in JSX/TSX.** The system uses `next-intl` for all user-facing text. The Indonesian strings documented throughout these docs files are the **default content for the `id` locale** — they are documentation specs, not code values.
+
+### Convention
+
+- All user-facing strings use `useTranslations()` hook: `t('menu.empty.title')`
+- Default locale: `id` (Bahasa Indonesia)
+- Locale files live in `messages/id.json`, `messages/en.json`, etc.
+- English translations are AI-generated (GPT-4 / Claude) and human-reviewed before release
+- Other languages added as needed — `next-intl` routing handles `/id/`, `/en/`, etc.
+- **Exception:** Database seed data (category names, staff role template names, etc.) use locale-aware seed scripts with per-locale values
+
+### What this means for AI agents building UI
+
+When you write a component with a string like `"Belum ada kategori menu"`:
+1. Add the key to `messages/id.json`: `"menu.categories.empty.title": "Belum ada kategori menu"`
+2. Add the English equivalent to `messages/en.json`: `"menu.categories.empty.title": "No menu categories yet"`
+3. Use in JSX: `<p>{t('menu.categories.empty.title')}</p>`
+
+Never write `<p>Belum ada kategori menu</p>` directly.
+
+### Scope
+
+- `apps/web` (merchant-pos, FBQRSYS, kitchen): all UI strings
+- `apps/menu` (customer): all UI strings — the menu app is the highest-visibility surface for non-Indonesian customers
+- Restaurant branding (restaurant name, menu item names, category names): stored in DB as-entered by merchant; **not** translated by next-intl. Merchants who want multilingual menus configure per-item translations themselves (Phase 2 feature).
+
+---
+
+## Merchant Settings Panel
+
+> **Every configurable value must be in the settings panel, not hardcoded.** A merchant who cannot change their WhatsApp number or opening hours without filing a support ticket will churn.
+
+### What the Merchant Settings Panel covers
+
+Accessible from `merchant-pos → Settings`. Sections:
+
+#### General
+| Setting | Field | Notes |
+|---|---|---|
+| Restaurant name | `Restaurant.name` | |
+| Cuisine type | `Restaurant.cuisineType` | e.g. Indonesian, Chinese, Western |
+| Logo | `RestaurantBranding.logoUrl` | Supabase Storage upload |
+| Banner | `RestaurantBranding.bannerUrl` | Optional hero image |
+
+#### Contact & Socials
+| Setting | Field | Notes |
+|---|---|---|
+| WhatsApp Business number | `Restaurant.whatsappNumber` | Shown as "Contact Us" button on `apps/menu` |
+| Instagram handle | `Restaurant.instagramHandle` | Optional; shown on menu footer |
+| TikTok handle | `Restaurant.tiktokHandle` | Optional |
+| Google Maps URL | `Restaurant.googleMapsUrl` | Optional; "Get Directions" button |
+| Reservation email | `Restaurant.reservationEmail` | Where reservation requests are forwarded (Phase 2) |
+
+#### Opening Hours
+Per-branch opening hours. Set via a visual day-of-week editor. Stored as `Branch.openingHours: JSON`.
+
+```json
+{
+  "mon": { "open": "09:00", "close": "22:00", "isClosed": false },
+  "tue": { "open": "09:00", "close": "22:00", "isClosed": false },
+  "wed": { "open": "09:00", "close": "22:00", "isClosed": false },
+  "thu": { "open": "09:00", "close": "22:00", "isClosed": false },
+  "fri": { "open": "09:00", "close": "23:00", "isClosed": false },
+  "sat": { "open": "09:00", "close": "23:00", "isClosed": false },
+  "sun": { "open": "11:00", "close": "21:00", "isClosed": false }
+}
+```
+
+- Times stored as `HH:MM` strings in 24h format; compared in `Asia/Jakarta` (WIB)
+- `isClosed: true` = closed all day (e.g. some warungs close on Sunday)
+- Displayed on `apps/menu` header — "Open today: 09:00–22:00" or "Closed today"
+- **Does not block orders** — it is informational only. Merchants who want to block orders outside hours use `orderingPaused` or `maxActiveOrders = 0`
+
+#### Tax & Charges
+Tax rate, service charge, `taxOnServiceCharge`, `pricesIncludeTax`, `roundingRule` — all from `MerchantSettings`.
+
+#### Payment & Orders
+`paymentMode`, `maxPendingOrders`, `maxOrderValueIDR`, `maxActiveOrders`, `orderingPaused`, `orderingPausedMessage`, `paymentTimeoutMinutes`, `lateWebhookWindowMinutes`, `tableSessionTimeoutMinutes`, `enableDirtyState`, `eodCashCleanupHour`.
+
+#### Notifications
+| Setting | Field | Notes |
+|---|---|---|
+| New order push notification | `MerchantSettings.pushNotifications.newOrder` (JSON) | On/Off toggle |
+| Call Waiter push notification | `MerchantSettings.pushNotifications.callWaiter` | On/Off |
+| Low stock alert | `MerchantSettings.pushNotifications.lowStock` | On/Off; fires when `stockCount = 1` |
+| Billing email reminders | `MerchantSettings.emailNotifications.billing` | On/Off |
+| Daily summary email | `MerchantSettings.emailNotifications.dailySummary` | On/Off |
+
+#### Branding
+`primaryColor`, `secondaryColor`, `fontFamily`, `borderRadius`, `menuLayout`, `customCss` (FBQRSYS admin only).
+
+#### AI Features
+`aiShowBestsellers`, `aiPersonalized`, `aiUpsell`, `aiTimeBased` — each an On/Off toggle.
+
+#### Loyalty
+`MerchantLoyaltyProgram` config: program name, IDR per point, redemption rate, `pointsCalculationBasis`.
+
+#### Billing
+Read-only (for merchant owner with `billing:read`): current plan, renewal date, invoice history, upgrade button.
+
+### Schema additions (Phase 1 Prisma)
+
+**`Restaurant` model — new fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `cuisineType` | String? | Free-text cuisine description |
+| `whatsappNumber` | String? | E.164 format (e.g. `+6281234567890`); shown as contact button on `apps/menu` |
+| `instagramHandle` | String? | Without `@` prefix |
+| `tiktokHandle` | String? | Without `@` prefix |
+| `googleMapsUrl` | String? | Full Google Maps URL |
+| `reservationEmail` | String? | For reservation forwarding (Phase 2) |
+
+**`Branch` model — new fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `openingHours` | JSON? | Day-of-week schedule as documented above; null = no hours displayed |
+| `phone` | String? | Branch phone number (displayed on `apps/menu` if set) |
+
+**`MerchantSettings` model — new fields:**
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `pushNotifications` | JSON | `{"newOrder": true, "callWaiter": true, "lowStock": false}` | Per-event push notification toggle |
+| `emailNotifications` | JSON | `{"billing": true, "dailySummary": false}` | Per-event email notification toggle |
+| `allowPromotionStacking` | Bool | `false` | Whether multiple promotions can apply to one order |
 
 ---
 

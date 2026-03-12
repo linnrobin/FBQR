@@ -11,14 +11,20 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.4
+Version        : 2.5
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : CLAUDE.md slimmed from 3963 → ~350 lines (v2.4):
-                 All detailed specs delegated to docs/ files.
-                 Authentication Model added to docs/architecture.md.
-                 CLAUDE.md now contains only: CURRENT STATE, Phase Tracker, Protocols,
-                 Reference Documentation, Project Overview, Repository Structure,
-                 Git Config, Workflows, Env Vars, Key Conventions, Deployment.
+Last completed : docs/ crosscheck + gap-fill + settings + i18n (v2.5):
+                 docs/merchant.md — in-app help FAQ (15 rows), Display typography level,
+                   apps/menu branding override note, i18n section (next-intl, no hardcoded strings),
+                   Merchant Settings Panel (General, Contact & Socials, Opening Hours, Tax,
+                   Payment & Orders, Notifications, Branding, AI, Loyalty, Billing).
+                 docs/architecture.md — Persona column added to Feature Backlog table;
+                   ADR-022 added: next-intl i18n strategy, Bahasa Indonesia default locale.
+                 docs/platform-owner.md — PlatformSettings singleton model (full Prisma spec);
+                   FBQRSYS Settings Panel section (tabs, UI requirements, seed defaults).
+                 docs/data-models.md — PlatformSettings added to schema tree + seed spec;
+                   new Phase 1 fields: Branch.openingHours, Restaurant contact/social fields,
+                   MerchantSettings pushNotifications/emailNotifications/allowPromotionStacking.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md

@@ -404,6 +404,41 @@ This ADR documents items previously raised and resolved so future AI agents do n
 
 ---
 
+### ADR-022: Internationalisation (i18n) — next-intl, Bahasa Indonesia Default, No Hardcoded Strings
+
+**Context:** FBQR's primary market is Indonesia. All UI text was initially written in Bahasa Indonesia. The question arose: should Indonesian text be hardcoded in JSX, or should the app support multiple locales from day one?
+
+**Decision:** Use `next-intl` from day one across all apps (`apps/web` and `apps/menu`). Bahasa Indonesia (`id`) is the **default locale**. English (`en`) is the first additional locale and will be generated via AI translation of the `id` locale files during development.
+
+**Rationale:**
+1. **Refactoring cost is higher than setup cost.** Adding i18n after hundreds of hardcoded strings across two Next.js apps is a major engineering effort. Paying the setup cost at Step 1 eliminates this debt.
+2. **`apps/menu` is the highest-priority surface for multi-language.** Tourists, expatriates, and international chain locations all need English menus. Delivering this as a Phase 1 capability (not Phase 2 backlog) is a competitive differentiator.
+3. **AI translation is fast and good enough for initial locales.** Translating well-structured `id` locale JSON files to English takes minutes with an LLM and produces acceptable quality for Phase 1. Human review can refine strings without touching any code.
+4. **Locale structure enforces consistency.** All user-facing strings live in `messages/{locale}.json` files — no hunting for hardcoded copy across dozens of components.
+
+**Rules for all AI agents:**
+- **Never hardcode Indonesian (or any language) strings in JSX/TSX.** Every user-visible string must come from `useTranslations()` or `getTranslations()`.
+- **Add new strings to `messages/id.json` first.** The Indonesian copy is the source of truth; other locales derive from it.
+- **Run `next-intl`'s type-safe message keys** — use the typed `t()` hook to catch missing keys at build time.
+- **Locale scope:** `apps/web` serves merchants and FBQRSYS admins (English + Indonesian). `apps/menu` serves customers (Indonesian primary, English minimum, extensible to others).
+- **DO NOT** use `next/router` locale switching — use `next-intl`'s `Link` and `redirect` helpers which handle locale-aware routing.
+
+**Locale file locations:**
+```
+apps/web/messages/id.json    # Bahasa Indonesia (source of truth)
+apps/web/messages/en.json    # English (AI-translated from id.json)
+apps/menu/messages/id.json
+apps/menu/messages/en.json
+```
+
+**What this decision does NOT cover:**
+- Per-item menu translations (each `MenuItem` having `nameEn`, `descriptionEn` fields) — this is a separate Phase 2 feature (see Feature Backlog: "Multi-language menu items"). The `next-intl` decision covers UI chrome, not menu content.
+- RTL language support — not planned.
+
+**Status:** Decided.
+
+---
+
 ## Competitive Intelligence — China & Singapore QR Systems
 
 > This section documents research into the two most mature QR ordering markets. It informs 10 direct product decisions for FBQR.
@@ -449,37 +484,37 @@ This ADR documents items previously raised and resolved so future AI agents do n
 
 Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠️ = high friction. 📋 = nice-to-have.
 
-| Feature | Level | Notes |
-|---|---|---|
-| **Takeaway / counter mode** | ✅ Done (Step 17) | Documented in `docs/merchant.md` and `docs/customer.md` |
-| **Cash / "Pay at Counter"** | ✅ Done (Step 15) | `CASH` payment method, cashier marks paid manually |
-| **Multi-branch per merchant** | ✅ Done (EOI flow) | Documented in `docs/merchant.md` |
-| **Delivery platform integration** | 🚨 Phase 2 (Step 22) | GrabFood/GoFood/ShopeeFood webhook → unified kitchen |
-| **Permanent free / Warung tier** | ✅ Designed | Documented in `docs/merchant.md` |
-| **Push/sound notifications** | ✅ Designed (Step 18) | Web Push API + in-app audio |
-| **Group ordering (collaborative cart)** | 📋 Backlog | Multiple phones, shared cart, per-person attribution |
-| **Printer integration** | ⚠️ Phase 2 | `node-thermal-printer`; kitchen ticket + cup label printing |
-| **Menu import / CSV migration** | ✅ Designed (Step 9) | CSV template + bulk entry UI |
-| **ROI analytics dashboard** | ✅ Designed (Step 21) | Documented in `docs/merchant.md` |
-| **Accounting export** | ✅ Designed (Step 21) | Excel/CSV; Accurate/Jurnal.id integration Phase 2 |
-| **WhatsApp Business integration** | ⚠️ Phase 2 (Step 27) | Order notifications, invoice sharing via WA |
-| **Refund / cancellation flow** | ⚠️ Phase 1 (Step 15) | Midtrans refund API; reflected in reports |
-| **Analytics event tracking** | 📋 Phase 2 | `AnalyticsEvent` model stubbed in Phase 1 Prisma |
-| **Split bill / multiple payments** | 📋 Phase 2 | Schema supports it: `Payment[]` on `Order` |
-| **Offline mode (merchant-pos / kitchen)** | ⚠️ Phase 2 | PWA service worker; sync on reconnect |
-| **Indonesian tax compliance (NPWP / Faktur Pajak)** | 📋 Phase 2 | `taxId` (NPWP) on `Merchant`; corporate invoice support |
-| **Hidang / hybrid ordering mode** | ⚠️ Phase 2 | Padang-style — schema supports via PAY_AT_CASHIER; UI deferred |
-| **Thermal label printing for cup/item labels** | ⚠️ Phase 2 | ESC/POS label printer for boba kiosk; distinct from kitchen tickets |
-| **Booking deposit / down payment** | ⚠️ Phase 2 | Requires reservation system + partial Midtrans charge |
-| **Per-branch item availability override** | ⚠️ Phase 2 | `BranchMenuOverride` junction model stubbed in Phase 1 Prisma |
-| **Waiter-assisted / staff order mode** | ⚠️ Phase 2 | Staff inputs order on behalf of customer; schema supports via PAY_AT_CASHIER |
-| **Inventory / COGS tracking** | 📋 Out of scope | ERP-level; recommend Accurate Online / Jurnal.id integration |
-| **Privacy consent flow** | 📋 Phase 2 | Data collection opt-in; minimal principle; PDP Law compliance |
-| **Table reservation** | 📋 Phase 2 | `Reservation` model stubbed in Phase 1 Prisma |
-| **Staff shift management** | 📋 Phase 2 | Clock-in/out, shift reports |
-| **Multi-language menu items** | 📋 Phase 2 | Per-item name/description in multiple languages |
-| **Shareable menu URL** | 📋 Phase 2 | Digital menu link without scanning |
-| **Branded QR code design** | 📋 Phase 2 | Styled QR with restaurant logo |
+| Feature | Level | Persona | Notes |
+|---|---|---|---|
+| **Takeaway / counter mode** | ✅ Done (Step 17) | All | Documented in `docs/merchant.md` and `docs/customer.md` |
+| **Cash / "Pay at Counter"** | ✅ Done (Step 15) | Warung, Chain | `CASH` payment method, cashier marks paid manually |
+| **Multi-branch per merchant** | ✅ Done (EOI flow) | Chain | Documented in `docs/merchant.md` |
+| **Delivery platform integration** | 🚨 Phase 2 (Step 22) | Chain | GrabFood/GoFood/ShopeeFood webhook → unified kitchen |
+| **Permanent free / Warung tier** | ✅ Designed | Warung | Documented in `docs/merchant.md` |
+| **Push/sound notifications** | ✅ Designed (Step 18) | All | Web Push API + in-app audio |
+| **Group ordering (collaborative cart)** | 📋 Backlog | All | Multiple phones, shared cart, per-person attribution |
+| **Printer integration** | ⚠️ Phase 2 | All | `node-thermal-printer`; kitchen ticket + cup label printing |
+| **Menu import / CSV migration** | ✅ Designed (Step 9) | Chain | CSV template + bulk entry UI |
+| **ROI analytics dashboard** | ✅ Designed (Step 21) | Chain | Documented in `docs/merchant.md` |
+| **Accounting export** | ✅ Designed (Step 21) | Chain | Excel/CSV; Accurate/Jurnal.id integration Phase 2 |
+| **WhatsApp Business integration** | ⚠️ Phase 2 (Step 27) | All | Order notifications, invoice sharing via WA |
+| **Refund / cancellation flow** | ⚠️ Phase 1 (Step 15) | All | Midtrans refund API; reflected in reports |
+| **Analytics event tracking** | 📋 Phase 2 | Chain | `AnalyticsEvent` model stubbed in Phase 1 Prisma |
+| **Split bill / multiple payments** | 📋 Phase 2 | All | Schema supports it: `Payment[]` on `Order` |
+| **Offline mode (merchant-pos / kitchen)** | ⚠️ Phase 2 | All | PWA service worker; sync on reconnect |
+| **Indonesian tax compliance (NPWP / Faktur Pajak)** | 📋 Phase 2 | Chain | `taxId` (NPWP) on `Merchant`; corporate invoice support |
+| **Hidang / hybrid ordering mode** | ⚠️ Phase 2 | Seafood | Padang-style — schema supports via PAY_AT_CASHIER; UI deferred |
+| **Thermal label printing for cup/item labels** | ⚠️ Phase 2 | Warung | ESC/POS label printer for boba kiosk; distinct from kitchen tickets |
+| **Booking deposit / down payment** | ⚠️ Phase 2 | Chain | Requires reservation system + partial Midtrans charge |
+| **Per-branch item availability override** | ⚠️ Phase 2 | Chain | `BranchMenuOverride` junction model stubbed in Phase 1 Prisma |
+| **Waiter-assisted / staff order mode** | ⚠️ Phase 2 | Chain | Staff inputs order on behalf of customer; schema supports via PAY_AT_CASHIER |
+| **Inventory / COGS tracking** | 📋 Out of scope | Chain | ERP-level; recommend Accurate Online / Jurnal.id integration |
+| **Privacy consent flow** | 📋 Phase 2 | All | Data collection opt-in; minimal principle; PDP Law compliance |
+| **Table reservation** | 📋 Phase 2 | Chain | `Reservation` model stubbed in Phase 1 Prisma |
+| **Staff shift management** | 📋 Phase 2 | Chain | Clock-in/out, shift reports |
+| **Multi-language menu items** | 📋 Phase 2 | Chain | Per-item name/description in multiple languages |
+| **Shareable menu URL** | 📋 Phase 2 | All | Digital menu link without scanning |
+| **Branded QR code design** | 📋 Phase 2 | All | Styled QR with restaurant logo |
 
 ---
 
