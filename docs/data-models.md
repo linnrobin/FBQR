@@ -384,6 +384,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
 | `MerchantRequest` | In-app EOI for multi-branch | `(id, merchantId FK, type: MULTI_BRANCH, requestedBranches int, message, status: PENDING\|APPROVED\|REJECTED, reviewedByAdminId?, reviewedAt?, createdAt)` |
+| `CronRunLog` | Cron job monitoring — silent failure detection | `(id, jobName, startedAt, completedAt?, status: SUCCESS\|FAILED\|PARTIAL, affectedRows?, errorMessage?)` — one row per cron invocation; used by `/api/health` to detect missed runs |
 
 ### Fields to add to existing tables in Phase 1 Prisma (nullable, no Phase 1 UI)
 
@@ -398,6 +399,47 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
 | `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
+
+### Additional Fields Required in Phase 1 Prisma
+
+> **These fields are documented in `docs/platform-owner.md` and `docs/merchant.md` but were missing from this file.** An agent writing the Step 2 Prisma schema from `data-models.md` alone would produce an incomplete schema without them. All are nullable so they add no migration risk.
+
+#### Merchant model — additional fields
+
+| Field | Type | Default | Source / Purpose |
+|---|---|---|---|
+| `emailVerifiedAt` | DateTime? | null | Set when merchant clicks email verification link (self-service registration). Until set, merchant cannot accept real orders (`apps/menu` endpoint checks this). See `docs/merchant.md` Self-Service Registration section. |
+| `privacyConsentAt` | DateTime? | null | Timestamp of ToS + Privacy Policy acceptance at registration. PDP Law (UU No. 27/2022) compliance — store consent proof. |
+| `taxId` | String? | null | NPWP — Indonesian tax ID (15-digit string). Required for Faktur Pajak on `MerchantBillingInvoice`. Phase 1: collect optionally; Phase 2: required for Enterprise billing. |
+| `notes` | String? | null | Free-text notes added by FBQRSYS staff ("called Pak Budi, away until March 15"). Admin-facing only; never shown to merchant. |
+| `assignedToAdminId` | String? FK → SystemAdmin | null | Which FBQRSYS staff member is managing this merchant account. Enables "My merchants" filter in FBQRSYS. |
+| `referralCode` | String? | auto-generated unique | Shareable referral code shown in merchant settings. When another merchant registers using this code, both get 1 month free on activation. Unique index required. |
+| `referredByMerchantId` | String? FK → Merchant (self) | null | ID of the merchant who referred this one. Set at registration if referral code was provided. |
+| `cancellationReason` | String? | null | Populated from the mandatory cancellation exit survey when merchant cancels subscription. Enum-like values: `TOO_EXPENSIVE`, `NOT_ENOUGH_FEATURES`, `FOUND_ALTERNATIVE`, `RESTAURANT_CLOSED`, `TECHNICAL_ISSUES`, `JUST_TESTING`. Gold data for product decisions. |
+
+#### Customer model — additional fields
+
+| Field | Type | Default | Source / Purpose |
+|---|---|---|---|
+| `privacyConsentAt` | DateTime? | null | Timestamp of consent at customer registration. PDP Law compliance. |
+| `deletionRequestedAt` | DateTime? | null | Set when customer requests data deletion (right to erasure under PDP Law). Triggers a 30-day cleanup job. Customer PII must be deleted within 30 days of this date. |
+
+#### MerchantSubscription model — additional fields (required for billing cron, Step 6)
+
+| Field | Type | Default | Source / Purpose |
+|---|---|---|---|
+| `reminderSentAt` | DateTime? | null | Timestamp when the 7-day renewal reminder email was sent. Guards against double-sending (cron idempotency). |
+| `reminderSentAt3d` | DateTime? | null | Timestamp when the 3-day renewal reminder email was sent. Separate field from `reminderSentAt` — both reminders must be tracked independently. |
+| `failedAttempts` | Int | 0 | Count of consecutive payment failures on renewal. When `failedAttempts >= gracePeriodDays`, the billing cron auto-suspends the merchant. Resets to 0 on successful renewal. |
+| `lastRenewalAt` | DateTime? | null | Timestamp of the last successful renewal. Used in revenue reporting and churn detection. |
+| `gracePeriodDays` | Int | 3 | Number of consecutive daily payment failures before auto-suspension. Configurable per merchant (Enterprise accounts may get longer grace periods). |
+
+#### MerchantBillingInvoice model — additional fields (required for billing cron, Step 6)
+
+| Field | Type | Notes |
+|---|---|---|
+| `status` | enum: `PENDING \| PAID \| OVERDUE \| CANCELLED` | `PENDING` = invoice created, awaiting payment; `PAID` = confirmed paid; `OVERDUE` = past due date, merchant in grace period; `CANCELLED` = voided (e.g. plan change). Required for billing dashboard filtering. |
+| `periodStart` | DateTime | Subscription period start date. Together with `merchantId`, forms the unique constraint `(merchantId, periodStart)` — prevents duplicate invoices from idempotent cron runs. |
 
 ### Why these specific items
 
