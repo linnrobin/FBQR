@@ -1240,6 +1240,14 @@ Tax rate, service charge, `taxOnServiceCharge`, `pricesIncludeTax`, `roundingRul
 `paymentMode`, `maxPendingOrders`, `maxOrderValueIDR`, `maxActiveOrders`, `orderingPaused`, `orderingPausedMessage`, `paymentTimeoutMinutes`, `lateWebhookWindowMinutes`, `tableSessionTimeoutMinutes`, `enableDirtyState`, `eodCashCleanupHour`.
 
 #### Notifications
+
+> **iOS Web Push limitation (affects iPad/iPhone users on merchant-pos and merchant-kitchen):**
+> Web Push API notifications require the browser tab to be running. On **iOS 15 and earlier**, Web Push is not supported at all. On **iOS 16.4+**, Web Push works only if the user has **"Add to Home Screen"** (PWA install) the app — it does not work in a regular Safari tab or Chrome/Firefox on iOS (all iOS browsers use WebKit).
+>
+> **Implication for Step 18:** The merchant-pos onboarding checklist must include a step prompting staff to add the app to their Home Screen on iOS devices. Display a persistent in-app banner: *"For order alerts on iPhone/iPad, tap Share → Add to Home Screen."* Android and desktop Chrome/Edge work with standard push permission — no PWA install required.
+>
+> **Kitchen displays on iPad:** The merchant-kitchen display (`apps/web/(kitchen)`) is most commonly run full-screen on a dedicated iPad or tablet. Without PWA install, the kitchen display will not receive new order push alerts when the screen is locked. Document this in the Step 18 setup guide.
+
 | Setting | Field | Notes |
 |---|---|---|
 | New order push notification | `MerchantSettings.pushNotifications.newOrder` (JSON) | On/Off toggle |

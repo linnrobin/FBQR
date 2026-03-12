@@ -21,7 +21,7 @@
 | **Auth** | [NextAuth.js](https://next-auth.js.org/) + JWT | Email/password for owners, PIN for staff |
 | **Payment (customer)** | [Midtrans](https://midtrans.com/) | Indonesia's lowest-fee gateway (QRIS 0.7%) |
 | **Payment (merchant billing)** | Midtrans or bank transfer | FBQR collects subscription fees from merchants |
-| **Push notifications** | Web Push API (browser-native) | New order alerts to merchant-pos and merchant-kitchen |
+| **Push notifications** | Web Push API (browser-native) | New order alerts to merchant-pos and merchant-kitchen. **iOS limitation:** requires PWA ("Add to Home Screen") on iOS 16.4+ — does not work in a regular Safari/Chrome tab on iOS. See `docs/merchant.md` § Notifications for onboarding implications. |
 | **QR Codes** | [`qrcode`](https://www.npmjs.com/package/qrcode) npm package | Generate per-table QR codes |
 | **PDF** | [`@react-pdf/renderer`](https://react-pdf.org/) | Invoice and pre-invoice generation |
 | **Email** | [Resend](https://resend.com/) | Transactional email — billing reminders, invoices, notifications |
