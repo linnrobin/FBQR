@@ -11,9 +11,16 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.8
+Version        : 2.9
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Pre-flight checklist fixes (v2.8) — 4 logic/integration bugs patched:
+Last completed : Payment.paymentType enum sync (v2.9) — BALANCE_REFUND added to all 3 locations:
+                 docs/data-models.md schema tree (Payment node — paymentType field added with
+                   all 4 variants defined); docs/merchant.md Constraints (enum updated from
+                   DEPOSIT|BALANCE_CHARGE|FULL to FULL|DEPOSIT|BALANCE_CHARGE|BALANCE_REFUND);
+                   docs/customer.md Payment Model Fields table (same enum + descriptions for
+                   all 4 variants). Enum is now consistent across all docs; an AI agent writing
+                   the Prisma schema will produce the correct PaymentType enum without crashing.
+                 Previously (v2.8): Pre-flight checklist fixes (v2.8) — 4 logic/integration bugs patched:
                  FIX 1 — BY_WEIGHT overpayment ("crab too small") logic: staff flow in
                    docs/merchant.md now handles remaining balance < 0 — [Issue Refund]
                    button, Midtrans partial refund API for QRIS, cashier change prompt for

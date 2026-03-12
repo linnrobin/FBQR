@@ -426,7 +426,7 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
 
 - `BY_WEIGHT` items can have variants — variant price deltas applied to `depositAmount`, not `pricePerUnit`
 - `BY_WEIGHT` items cannot use `stockCount` (incompatible)
-- `Payment.paymentType` field (enum: `DEPOSIT` | `BALANCE_CHARGE` | `FULL`) — add to Payment model in Phase 1 Prisma
+- `Payment.paymentType` field (enum: `FULL` | `DEPOSIT` | `BALANCE_CHARGE` | `BALANCE_REFUND`) — add to Payment model in Phase 1 Prisma
 
 ---
 
