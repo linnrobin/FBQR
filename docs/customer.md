@@ -229,6 +229,13 @@ Without the `tableId` guard, a customer moving from Table 5 to Table 8 would res
 
 > **Single source of truth:** `docs/data-models.md` owns the authoritative Order Status Lifecycle diagram, all valid state transitions, invalid transitions, and the Payment → Order Status Mapping table. **Do not duplicate or deviate from that state machine here.** If you are implementing order status logic, read `docs/data-models.md` first.
 
+**Three paths from `PENDING → CONFIRMED`:**
+1. **Midtrans webhook** (`paymentMode = PAY_FIRST`) — Midtrans callback confirms payment; webhook handler atomically sets Order → CONFIRMED + Payment → SUCCESS in one DB transaction.
+2. **Cashier confirms** (`paymentMode = PAY_AT_CASHIER`) — cashier taps [Mark as Paid] in the Close Register UI. Paired Payment had `status = PENDING_CASH`. See `docs/platform-owner.md` § EOD PENDING_CASH Cleanup for the full cashier flow.
+3. **Late webhook revival** — a Midtrans SUCCESS webhook arrives after the order timed out to EXPIRED. If all revival conditions pass (see § Late Webhook Handling below), the order is revived to CONFIRMED. See also `docs/architecture.md` ADR-025.
+
+> **`PENDING_CASH` is a Payment status, not an Order status.** While awaiting cashier confirmation, the Order stays `PENDING` and its paired Payment is `PENDING_CASH`. The shorthand "PENDING_CASH order" means "an Order with a PENDING_CASH Payment."
+
 ### When is an Order Row Created?
 
 **PAY_FIRST mode:** Customer taps "Place Order" → `Order` created (`PENDING`) + `Payment` created (`PENDING`) → Midtrans `snap_token` issued → customer pays → Midtrans webhook → `Order.status → CONFIRMED`.
@@ -758,7 +765,7 @@ If remaining balance > 0:
   (QRIS generates new Midtrans charge; or cashier handles cash)
 ```
 
-> **Same-channel constraint:** The `BALANCE_CHARGE` Payment must use the **same `method` and `provider`** as the original `DEPOSIT` Payment. Do not offer a different payment channel for the balance charge. If the deposit was paid via QRIS/GoPay, the balance charge must also be QRIS/GoPay. If the deposit was cash, the balance must be collected as cash. This is enforced server-side: the balance-charge API reads `Payment.method` and `Payment.provider` from the original DEPOSIT row and passes them through — the customer is never shown a channel selector for the balance payment.
+> **Same-channel constraint:** Both `BALANCE_CHARGE` and `BALANCE_REFUND` Payments must use the **same `method` and `provider`** as the original `DEPOSIT` Payment. Do not offer a different payment channel. If the deposit was QRIS/GoPay, the balance charge/refund must also be QRIS/GoPay — via Midtrans API. If the deposit was CASH, the balance must be collected or returned as physical cash — **no Midtrans API call is made for CASH BALANCE_REFUND**; the UI prompts the cashier to return physical change and a `BALANCE_REFUND` Payment row is still created with `method = CASH` and `midtransTransactionId = null` for audit purposes. This is enforced server-side: the balance API reads `method` and `provider` from the original DEPOSIT row — the customer is never shown a channel selector.
 
 **OrderItem fields for BY_WEIGHT:**
 

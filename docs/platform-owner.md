@@ -150,9 +150,11 @@ Renewal date → payment attempted (auto-charge via saved method, or manual invo
 | Cron Job | Frequency | Vercel Tier Required |
 |---|---|---|
 | Daily billing (billing reminders, renewal, trial expiry) | Daily `00:01 WIB` | Hobby (free) |
-| Order expiry (PENDING → EXPIRED after timeout) | Every 5 minutes | **Pro required** |
+| Order expiry (PENDING → EXPIRED after timeout) | Every 1 min (Pro) / 5 min (Hobby) | **Pro recommended** |
 | `autoResetAvailability` (reset items to available at midnight) | Daily `00:05 WIB` | Hobby (free) |
-| Session cleanup (EXPIRED CustomerSessions older than 7 days) | Daily `01:00 WIB` | Hobby (free) |
+| QueueCounter pruning (delete rows older than 30 days) | Daily `00:02 WIB` | Hobby (free) |
+| Session cleanup (expire stale CustomerSessions + fix ghost-occupied tables) | Daily `01:00 WIB` | Hobby (free) |
+| EOD PENDING_CASH cleanup (safety-net batch cancel) | Nightly `eodCashCleanupHour WIB` (default 03:00) | Hobby (free) |
 
 > **Action:** Upgrade to Vercel Pro before implementing Step 15 (payment integration). Budget ~$20/mo.
 > The order-expiry cron is not optional — without it, PENDING orders from abandoned payment sessions accumulate indefinitely, block table sessions, and inflate stock hold counts.
@@ -172,10 +174,12 @@ export async function GET(req: Request) {
 ```json
 {
   "crons": [
-    { "path": "/api/cron/billing",        "schedule": "1 17 * * *"  },
-    { "path": "/api/cron/order-expiry",   "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/availability-reset", "schedule": "5 17 * * *" },
-    { "path": "/api/cron/session-cleanup","schedule": "0 18 * * *"  }
+    { "path": "/api/cron/billing",              "schedule": "1 17 * * *"  },
+    { "path": "/api/cron/order-expiry",         "schedule": "*/1 * * * *" },
+    { "path": "/api/cron/availability-reset",   "schedule": "5 17 * * *"  },
+    { "path": "/api/cron/queue-counter-prune",  "schedule": "2 17 * * *"  },
+    { "path": "/api/cron/session-cleanup",      "schedule": "0 18 * * *"  },
+    { "path": "/api/cron/eod-cash-cleanup",     "schedule": "0 20 * * *"  }
   ]
 }
 ```
@@ -275,7 +279,7 @@ Runs on a short interval to transition PENDING orders past their payment timeout
 > **Vercel plan note:** Vercel Hobby supports only daily/hourly crons. **Vercel Pro** supports 1-minute intervals. Recommended: run every **1 minute** on Pro. If constrained to Hobby, a 5-minute interval is acceptable because the default `paymentTimeoutMinutes` is 15 minutes — worst-case expiry lag is 5 minutes, which is tolerable. **Upgrade to Vercel Pro before Step 15 (payment integration).** Budget ~$20/mo.
 
 ```
-Every 5 minutes:
+Every 5 minutes (UTC — no timezone conversion; runs globally at UTC intervals):
 
 STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
   SELECT o.id, o.customerSessionId
@@ -323,6 +327,36 @@ STEP 2 — Log run to CronRunLog
 
 **Constraint reminder:** If `stockCount IS NOT NULL` AND `autoResetAvailability = true`, the API must return a validation error at save time — these flags are mutually exclusive. The cron skips `stockCount IS NOT NULL` rows as an additional guard.
 
+### QueueCounter Daily Reset & Pruning Cron Specification
+
+Runs daily at `00:02 WIB` (`17:02 UTC`), immediately after the `autoResetAvailability` cron. Ensures a fresh counter row exists for each branch for the new day, and prunes old counter rows to prevent unbounded table growth.
+
+> **`QueueCounter` is not auto-reset** — a new counter row is created lazily on the first order of each day (by the Order creation API, via `SELECT FOR UPDATE`). This cron is only needed for **pruning** old rows. It does NOT need to pre-create rows (the lazy creation in the Order API handles that).
+
+```
+Daily at 00:02 WIB:
+
+STEP 1 — Prune QueueCounter rows older than 30 days
+  DELETE FROM QueueCounter
+  WHERE date < (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta') - INTERVAL '30 days'
+  RETURNING branchId, date
+
+  -- Note: 30-day window retains enough history for monthly reporting queries.
+  -- CURRENT_DATE AT TIME ZONE 'Asia/Jakarta' ensures we compare WIB dates, not UTC dates.
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'queue-counter-prune', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `DELETE WHERE date < ...` is inherently idempotent — re-running deletes nothing if already pruned.
+
+**Scale note:** At ~365 rows/branch/year, with 100 branches this is 36,500 rows/year. Without pruning, this grows indefinitely. The 30-day retention window balances history depth against storage growth.
+
+**`vercel.json` addition:**
+```json
+{ "path": "/api/cron/queue-counter-prune", "schedule": "2 17 * * *" }
+```
+
 ### Session Cleanup Cron Specification
 
 Runs daily at `01:00 WIB` (`18:00 UTC`). **Leak-recovery fallback only** — not the primary mechanism.
@@ -342,6 +376,10 @@ STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
 STEP 1b — Update Table.status for newly expired sessions
   -- Without this step, tables stay OCCUPIED indefinitely after session timeout:
   -- staff see ghost-occupied tables on the floor map and cannot reassign them.
+  --
+  -- Only updates OCCUPIED tables. If t.status = AVAILABLE (customer scanned QR but
+  -- never placed an order), the table is already in the correct state — skip it.
+  -- This prevents erroneously touching RESERVED or CLOSED tables.
   UPDATE "Table" t
   SET status = CASE
     WHEN ms.enableDirtyState = true THEN 'DIRTY'
@@ -352,6 +390,7 @@ STEP 1b — Update Table.status for newly expired sessions
   JOIN Restaurant r ON r.id = b.restaurantId
   JOIN MerchantSettings ms ON ms.restaurantId = r.id
   WHERE t.id = cs.tableId
+    AND cs.restaurantId = r.id                         -- explicit cross-restaurant safety guard
     AND cs.status = 'EXPIRED'
     AND cs.updatedAt >= NOW() - INTERVAL '5 minutes'   -- only rows just expired in STEP 1
     AND t.status = 'OCCUPIED'

@@ -38,7 +38,7 @@ UserRole     ← Assignment of a Role to a Staff member
 | `orders:refund` | Issue refunds and credit notes — distinct from `orders:manage` to allow granular control (e.g. Cashier can cancel but not refund) |
 | `kitchen:view` | View kitchen display |
 | `kitchen:manage` | Reorder item priority, mark items ready |
-| `staff:manage` | Create/edit/delete staff accounts and roles |
+| `staff:manage` | Create/edit/delete staff accounts, reset PINs, and manage roles. Phase 1: single permission covers all staff operations. Phase 2 may introduce `staff:edit` and `staff:reset-pin` sub-permissions for more granular control (e.g. supervisor can reset PINs without being able to delete accounts). |
 | `tables:manage` | Create/edit tables and generate QR codes |
 | `settings:manage` | Edit restaurant settings (tax, service charge, etc.) |
 | `branding:manage` | Edit restaurant branding (logo, colors, layout) |
@@ -414,10 +414,13 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
     │
     └── Remaining balance < 0 (Overpayment — e.g. deposit Rp 50.000, crab weighed Rp 40.000)
           → [Issue Refund Rp XXX] button appears in merchant-pos
-          → Midtrans channel: trigger partial refund via Midtrans Refund API
-               (refund_amount = depositAmount − finalLineTotal)
-          → Cash channel: prompt cashier to return physical change
-          → Second Payment row created (paymentType: BALANCE_REFUND, amount: negative delta)
+          → Refund channel is determined by the ORIGINAL deposit Payment.method:
+               QRIS / EWALLET / VA / CARD: trigger partial refund via Midtrans Refund API
+                   (refund_amount = depositAmount − finalLineTotal)
+               CASH: NO Midtrans call — prompt cashier: "Kembalikan Rp {delta} ke pelanggan
+                   secara tunai" (return physical change to customer)
+          → BALANCE_REFUND Payment row created in all cases (amount: negative delta) for audit trail
+               For CASH: Payment.method = CASH, Payment.midtransTransactionId = null
           → Original Payment.status → REFUNDED (partial)
           → AuditLog(action: UPDATE, entity: Payment, actorType: STAFF)
 ```
@@ -427,6 +430,7 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
 - `BY_WEIGHT` items can have variants — variant price deltas applied to `depositAmount`, not `pricePerUnit`
 - `BY_WEIGHT` items cannot use `stockCount` (incompatible)
 - `Payment.paymentType` field (enum: `FULL` | `DEPOSIT` | `BALANCE_CHARGE` | `BALANCE_REFUND`) — add to Payment model in Phase 1 Prisma
+- `BALANCE_REFUND` and `BALANCE_CHARGE` must use the same payment method and provider as the original `DEPOSIT` Payment. The API reads `method` and `provider` from the DEPOSIT row — the customer is never offered a different channel for the second charge or refund.
 
 ---
 

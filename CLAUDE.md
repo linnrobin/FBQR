@@ -11,36 +11,44 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 3.1
+Version        : 3.2
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Docs bug-fix pass (v3.1) — 6 bugs and 3 gaps from post-migration audit fixed:
-                 BUG 1 (CRITICAL) — platform-owner.md billing cron STEP 2 SUCCESS now resets
-                   reminderSentAt = NULL and reminderSentAt3d = NULL on successful renewal.
-                   Without this fix, merchants would stop receiving renewal reminder emails
-                   after the first billing cycle.
-                 BUG 2 (HIGH) — platform-owner.md: full EOD PENDING_CASH cleanup cron spec
-                   added — "Close Register" button flow (per-order Mark as Paid / Cancel),
-                   safety-net nightly batch cleanup SQL, stockCount restore on cancellation,
-                   idempotency guard. Now implementable from docs alone.
-                 BUG 3 (HIGH) — data-models.md CustomerSession expanded with all missing
-                   fields: restaurantId FK, tableId FK, customerId FK (nullable), expiresAt
-                   (datetime — required by Session Cleanup Cron), createdAt. Without expiresAt
-                   the cron SQL `WHERE expiresAt < NOW()` would fail at runtime.
-                 BUG 4 (MEDIUM) — data-models.md index table: added (platformName,
-                   platformOrderId) unique constraint for delivery webhook idempotency.
-                   Prevents duplicate GrabFood/GoFood orders under webhook retries.
-                 BUG 5 (MEDIUM) — platform-owner.md Session Cleanup Cron: added STEP 1b
-                   to update Table.status (DIRTY or AVAILABLE) for newly expired sessions.
-                   Without this, tables stay OCCUPIED indefinitely after session timeout —
-                   ghost-occupied tables on the floor map, table unassignable.
-                 BUG 6 (LOW) — platform-owner.md Order Expiry Cron: clarified Vercel Hobby
-                   (5-min max) vs Pro (1-min) distinction with worst-case lag calculation.
-                 GAP 1 — customer.md Weight-Based Pricing: added same-channel constraint
-                   note — BALANCE_CHARGE must use same method/provider as DEPOSIT.
-                 GAP 2 — data-models.md MenuItem: added autoResetAvailability + stockCount
-                   mutual exclusion constraint (API must reject if both set).
-                 GAP 3 — CLAUDE.md Known doc gaps: added QueueCounter row pruning note.
-                 Previously (v3.0): Phase 0 complete — iOS Web Push limitation documented.
+Last completed : Deep QA audit pass (v3.2) — 15 issues (2 critical, 5 high, 6 medium, 2 low) fixed:
+                 CRITICAL #1 — data-models.md CustomerSession: full field table with expiresAt
+                   TTL formula (expiresAt = NOW() + tableSessionTimeoutMinutes) and updatedAt.
+                   expiresAt is required by the Session Cleanup Cron; missing it = runtime crash.
+                 CRITICAL #2 — data-models.md MerchantSettings additional fields: added
+                   tableSessionTimeoutMinutes (default 120 min) and enableDirtyState (default
+                   false) with MerchantSettings scope clarification (restaurant-level, shared
+                   by all branches; per-branch overrides deferred to Phase 2).
+                 HIGH #3 — platform-owner.md Session Cleanup Cron STEP 1b: added comment
+                   explaining AVAILABLE-table skip (only updates OCCUPIED tables — if no order
+                   was placed during the session the table is already AVAILABLE, skip it).
+                 HIGH #4 — platform-owner.md Session Cleanup Cron STEP 1b: added
+                   `cs.restaurantId = r.id` explicit cross-restaurant safety guard.
+                 HIGH #5 — merchant.md + customer.md BY_WEIGHT: BALANCE_REFUND for CASH
+                   deposits now explicit — no Midtrans API call; cashier returns physical
+                   change; BALANCE_REFUND Payment row still created for audit (method=CASH,
+                   midtransTransactionId=null). Same-channel constraint now covers BALANCE_REFUND
+                   in addition to BALANCE_CHARGE.
+                 HIGH #6 — data-models.md: SystemAdmin, SystemRole, SystemRoleAssignment now
+                   have full field specs (id, email, passwordHash, createdByAdminId, etc.).
+                 MEDIUM #7 — platform-owner.md Order Expiry Cron code block: "Every 5 minutes
+                   (UTC — no timezone conversion)" — removes all ambiguity.
+                 MEDIUM #8 — platform-owner.md: new QueueCounter Daily Reset & Pruning Cron
+                   spec — prunes rows older than 30 days; vercel.json updated with all 6 crons;
+                   cron frequency table updated.
+                 MEDIUM #10 — data-models.md MerchantSettings additional fields: explicit
+                   scope note (restaurant-level, not per-branch; per-branch Phase 2).
+                 MEDIUM #11 — data-models.md Order Status Lifecycle: PENDING_CASH clarified
+                   as Payment status, not Order status; three CONFIRMED paths documented.
+                 MEDIUM #12 — already covered by CRITICAL #2 above.
+                 LOW #13 — merchant.md staff:manage: Phase 2 sub-permissions note added.
+                 LOW #14 — customer.md Order Status Lifecycle: three CONFIRMED paths added
+                   with cross-reference to ADR-025 and platform-owner.md Close Register.
+                 LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
+                   revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
+                 Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
@@ -49,9 +57,7 @@ Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  Hidang mode full flow — deferred to Phase 2;
                  customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
                  BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
-                   refund API integration detail deferred to Step 15;
-                 QueueCounter row pruning — ~365 rows/branch/year; low priority but add
-                   a cleanup cron or TTL policy before reaching significant scale (Phase 2)
+                   refund API integration detail deferred to Step 15
 ```
 
 ---
