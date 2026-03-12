@@ -10,19 +10,17 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-10
-Version        : 2.1
-Current phase  : Phase 0 — Requirements complete. Senior architect review (v2.1) applied. No code written yet.
-Last completed : Senior architect review (v2.0 → v2.1): 9 correctness fixes, 8 logic flaw fixes,
-                 12 improvements, 7 open questions resolved.
-                 Key additions: Promotion model full spec; Self-Service Merchant Registration
-                 section; Customer Account & Registration section; Seed Script Specification;
-                 MenuItemVariant + MenuItemAddon field specs; BY_WEIGHT second payment channel
-                 specified (same as original, paymentType field added); Session cookie
-                 cross-table guard (ADR-011); QueueCounter WIB timezone; maxActiveOrders
-                 atomic INSERT pattern; autoResetAvailability + stockCount constraint;
-                 MerchantLoyaltyProgram cardinality (one active per restaurant); PreInvoice
-                 removed from schema (computed); RoleTemplate storage (hardcoded JSON).
+Last updated   : 2026-03-12
+Version        : 2.2
+Current phase  : Phase 0 — Requirements complete. No code written yet.
+Last completed : docs/ reference directory created and gap-fixed:
+                 docs/data-models.md — authoritative Prisma schema reference for Step 2
+                 docs/platform-owner.md — FBQRSYS billing, subscriptions, cron jobs, PDP compliance
+                 docs/merchant.md — merchant onboarding, RBAC, registration, UI standards
+                 docs/customer.md — customer session, ordering flow, loyalty, registration
+                 docs/architecture.md — tech stack, ADRs, monorepo structure
+                 data-models.md gap-fixed: CronRunLog table added; 17 missing fields
+                 consolidated (Merchant, Customer, MerchantSubscription, MerchantBillingInvoice)
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining
@@ -47,6 +45,7 @@ Work through phases in order. Do not start a phase until all steps in the previo
 - [x] QR order security designed
 - [x] Multi-branch EOI flow designed
 - [x] Pre-code architecture review: correctness issues, logic flaws, and open questions resolved (ADRs 009–013 added)
+- [x] `docs/` reference directory created: data-models.md, platform-owner.md, merchant.md, customer.md, architecture.md
 
 ### Phase 1 — Foundation
 - [ ] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
@@ -101,7 +100,12 @@ Run these checks at the start of every session before writing any code:
 1. **Read the CURRENT STATE block** (top of this file) — find `Next step` and `Open decisions`
 2. **Check the Phase Tracker** — confirm which step is next and that all previous steps are checked off
 3. **Run `git status`** — make sure you are on the correct branch and there are no uncommitted changes from a previous agent
-4. **Read the relevant section(s)** of this file for the step you are about to build — do not rely on memory
+4. **Read the relevant `docs/` file for the step you are about to build** — do not rely on CLAUDE.md alone or on memory:
+   - Step 2 (Prisma schema): read `docs/data-models.md` — this is the authoritative schema reference
+   - Steps 3–6 (auth, RBAC, FBQRSYS, billing): read `docs/platform-owner.md`
+   - Steps 7–11 (merchant onboarding, menu, tables, promotions): read `docs/merchant.md`
+   - Steps 12–16 (customer ordering, cart, payment, tracking): read `docs/customer.md`
+   - Any step (architecture questions, ADRs, tech stack): read `docs/architecture.md`
 5. **Read the existing code files** that you will be modifying before editing them — never edit blind
 
 Only after these 5 steps should you begin writing code.
@@ -233,13 +237,19 @@ FBQR/                              # Monorepo root
 │   ├── ui/                        # Shared React components (shadcn/ui base)
 │   ├── types/                     # Shared TypeScript interfaces and enums
 │   └── config/                    # Shared eslint, tsconfig, tailwind configs
+├── docs/                              # Reference documentation for AI agents
+│   ├── data-models.md             # Authoritative Prisma schema reference — READ THIS for Step 2
+│   ├── platform-owner.md          # FBQRSYS: billing, subscriptions, cron jobs, PDP compliance
+│   ├── merchant.md                # Merchant: onboarding, RBAC, registration, UI standards
+│   ├── customer.md                # Customer: session, ordering flow, loyalty, registration
+│   └── architecture.md            # Tech stack decisions, ADRs, monorepo structure
 ├── turbo.json
 ├── package.json                   # Root package.json (workspaces)
 ├── .env.example                   # Environment variable template
 ├── .gitignore
 ├── LICENSE
 ├── README.md
-└── CLAUDE.md                      # This file
+└── CLAUDE.md                      # This file — project overview and phase tracker
 ```
 
 ---
