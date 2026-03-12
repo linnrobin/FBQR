@@ -162,6 +162,11 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
                         Rules: CASH → provider always null; QRIS → provider optional (Midtrans may
                           return which e-wallet was used — store it if available; null if unknown);
                           EWALLET → provider required; VA → provider required; CARD → provider optional
+                        paymentType: FULL | DEPOSIT | BALANCE_CHARGE | BALANCE_REFUND
+                          FULL — standard single-charge order (default)
+                          DEPOSIT — upfront deposit for BY_WEIGHT item
+                          BALANCE_CHARGE — second charge after weighing (remaining balance > 0)
+                          BALANCE_REFUND — refund row when deposit > finalLineTotal (amount: negative)
                         status: PENDING | PENDING_CASH | SUCCESS | FAILED | EXPIRED | REFUNDED
                         midtransTransactionId (string?) — unique; idempotency guard on webhook
 

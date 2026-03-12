@@ -497,7 +497,7 @@ Set `custom_expiry` in the Snap token creation to match `MerchantSettings.paymen
 | `orderId` | string | FK → Order |
 | `method` | enum | `QRIS \| EWALLET \| VA \| CARD \| CASH` |
 | `provider` | enum? | `GOPAY \| OVO \| DANA \| SHOPEEPAY \| BCA \| MANDIRI \| BNI \| OTHER \| null` |
-| `paymentType` | enum | `DEPOSIT \| BALANCE_CHARGE \| FULL` — distinguishes first vs second charge for BY_WEIGHT items |
+| `paymentType` | enum | `FULL \| DEPOSIT \| BALANCE_CHARGE \| BALANCE_REFUND` — `FULL` standard order; `DEPOSIT` upfront BY_WEIGHT charge; `BALANCE_CHARGE` second charge (balance > 0); `BALANCE_REFUND` refund row when deposit exceeded final price (amount: negative) |
 | `status` | enum | `PENDING \| PENDING_CASH \| SUCCESS \| FAILED \| EXPIRED \| REFUNDED` |
 | `amount` | int | IDR charged |
 | `midtransTransactionId` | string? | Unique; idempotency guard on webhook |
