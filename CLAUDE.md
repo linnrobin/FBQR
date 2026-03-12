@@ -11,26 +11,20 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.6
+Version        : 2.7
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Pre-implementation gap-fix pass (v2.6) — all 6 blocking gaps resolved:
-                 GAP 1 — DB connection pooling: ADR-023 (PgBouncer Transaction mode,
-                   DATABASE_URL vs DATABASE_DIRECT_URL, PrismaClient singleton pattern).
-                 GAP 2 — Input validation: ADR-024 (mandatory Zod on every API route and
-                   server action; standard error response shape documented).
-                 GAP 3 — Testing strategy: Vitest + Playwright + MSW; per-step test
-                   requirements table; 6 mandatory Midtrans webhook test cases.
-                 GAP 4 — Missing env vars: QR_SIGNING_SECRET, DATABASE_DIRECT_URL,
-                   TEST_DATABASE_URL; all vars annotated; CRON_SECRET validation pattern.
-                 GAP 5 — Vercel Cron: tier table (Pro required from Step 15); order-expiry
-                   cron spec; autoResetAvailability cron spec; session cleanup cron spec;
-                   vercel.json config; UTC offset documented.
-                 GAP 6 — Midtrans: Snap redirect chosen over popup (iOS Safari compat);
-                   SHA512 webhook sig verification code; transaction_status mapping
-                   (settlement/capture/pending/deny/cancel/expire); custom_expiry sync.
-                 MINOR — SSR branding (Server Component style-in-head, no flash);
-                   Supabase free tier limits table; CI/CD pipeline section; date-fns-tz
-                   and Zod added to tech stack; db:deploy and test commands added.
+Last completed : Post-split bug patches (v2.7) — two issues introduced by docs/ refactor:
+                 BUG 1 — QR_SIGNING_SECRET naming mismatch fixed: all three occurrences of
+                   SERVER_SECRET in docs/customer.md replaced with
+                   process.env.QR_SIGNING_SECRET (redirect handler, validation spec,
+                   Secondary Defences table). Previous name would have caused silent
+                   undefined env var at Step 12 runtime.
+                 RISK 2 — State machine dual-maintenance trap resolved: duplicate Order
+                   Status Lifecycle section removed from docs/customer.md (Status
+                   Definitions table, State Machine diagram, Payment → Order Status
+                   Mapping table). Replaced with a canonical reference to
+                   docs/data-models.md as single source of truth. Prevents future agents
+                   acting on stale state logic when new statuses are added.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
