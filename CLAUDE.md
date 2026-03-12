@@ -11,33 +11,16 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.9
+Version        : 3.0
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Payment.paymentType enum sync (v2.9) — BALANCE_REFUND added to all 3 locations:
-                 docs/data-models.md schema tree (Payment node — paymentType field added with
-                   all 4 variants defined); docs/merchant.md Constraints (enum updated from
-                   DEPOSIT|BALANCE_CHARGE|FULL to FULL|DEPOSIT|BALANCE_CHARGE|BALANCE_REFUND);
-                   docs/customer.md Payment Model Fields table (same enum + descriptions for
-                   all 4 variants). Enum is now consistent across all docs; an AI agent writing
-                   the Prisma schema will produce the correct PaymentType enum without crashing.
-                 Previously (v2.8): Pre-flight checklist fixes (v2.8) — 4 logic/integration bugs patched:
-                 FIX 1 — BY_WEIGHT overpayment ("crab too small") logic: staff flow in
-                   docs/merchant.md now handles remaining balance < 0 — [Issue Refund]
-                   button, Midtrans partial refund API for QRIS, cashier change prompt for
-                   cash, BALANCE_REFUND Payment row, partial REFUNDED status + AuditLog.
-                 FIX 2 — Ghost Waiter: WaiterRequest auto-resolve is now explicitly
-                   synchronous (same DB transaction as session close) in docs/data-models.md
-                   and docs/customer.md. Session cleanup cron in docs/platform-owner.md
-                   demoted to leak-recovery fallback only. Prevents ghost alerts when a
-                   table turns over within the same day.
-                 FIX 3 — Midtrans order_time timezone: toISOString() (UTC/ISO 8601)
-                   replaced with formatInTimeZone(date, 'Asia/Jakarta', 'yyyy-MM-dd
-                   HH:mm:ss xx') using date-fns-tz in docs/customer.md Snap snippet.
-                   Prevents Midtrans 400 rejection and expiry-sync mismatch.
-                 FIX 4 — Prisma partial unique index: docs/data-models.md index table
-                   updated — "unique partial (WHERE NOT NULL)" replaced with @unique
-                   Prisma annotation. PostgreSQL natively ignores NULL in UNIQUE
-                   constraints; the raw partial syntax crashes the Prisma generator.
+Last completed : Phase 0 complete — final gap closed (v3.0):
+                 iOS Web Push limitation documented in two places:
+                   docs/merchant.md § Notifications: full note covering iOS 15 (no support),
+                   iOS 16.4+ (PWA/Add to Home Screen required), Android/desktop (standard),
+                   kitchen display iPad implications, and onboarding banner requirement.
+                   docs/architecture.md tech stack table: Web Push row updated with iOS
+                   limitation summary and cross-reference to merchant.md.
+                 All 100% of v2.0 content now present, refined, and consistent across docs/.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
