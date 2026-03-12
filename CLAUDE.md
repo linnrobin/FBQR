@@ -11,29 +11,26 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ```
 Last updated   : 2026-03-10
-Version        : 2.0
-Current phase  : Phase 0 — Requirements complete. Major product maturity review applied. No code written yet.
-Last completed : Product maturity review (v1.9 → v2.0): 6 major additions
-                 (Merchant Onboarding & In-App Guidance: 5-step wizard, setup checklist,
-                 contextual help, FAQ, coach marks, empty states, schema fields;
-                 Public REST API & Webhooks: architecture, 10 endpoints, 6 webhook events,
-                 MerchantApiKey + WebhookEndpoint + WebhookDeliveryLog schema stubs, ADR-021;
-                 UI & Design Standards: design philosophy per app, design tokens, typography
-                 scale, component rules, motion spec, accessibility, responsive breakpoints,
-                 apps/menu-specific requirements;
-                 Phase 2 Schema Scaffolding: 8 new tables + 9 nullable fields stubbed in
-                 Phase 1 Prisma with rationale;
-                 ADR-020: CoreUI/AdminLTE rejected, shadcn/ui + Tailwind + Blocks + TanStack
-                 Table + Recharts + Framer Motion decided; tech stack table updated;
-                 ADR-021: REST + bearer token + webhooks chosen, GraphQL/OAuth2 rejected)
+Version        : 2.1
+Current phase  : Phase 0 — Requirements complete. Senior architect review (v2.1) applied. No code written yet.
+Last completed : Senior architect review (v2.0 → v2.1): 9 correctness fixes, 8 logic flaw fixes,
+                 12 improvements, 7 open questions resolved.
+                 Key additions: Promotion model full spec; Self-Service Merchant Registration
+                 section; Customer Account & Registration section; Seed Script Specification;
+                 MenuItemVariant + MenuItemAddon field specs; BY_WEIGHT second payment channel
+                 specified (same as original, paymentType field added); Session cookie
+                 cross-table guard (ADR-011); QueueCounter WIB timezone; maxActiveOrders
+                 atomic INSERT pattern; autoResetAvailability + stockCount constraint;
+                 MerchantLoyaltyProgram cardinality (one active per restaurant); PreInvoice
+                 removed from schema (computed); RoleTemplate storage (hardcoded JSON).
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
-Open decisions : See "Open Questions for Future AI Agents" in the ADR section (all Phase 1
-                 blockers resolved; remaining items are Phase 2 concerns)
-Known doc gaps : customer READY notification when browser tab is closed — not yet designed;
-                 refund flow full detail — deferred to Step 15 and Step 19;
+Open decisions : See "Open Questions for Future AI Agents" in the ADR section (remaining
+                 items are Phase 2 concerns; all Phase 1 blockers resolved)
+Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  estimated wait time display for customers — formula documented, UI Phase 2;
-                 Hidang mode full flow — deferred to Phase 2
+                 Hidang mode full flow — deferred to Phase 2;
+                 customer READY notification — resolved: Phase 1 accepts gap, Phase 2 WA message
 ```
 
 ---
@@ -349,6 +346,10 @@ UserRole     ← Assignment of a Role to a Staff member
 
 > **Owner accounts are special.** The Merchant owner (email + password) always has full access and cannot be stripped of permissions. The FBQRSYS owner (the FBQR platform account) always has full platform access. These are the only hardcoded "super" roles.
 
+> **Role template storage:** Templates are hardcoded as a JSON constant in `packages/config/roleTemplates.ts` — they are **not** database records. When a user picks a template in the UI, a new `MerchantRole` (or `SystemRole`) record is created with that template's permission list copied in. Modifications after creation only affect the new role. Templates cannot be edited at runtime; changes require a code deploy. This is intentional: templates are opinionated starting points, not live configurations. An agent building Step 4 must NOT create a `RoleTemplate` Prisma model.
+
+> **Staff.branchId null semantics:** A `null` branchId means **restaurant-level access** — the staff member can see all branches. In practice, this applies only to special staff types: (a) the merchant owner themselves (who is a `Merchant` record, not a `Staff` record, but the distinction matters in auth middleware), and (b) restaurant managers intentionally created with branch-wide scope. All standard staff accounts created via the Staff management UI **must always have a branchId set** — the UI enforces this with a required branch selector. A null branchId on a Staff record is only valid when `multiBranchEnabled = false` (single-branch restaurant, where the sole branch is implicit). When `multiBranchEnabled = true`, null branchId on a Staff record triggers a warning in the RBAC middleware: staff should always be explicitly scoped.
+
 ---
 
 ## Audit Log
@@ -445,7 +446,15 @@ Merchant             ← Restaurant owner account (email + hashed password)
 Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED | EXPIRED
   │  orderType: DINE_IN | TAKEAWAY | DELIVERY
   │  branchId (string) — FK to Branch; required; enables per-branch reporting
-  │  queueNumber (int) — auto-increments per branch per day for counter/takeaway;
+  │  confirmedAt (datetime?) — set in the same DB transaction that sets status = CONFIRMED;
+  │                            null until confirmed; used as start time for kitchen elapsed timer
+  │  idempotencyKey (string?) — client-generated UUID sent with "Place Order" request;
+  │                              unique index; expires 24h; prevents duplicate orders on
+  │                              double-tap or network retry
+  │  queueNumber (int) — auto-increments per branch per day; ALL order types receive a number
+  │                       (DINE_IN, TAKEAWAY, DELIVERY); for dine-in the table name is primary
+  │                       in the UI hierarchy, but queueNumber is always present for kitchen
+  │                       reference; resets at midnight Asia/Jakarta (WIB);
   │                       generated via a transactional counter table (QueueCounter) to
   │                       prevent race conditions under concurrent orders; resets at midnight
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
@@ -465,7 +474,12 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │     (orderId, fromStatus, toStatus, actorId?, actorType, actorName?, cancellationReason?, note?, createdAt)
   │     cancellationReason: CUSTOMER_REQUEST | PAYMENT_FAILED | MERCHANT_CANCEL | SYSTEM_EXPIRED | REFUND
   ├── WaiterRequest  ← Customer pressed a waiter-call button; resolved by staff
-  │                    branchId (FK), tableId (FK), notifyRoleId (FK? nullable — null = all branch staff)
+  │                    branchId (FK), tableId (FK)
+  │                    notifyRoleId (FK? nullable) — when set, only staff with that MerchantRole receive
+  │                      the push alert; null = all branch staff notified. Merchants configure per-type
+  │                      routing in MerchantSettings (e.g. BILL alerts → Cashier role only,
+  │                      CALL alerts → all). Phase 1: always null (notify all). Phase 2 UI: role-routing
+  │                      config screen in merchant-pos settings → Notifications.
   │                    type: ASSISTANCE | BILL | CALL
   │                      ASSISTANCE — general help ("mas, tolong ke sini")
   │                      BILL       — customer wants to pay; staff UI shows Table total so waiter
@@ -477,7 +491,10 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                    (resolvedAt = session close time, resolver = SYSTEM). This prevents stale
   │                    waiter alerts cluttering the merchant-pos dashboard after a table turns over.
   ├── OrderRating    ← Post-completion 1–5 star rating + optional comment from customer
-  ├── PreInvoice     ← Generated at checkout (before payment) — not a legal document
+  │   PreInvoice     ← NOT a DB model. Computed on-the-fly at checkout and returned in the
+  │                    API response. Not persisted. The Order record already stores subtotal,
+  │                    taxAmount, serviceChargeAmount, grandTotal at creation time — these
+  │                    values serve as the pre-invoice data. Do not create a PreInvoice table.
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
   └── Payment        ← method: QRIS | EWALLET | VA | CARD | CASH
                         provider: GOPAY | OVO | DANA | SHOPEEPAY | BCA | MANDIRI | BNI | OTHER | null
@@ -502,13 +519,19 @@ CustomerSession      ← Scoped to Restaurant + Table + QR token
   └── (multiple Orders can be linked to one CustomerSession)
 
 MerchantLoyaltyProgram ← Per-restaurant loyalty config (name, IDR per point, redemption rate,
-                          pointsCalculationBasis: SUBTOTAL | TOTAL)
+                          pointsCalculationBasis: SUBTOTAL | TOTAL,
+                          isActive: bool, activatedAt: datetime?, deactivatedAt: datetime?)
+                          One active program per restaurant (unique constraint on restaurantId
+                          WHERE isActive = true). Historical programs retained for balance integrity.
   └── LoyaltyTier    ← Tier name, threshold, multiplier, custom title, badge (Phase 2)
 
 ── PLATFORM ──────────────────────────────────────────────────────────
 AuditLog             ← Immutable. actor, action, entity, oldValue, newValue, IP, timestamp
 QueueCounter         ← Transactional counter for queue numbers; prevents race conditions
                        (branchId, date, lastNumber) — SELECT FOR UPDATE when issuing next number
+                       date column stores the date in Asia/Jakarta (WIB) timezone — NOT UTC.
+                       Cron that resets/prunes old counters must use cron-timezone: Asia/Jakarta.
+                       A new counter row is created per (branchId, WIB-date) on first order of day.
 ```
 
 ### Order Status Lifecycle
@@ -615,9 +638,7 @@ If any step fails, the entire transaction rolls back — no partial state (confi
   1. Restaurant is **not** `SUSPENDED` or `CANCELLED`
   2. The table does **not** have a new `ACTIVE` `CustomerSession` (i.e. the table has not been reseated since this order expired)
   3. The original `CustomerSession` still exists and can receive the update
-  4. All `OrderItem`s with `stockCount` set still have sufficient stock available (stock was not decremented when the order expired, but other orders may have consumed it in the interim)
-  - If all checks pass → **revive**: `Order.status → CONFIRMED`, stock decremented atomically within a transaction, order pushed to kitchen. Rationale: the customer paid real money.
-  - If check 4 fails (stock depleted) → **revive but flag** using the same substitution flow as a normal stock-out: order pushed to kitchen as `CONFIRMED` with ⚠️ on affected `OrderItem`; cashier offers substitution at the table. Do NOT auto-refund immediately for the same reason as a normal stock-out (Midtrans refunds take 2–14 days; cashier may be able to resolve it on the spot).
+  - If checks 1–3 pass → **revive**: run the standard webhook transaction (ADR-010 scope): `Order.status → CONFIRMED`, stock decremented atomically with `UPDATE WHERE stockCount >= qty`. If any stock decrement returns `affectedRows = 0`, mark that `OrderItem` with ⚠️ and proceed — the substitution flow handles it at the table. Do not pre-check stock before the transaction (TOCTOU: stock could change between a pre-check and the atomic decrement). The atomic `WHERE stockCount >= qty` guard is correct by construction. Do NOT auto-refund for a stock-out on revival — the cashier may resolve it on the spot; Midtrans refunds take 2–14 days.
   - If checks 1–3 fail → **auto-refund** via Midtrans Refund API + notify merchant.
 - If order expired **more than** the window ago → **auto-refund** regardless. Kitchen may be closed, items may be restocked.
 - All late webhook events are logged in `AuditLog` with `action: LATE_WEBHOOK_REVIVAL` or `LATE_WEBHOOK_REFUND`.
@@ -911,16 +932,26 @@ Merchant owners (with `billing:read`) see:
 Customer's phone camera scans table QR code
     │
     ▼
-URL decoded: https://menu.fbqr.app/{restaurantId}/{tableId}?token={uuid}
+Redirect handler: https://menu.fbqr.app/r/{tableToken}
+    → validates token, generates 24h signed URL (ADR-015)
+    │
+    ▼
+URL: https://menu.fbqr.app/{restaurantId}/{tableId}?token={tableToken}&sig={sig}&exp={exp}
     │
     ▼
 Server validates:
+  - sig = HMAC-SHA256(tableToken + ":" + exp, SERVER_SECRET) and exp > now
   - Token matches table record
   - Restaurant status = ACTIVE (not SUSPENDED or CANCELLED)
   - Table status ≠ CLOSED
+  - Table status ≠ RESERVED
+  - Table status ≠ DIRTY  (only enforced when MerchantSettings.enableDirtyState = true)
     │
-    ├── Invalid/expired token → show error: "This QR code is invalid. Please ask staff."
+    ├── Invalid/expired sig → redirect to /r/{tableToken} to get a fresh signed URL
+    ├── Invalid token → show error: "This QR code is invalid. Please ask staff."
     ├── Restaurant SUSPENDED → show: "This restaurant is temporarily unavailable."
+    ├── Table RESERVED → show: "This table is reserved. Please ask staff."
+    ├── Table DIRTY → show: "This table is being prepared. Please ask staff."
     └── Valid → create or resume CustomerSession → load branded menu
 ```
 
@@ -1195,7 +1226,7 @@ Every order card on the kitchen display must show, in this visual hierarchy:
 | Element | Source | Notes |
 |---|---|---|
 | Table identifier | `Order → CustomerSession → Table.name` | e.g. "Table 8", "Counter 2", "Takeaway #042"; always the first thing visible |
-| Order number | `Order.queueNumber` | Sequential per branch per day; displayed prominently |
+| Order number | `Order.queueNumber` | Sequential per branch per day; all order types; for dine-in this is secondary to the table name in visual hierarchy, but always present |
 | Order type badge | `Order.orderType` | 🪑 Dine-in / 🥡 Takeaway / 🛵 Delivery |
 | Time placed | `Order.createdAt` | Clock time only (HH:MM), not full date |
 | Item lines | `OrderItem` rows | Quantity × name |
@@ -1335,7 +1366,7 @@ Format: `INV-{branchCode}-{YYYYMMDD}-{sequence}` — e.g. `INV-JKT1-20260309-004
 When a Branch is created, `branchCode` is auto-generated as follows:
 1. Take the branch name, uppercase and strip spaces/punctuation → e.g. "Jakarta Selatan" → `JAKARTASELATAN`
 2. Take the first 4 characters → `JAKA`
-3. Check for uniqueness within the restaurant; if collision, append a counter → `JAK2`, `JAK3`
+3. Check for uniqueness within the restaurant; if collision, take the first **3** characters and append an incrementing digit → `JAK2`, `JAK3`, `JAK4` (always 4 characters total). If all single-digit suffixes collide (unlikely), use `J10`, `J11`, etc.
 4. Merchant can edit the `branchCode` at any time from branch settings (max 6 chars, alphanumeric, uppercase)
 5. Editing `branchCode` does **not** renumber historical invoices — it only applies to new invoices from that point
 
@@ -1539,20 +1570,30 @@ Two complementary mechanisms exist — merchants can use one or both:
 
 ### 1. Auto-cap via `maxActiveOrders`
 
-When `MerchantSettings.maxActiveOrders` is set, the order creation API counts active orders (`CONFIRMED + PREPARING`) at the moment a new order is submitted. If the count ≥ cap, the order is rejected before an `Order` row is created:
+When `MerchantSettings.maxActiveOrders` is set, the order creation API enforces the cap atomically to prevent race conditions under concurrent orders:
 
 ```
 Customer taps "Place Order"
     │
     ▼
-API: SELECT COUNT(*) FROM Order WHERE restaurantId = X AND status IN ('CONFIRMED', 'PREPARING')
+-- Atomic check using a Postgres advisory lock keyed on restaurantId,
+-- or INSERT ... SELECT ... WHERE COUNT < cap pattern:
+INSERT INTO "Order" (...)
+SELECT ... WHERE (
+  SELECT COUNT(*) FROM "Order"
+  WHERE restaurantId = X AND status IN ('CONFIRMED', 'PREPARING')
+) < $maxActiveOrders
+-- affectedRows = 0 → cap reached → return HTTP 503
+-- affectedRows = 1 → order created → proceed
+
+    ├── Order created → proceed to payment (Midtrans or PENDING_CASH queue)
     │
-    ├── count < maxActiveOrders → proceed normally
-    │
-    └── count ≥ maxActiveOrders → HTTP 503
+    └── Cap reached → HTTP 503
             Customer sees: "Dapur sedang sibuk. Silakan coba dalam beberapa menit." (or custom message)
             No Order row created; no Midtrans charge initiated
 ```
+
+**Why atomic:** A plain SELECT COUNT then INSERT has a TOCTOU race — under flash-sale concurrency, two workers can both read count=14 (cap=15) and both create order 15 and 16. The INSERT...WHERE...COUNT pattern prevents this at the DB level without an application-level lock.
 
 The cap auto-lifts as orders move to `READY` or `COMPLETED` — no staff action required.
 
@@ -1600,7 +1641,7 @@ Phase 2 addition — no schema change needed (all data is available at query tim
 | `allergens` | string[] | e.g. `["nuts", "dairy", "gluten"]` — shown as warning badges |
 | `spiceLevel` | int? | 0 = none, 1 = mild, 2 = medium, 3 = hot — shown as 🌶️ count |
 | `sortOrder` | int | Display order within category |
-| `autoResetAvailability` | bool | Default `false`. If `true`, a midnight cron job automatically sets `isAvailable = true` for this item at the start of each day. Useful for daily-stock items (e.g. "Today's Special" marked unavailable when sold out; auto-resets overnight). Items with `stockCount` set do NOT need this — their availability is controlled by stock depletion. |
+| `autoResetAvailability` | bool | Default `false`. If `true`, a midnight cron job automatically sets `isAvailable = true` for this item at the start of each day. Useful for daily-stock items (e.g. "Today's Special" marked unavailable when sold out; auto-resets overnight). **Constraint: `autoResetAvailability` is ignored (treated as `false`) when `stockCount IS NOT NULL`.** If both are set, the API returns a validation error: "autoResetAvailability cannot be used with stockCount — stock depletion controls availability automatically." The midnight cron additionally skips any item where `stockCount IS NOT NULL`. |
 | `priceType` | enum | `FIXED` (default) \| `BY_WEIGHT` — see Weight-Based Pricing below |
 | `pricePerUnit` | int? | Required when `priceType = BY_WEIGHT`. IDR per unit (e.g. 50000 per 100g) |
 | `unitLabel` | string? | Display unit for weight items (e.g. `"per 100g"`, `"per ekor"`, `"per kg"`) |
@@ -1665,7 +1706,17 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
 System auto-calculates finalLineTotal and remaining balance
     │
     ├── Remaining balance > 0 → [Charge Customer Rp XXX] button
-    │     → new Payment row created → customer pays remaining amount
+    │     → second Payment row created (same Order, paymentType: BALANCE_CHARGE)
+    │     → payment method: same as original order (QRIS generates a new Midtrans charge;
+    │       CASH recorded manually by cashier)
+    │     → CustomerSession state does NOT block this: the charge is initiated from
+    │       merchant-pos directly, not from the customer's browser. If the session has
+    │       expired, the cashier still completes the charge from merchant-pos; the customer
+    │       pays at the table via EDC/QRIS displayed by staff. The second Payment row is
+    │       linked to the Order ID, not the session.
+    │     → Session TTL extended automatically when any OrderItem has needsWeighing = true
+    │       (session stays ACTIVE until all pending weighings are resolved, overriding the
+    │       standard tableSessionTimeoutMinutes for that session only)
     │
     └── Remaining balance = 0 (deposit covered or no deposit) → no action needed
 ```
@@ -1675,6 +1726,7 @@ System auto-calculates finalLineTotal and remaining balance
 - `BY_WEIGHT` items can have variants (e.g. "Crab — Steamed / Padang Sauce / Butter Garlic") but variant price deltas are applied to `depositAmount`, not `pricePerUnit`
 - `BY_WEIGHT` items cannot use `stockCount` (incompatible — stock is managed by weight, not unit count)
 - If a `BY_WEIGHT` order is cancelled before weighing, only `depositAmount` is charged; Midtrans refund processes the deposit if digital payment was used
+- `Payment.paymentType` field (enum: `DEPOSIT` | `BALANCE_CHARGE` | `FULL`) distinguishes the two charges on the same order; add this to the Payment model in Phase 1 Prisma
 
 ---
 
@@ -1686,12 +1738,12 @@ System auto-calculates finalLineTotal and remaining balance
 | `imageUrl` | string? | Optional category header image |
 | `sortOrder` | int | Display order |
 | `menuLayoutOverride` | enum? | `GRID` / `BUNDLE` / `LIST` / `SPOTLIGHT` — overrides restaurant default |
-| `availableFrom` | time? | If set, category only shows after this time (e.g. `06:00`) |
-| `availableTo` | time? | If set, category only shows before this time (e.g. `11:00`) |
+| `availableFrom` | time? | If set, category only shows after this time (e.g. `06:00`). Stored as plain `TIME` (HH:MM, no timezone). **Compared against current time in Asia/Jakarta (WIB).** Server: `toZonedTime(new Date(), 'Asia/Jakarta').getHours()` before comparing. |
+| `availableTo` | time? | If set, category only shows before this time (e.g. `11:00`). Same WIB timezone rule. |
 | `isActive` | bool | Toggle entire category without deleting |
 | `kitchenStationId` | string? | Routes all items in this category to the specified kitchen station; null = default station |
 
-**Time-based availability example:** A "Sarapan" category with `availableFrom: 06:00`, `availableTo: 11:00` is only shown to customers between 6am and 11am WIB. Outside that window, the category is hidden entirely from the menu.
+**Time-based availability example:** A "Sarapan" category with `availableFrom: 06:00`, `availableTo: 11:00` is only shown to customers between 6am and 11am WIB. Outside that window, the category is hidden entirely from the menu. All time comparisons use `Asia/Jakarta` timezone regardless of server timezone (Vercel default is UTC). Use `date-fns-tz` or equivalent for WIB conversion.
 
 ## Menu Item Variants & Add-ons
 
@@ -1701,6 +1753,63 @@ Each `MenuItem` can have:
 
 Both are displayed in the `end-user-system` when the customer taps an item.
 Selections are stored per `OrderItem` as a JSON snapshot (not foreign keys) to preserve historical accuracy.
+
+### MenuItemVariant Fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | UUID |
+| `menuItemId` | string | FK → MenuItem |
+| `name` | string | Display name (e.g. "Large", "Pedas", "Tanpa Santan") |
+| `priceDelta` | int | IDR delta added to base price; negative allowed (e.g. "Small" = −5000) |
+| `sortOrder` | int | Display order |
+| `isDefault` | bool | Pre-selected option in the item detail modal |
+| `deletedAt` | datetime? | Soft delete |
+
+### MenuItemAddon Fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | UUID |
+| `menuItemId` | string | FK → MenuItem |
+| `name` | string | Display name (e.g. "Extra Cheese", "No Onion", "Extra Spicy") |
+| `priceDelta` | int | IDR; 0 = free modifier; negative allowed |
+| `isDefault` | bool | Pre-checked in the add-on selector |
+| `maxQuantity` | int? | Max units of this add-on per item (null = 1) |
+| `sortOrder` | int | Display order |
+| `deletedAt` | datetime? | Soft delete |
+
+---
+
+## Promotion — Full Field Specification
+
+> **Step 11 dependency.** This model must be defined before Step 11 is built. The schema below is the canonical source of truth.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | UUID |
+| `restaurantId` | string | FK → Restaurant |
+| `name` | string | Display name shown to customer and in merchant-pos |
+| `type` | enum | `PERCENTAGE` \| `FIXED_AMOUNT` \| `BOGO` \| `FREE_ITEM` |
+| `discountValue` | int | Percentage (e.g. 20 = 20%) for PERCENTAGE; IDR amount for FIXED_AMOUNT; unused for BOGO/FREE_ITEM |
+| `maximumDiscountAmount` | int? | Cap on PERCENTAGE discounts (e.g. max Rp 50,000 off regardless of cart size); null = no cap |
+| `minimumOrderValue` | int? | Minimum subtotal (IDR) required to activate the promotion; null = no minimum |
+| `applicableTo` | enum | `ALL_ITEMS` \| `SPECIFIC_CATEGORIES` \| `SPECIFIC_ITEMS` |
+| `applicableItemIds` | string[] | IDs of `MenuItem` or `MenuCategory` records (based on `applicableTo`); empty array when `ALL_ITEMS` |
+| `code` | string? | Customer-entered promo code (e.g. "PROMO10"); null = auto-applied to all eligible orders |
+| `usageLimit` | int? | Total platform-wide uses before promotion deactivates; null = unlimited |
+| `usageCount` | int | Running count of redemptions (incremented transactionally at Order CONFIRMED) |
+| `perCustomerLimit` | int? | Max redemptions per registered customer account; null = unlimited; not enforced for anonymous sessions |
+| `validFrom` | datetime? | Promotion start time; null = active immediately |
+| `validTo` | datetime? | Promotion end time; null = no expiry |
+| `isActive` | bool | Manual toggle; false overrides all other validity conditions |
+| `deletedAt` | datetime? | Soft delete — preserved in order history |
+
+**BOGO logic:** Buy One Get One — when customer adds ≥ 2 of an eligible item, the second (lower- or equal-priced) is free. Works at `OrderItem` level; the free item has `lineTotal = 0` and its `OrderItem` row carries a reference to the applied `promotionId`.
+
+**FREE_ITEM logic:** A specific free item (set in `applicableItemIds`) is added to the cart automatically when `minimumOrderValue` is met. The free `OrderItem` has `unitPrice = 0` and carries `promotionId`.
+
+**Stacking rule:** Only one promotion applies per order by default. If a merchant wants to allow stacking, configure `MerchantSettings.allowPromotionStacking: bool` (default false). When false, the highest-value eligible promotion wins.
 
 ---
 
@@ -2086,6 +2195,11 @@ Sound alert plays
 Cashier reviews order on merchant-pos → collects correct cash amount from customer
     │
     ├── [Confirm & Send to Kitchen]
+    │       API checks maxActiveOrders at confirm time (not at order creation time):
+    │         SELECT COUNT(*) FROM Order WHERE restaurantId = X AND status IN ('CONFIRMED','PREPARING')
+    │         If count ≥ maxActiveOrders → reject confirmation:
+    │           "Dapur sudah penuh (X aktif). Konfirmasi setelah ada pesanan selesai."
+    │         If count < maxActiveOrders → proceed:
     │       Payment.status → SUCCESS
     │       Payment.amount → cash amount collected (entered by cashier)
     │       Order.status → CONFIRMED
@@ -2872,7 +2986,7 @@ WebhookDeliveryLog:  (endpointId, deliveredAt DESC) — delivery log pagination
 
 **`OrderItem.status`** — nullable in Phase 1, populated in Phase 2. Adding this column to a table with millions of rows in Phase 2 would require a long migration. Stub it now while the table is empty.
 
-**`Merchant.onboardingStep` / `onboardingChecklist`** — needed from the first deployment since onboarding is a Phase 1 feature (the wizard runs on first login). Already included in the Merchant Onboarding section above — listed here for completeness.
+**`Merchant.onboardingStep` / `onboardingChecklist`** — the wizard itself is a Phase 3 feature (Step 7), but the schema field must exist in Phase 1 Prisma because it will be read/written from the first day Step 7 ships. Adding a column to a Merchant table that already has thousands of rows is a large migration; stub it now while the table is empty. Already included in the Merchant Onboarding section above — listed here for completeness.
 
 ---
 
@@ -2885,6 +2999,7 @@ Define these indexes at migration time (Step 2). Missing indexes on these tables
 | `Order` | `(branchId, createdAt DESC)` | Dashboard date-range queries |
 | `Order` | `(status)` | Filtering active orders for kitchen display |
 | `Order` | `(customerSessionId)` | Fetching all orders for a session |
+| `Order` | `(idempotencyKey)` — unique partial (WHERE NOT NULL) | Client-side duplicate prevention on Place Order |
 | `Payment` | `(orderId)` | Join from Order to Payment |
 | `Payment` | `(midtransTransactionId)` — unique | Idempotency guard; DB-level duplicate prevention |
 | `CustomerSession` | `(tableId, status)` | Finding active session for a table |
@@ -2922,11 +3037,89 @@ These are enforced server-side on API routes, not client-side.
 The menu endpoint (`GET /api/menu/{restaurantId}`) is the highest-traffic read in the system. Caching is mandatory at launch.
 
 - **Cache layer:** Vercel Edge Cache (built-in with Next.js `fetch` cache)
-- **Cache key:** `restaurantId` + `locale` (for future i18n)
+- **Cache key:** `restaurantId:branchId:locale` — **branchId is included from day one** because Phase 2 `BranchMenuOverride` makes menu responses branch-specific. Using `restaurantId + locale` as the key would be a breaking cache invalidation change in Phase 2; including `branchId` now is a zero-cost Phase 1 decision.
 - **TTL:** 5 minutes
-- **Invalidation:** When a merchant saves any menu change (category, item, branding), call `revalidatePath` to purge the cache immediately
-- **What is cached:** Full menu JSON (categories + items + branding) — the entire payload for the customer app on first load
+- **Invalidation:** When a merchant saves any menu change (category, item, branding, or branch override), call `revalidatePath` to purge the cache immediately. Invalidation must be scoped to the affected branch when a BranchMenuOverride changes (not the whole restaurant).
+- **What is cached:** Full menu JSON (categories + items + branding, with branch-specific availability applied) — the entire payload for the customer app on first load
 - **What is NOT cached:** Order status, table status, session state — these are always real-time
+
+---
+
+## Self-Service Merchant Registration
+
+> **Both admin-created and self-service signup paths must be supported.** The self-service path is the scalable acquisition model; admin-created is for enterprise/negotiated accounts.
+
+### Registration Flow
+
+```
+Visitor hits /register
+    │
+    ▼
+Form: Business name, email, password (min 8 chars), agree to Terms
+    │
+    ▼
+POST /api/auth/register
+  → validate inputs
+  → check email uniqueness (HTTP 409 if duplicate)
+  → create records in one DB transaction:
+      Merchant { email, hashedPassword, status: TRIAL,
+                 trialEndsAt: NOW() + 14 days, onboardingStep: 0 }
+      Restaurant { name: businessName, merchantId }
+      Branch { name: "Pusat", restaurantId }  ← default first branch
+  → send email verification link (Resend) with signed token (24h expiry)
+  → return HTTP 201 with { message: "Verification email sent" }
+    │
+    ▼
+Merchant clicks verification link
+  → POST /api/auth/verify-email?token=...
+  → set Merchant.emailVerifiedAt = NOW()
+  → redirect to /login
+    │
+    ▼
+First login → redirect to onboarding wizard (Step 1)
+```
+
+**Bot protection:** Phase 1 — none (low abuse surface for B2B SaaS in Indonesia). Phase 2 — add Cloudflare Turnstile or hCaptcha on the register form if bot signups become an issue.
+
+**Schema addition:** Add `emailVerifiedAt: DateTime?` to `Merchant` model. Unverified merchants can access the wizard but not place real orders until email is verified (QR menu endpoint checks `Merchant.emailVerifiedAt IS NOT NULL`).
+
+**Admin-created path:** FBQRSYS admin fills a simpler form (email, restaurant name, plan). System creates the same records, skips email verification (admin vouches), and emails the merchant a "set your password" link (password reset flow with a first-time flag).
+
+---
+
+## Customer Account & Registration
+
+> **Customer login is optional.** Anonymous QR sessions work for all ordering features. Login unlocks loyalty point earning and order history.
+
+### When Login is Prompted
+
+1. **At checkout** — after customer reviews cart, before payment: "Log in to earn loyalty points on this order"
+2. **Post-order** — after order confirmed: "Create an account to track your order history and earn points"
+3. **Never blocking** — customer can always dismiss and continue anonymously
+
+### Registration/Login Options
+
+- **Email + password** — standard form; email verification required before loyalty points credited
+- **Google OAuth** — fastest path (Phase 2, optional depending on Google approval timeline)
+
+### Session-to-Customer Linking
+
+When a customer logs in or registers **during an active CustomerSession**:
+- `CustomerSession.customerId` is set to the newly authenticated `Customer.id`
+- All `Order` records linked to that session that are `CONFIRMED` or later have loyalty points credited retroactively (if merchant loyalty is enabled)
+- Loyalty points are credited by the Order, not the session — idempotency guard prevents double-crediting if the link happens after points were already issued
+
+### Schema Additions
+
+| Model | Field | Notes |
+|---|---|---|
+| `Customer` | `emailVerifiedAt` | datetime? — points only credited after verification |
+| `Customer` | `googleId` | string? — Phase 2 Google OAuth |
+| `CustomerSession` | `customerId` | string? FK → Customer — set when customer authenticates during session |
+
+### Token Storage (apps/menu)
+
+Customer auth tokens for `apps/menu` are stored as `httpOnly` cookies (not localStorage) to prevent XSS access. The cookie is scoped to `menu.fbqr.app` and distinct from the `fbqr_session_id` session cookie. Both coexist without conflict.
 
 ---
 
@@ -3058,7 +3251,16 @@ The menu endpoint (`GET /api/menu/{restaurantId}`) is the highest-traffic read i
 
 ### ADR-011: Customer Session Continuity via Cookie
 
-**Decision:** On QR scan, a session cookie (`fbqr_session_id`) is set on the customer's browser. On subsequent page loads (including refresh), the server checks for this cookie before creating a new session. If a valid ACTIVE session exists for that cookie+table, it is resumed without requiring a re-scan.
+**Decision:** On QR scan, a session cookie (`fbqr_session_id`) is set on the customer's browser. On subsequent page loads (including refresh), the server checks for this cookie before creating a new session. If a valid ACTIVE session exists **for that cookie AND that specific table**, it is resumed without requiring a re-scan.
+
+**Critical implementation rule — the session resume query must be:**
+```sql
+SELECT * FROM CustomerSession
+WHERE id = $cookieValue
+  AND tableId = $scannedTableId   -- ← REQUIRED: prevents cross-table session leakage
+  AND status = 'ACTIVE'
+```
+If the cookie matches a session on a **different** table (e.g. customer moves from Table 5 to Table 8), the server treats the request as a new session for Table 8. It does NOT resume the Table 5 session. This guard is mandatory — without it, a customer's order would be routed to the wrong table.
 
 **Rationale:** Without this, a customer who refreshes the page loses their order tracking. This is a critical UX failure. The cookie approach is the simplest implementation — no login required, no QR re-scan, no user action needed.
 
@@ -3129,7 +3331,12 @@ The QR code on a physical table cannot be updated dynamically. Encoding the `sig
 **What this prevents:** A customer who screenshots and shares the full redirect URL after scanning — the URL contains only `tableToken`, not a `sig`. The redirect endpoint always generates a fresh `sig`. The resulting menu URL (with `sig`) expires in 24 hours, making shared screenshots useless the next day.
 
 **Redirect handler specification:** The `/r/{tableToken}` endpoint performs these steps:
-1. Lookup `Table` by `tableToken` — reject if not found, or if table status is `CLOSED`
+1. Lookup `Table` by `tableToken` — return human-friendly HTML error page (not a JSON 4xx) if:
+   - Not found
+   - `table.status = CLOSED` → "This table is currently unavailable. Please ask staff."
+   - `table.status = RESERVED` → "This table is reserved. Please ask staff."
+   - `table.status = DIRTY` AND `MerchantSettings.enableDirtyState = true` → "This table is being prepared. Please ask staff."
+   - Restaurant `status ≠ ACTIVE` → "This restaurant is temporarily unavailable."
 2. Get `restaurantId` and `tableId` via `Table → Branch → Restaurant`
 3. Generate `expiryTimestamp = now + 24h` (Unix seconds)
 4. Generate `sig = HMAC-SHA256(tableToken + ":" + expiryTimestamp, SERVER_SECRET)`
@@ -3145,11 +3352,11 @@ The menu app validates on load: `sig` must match `HMAC-SHA256(token + ":" + exp,
 
 **Decision:** Payment timing is configurable per restaurant via `MerchantSettings.paymentMode`:
 - `PAY_FIRST` (default): customer must pay via Midtrans before order reaches kitchen
-- `PAY_AT_CASHIER`: customer orders, kitchen receives immediately, cashier collects payment at end
+- `PAY_AT_CASHIER`: customer orders → alert sent to merchant-pos cash queue → cashier collects cash and taps [Confirm & Send to Kitchen] → Order pushed to kitchen. **The kitchen never receives a PAY_AT_CASHIER order without explicit cashier confirmation.** The confirmation gate is the same in principle as the Midtrans webhook gate — the confirming party is the cashier rather than the payment processor, but the kitchen sees no order until confirmation occurs in both modes.
 
-**Rationale:** Some Indonesian restaurants — particularly fine dining and family restaurants — prefer the traditional model where customers pay at the end. Forcing pay-first on them would be a deal-breaker. The QR ordering UX still works in pay-at-cashier mode, it just skips the Midtrans payment step.
+**Rationale:** Some Indonesian restaurants — particularly fine dining and family restaurants — prefer the traditional model where customers pay at the end. Forcing pay-first on them would be a deal-breaker. The QR ordering UX still works in pay-at-cashier mode, it just replaces the Midtrans payment step with a cashier confirmation step.
 
-**Security implications for PAY_AT_CASHIER:** Without payment gating, any order with a valid session goes straight to the kitchen. The fraud risk is the same as a traditional restaurant that takes verbal orders. Merchants who enable this mode accept this risk. CASH payment method must be enabled for this mode to be useful.
+**Security implications for PAY_AT_CASHIER:** The fraud risk is the same as a traditional restaurant that takes verbal orders — a customer could walk out before paying. Merchants who enable this mode accept this risk. CASH payment method must be enabled for this mode to be useful.
 
 **Status:** Decided.
 
@@ -3307,6 +3514,40 @@ This ADR exists so future AI agents do not re-raise issues that were already add
 | No design standards — "beautiful UI" undefined in the spec | ✅ Fixed in v2.0 | UI & Design Standards section added: design philosophy per app, design tokens, typography scale, component rules (skeletons not spinners, empty states, error states), motion spec, accessibility baseline, responsive breakpoints, apps/menu-specific requirements |
 | apps/menu has zero design direction — customer experience undefined | ✅ Fixed in v2.0 | apps/menu specific section in UI standards: <1.5s first render, optimistic cart, swipe gestures, haptic feedback, bottom sheet, sticky cart bar, CSS theming <50ms |
 
+**Fixed before v2.1 review (correctness, logic, improvements from senior architect review):**
+
+| Reviewer challenge | Status | Where addressed |
+|---|---|---|
+| ADR-016 contradicts every other section (PAY_AT_CASHIER kitchen gate) | ✅ Fixed in v2.1 | ADR-016 corrected: kitchen never receives PAY_AT_CASHIER order without explicit cashier confirmation |
+| QR scan validation missing RESERVED and DIRTY table status checks | ✅ Fixed in v2.1 | Section 1 (Customer scans QR) updated with all 5 blocking conditions + correct sig/exp URL format |
+| QR URL in section 1 missing sig/exp params from ADR-015 | ✅ Fixed in v2.1 | Full ADR-015 URL format with &sig=&exp= shown in section 1; sig validation described |
+| BranchCode collision algorithm produces inconsistent lengths (JAKA2 vs JAK2) | ✅ Fixed in v2.1 | Step 3 clarified: truncate to 3 chars then append counter digit → always 4 chars total |
+| Order.confirmedAt field missing from schema (kitchen elapsed timer uses it) | ✅ Fixed in v2.1 | `confirmedAt: DateTime?` added to Order model; set in same transaction as CONFIRMED |
+| Order.idempotencyKey field missing from schema and indexing strategy | ✅ Fixed in v2.1 | `idempotencyKey: String?` added to Order model; unique partial index added to DB Indexing Strategy |
+| Merchant.onboardingStep rationale says "Phase 1 feature" (should be Phase 3) | ✅ Fixed in v2.1 | Rationale corrected: Phase 3 feature (Step 7), schema stubbed in Phase 1 for migration safety |
+| WaiterRequest.notifyRoleId undocumented semantics (dangling FK) | ✅ Fixed in v2.1 | Role-based alert routing documented; Phase 1 = always null; Phase 2 UI design noted |
+| maxActiveOrders bypass via batch PAY_AT_CASHIER cashier confirmation | ✅ Fixed in v2.1 | Cashier [Confirm] action checks maxActiveOrders at confirm time, not at order creation |
+| TOCTOU race in late webhook revival stock pre-check | ✅ Fixed in v2.1 | Revival condition 4 (pre-check stock) removed; atomic decrement inside transaction handles it |
+| BY_WEIGHT second payment — no session context after CustomerSession expires | ✅ Fixed in v2.1 | Session TTL extended while needsWeighing=true; charge triggered from merchant-pos; channel = same as original |
+| ADR-015 redirect handler only checks CLOSED, not RESERVED or DIRTY | ✅ Fixed in v2.1 | Redirect handler step 1 expanded: human-friendly error pages for CLOSED, RESERVED, DIRTY (when enabled), SUSPENDED |
+| autoResetAvailability + stockCount creates midnight availability glitch | ✅ Fixed in v2.1 | Validation constraint: autoResetAvailability ignored when stockCount IS NOT NULL; cron skips those items |
+| Session cookie may link new table scan to wrong table's session | ✅ Fixed in v2.1 | ADR-011: session resume query explicitly requires tableId = scannedTableId; documented as critical guard |
+| QueueCounter midnight reset timezone unspecified | ✅ Fixed in v2.1 | QueueCounter: date column stores WIB date; cron uses cron-timezone: Asia/Jakarta; midnight = WIB midnight |
+| maxActiveOrders race condition under high concurrency | ✅ Fixed in v2.1 | Atomic INSERT...WHERE COUNT < cap pattern documented; SELECT+INSERT TOCTOU explained and rejected |
+| Promotion model has no field specification — Step 11 unimplementable | ✅ Fixed in v2.1 | Full Promotion model added (type, discountValue, applicableTo, code, usageLimit, stacking rule) |
+| Self-service merchant signup flow unspecified | ✅ Fixed in v2.1 | Self-Service Merchant Registration section added with full flow, DB records created, emailVerifiedAt |
+| Customer registration/login flow entirely undesigned | ✅ Fixed in v2.1 | Customer Account & Registration section added: trigger points, OAuth path, session-to-customer linking, token storage |
+| BY_WEIGHT second payment mechanism unspecified (channel unclear) | ✅ Fixed in v2.1 | Same channel as original; `Payment.paymentType: DEPOSIT|BALANCE_CHARGE|FULL` added; Open Questions resolved |
+| RoleTemplate has no storage specification | ✅ Fixed in v2.1 | Hardcoded JSON in packages/config/roleTemplates.ts; not a DB record; copy-in on role creation |
+| Menu caching cache key will be wrong after Phase 2 BranchMenuOverride | ✅ Fixed in v2.1 | Cache key changed to restaurantId:branchId:locale from day one; invalidation scoped to branch |
+| Order.queueNumber description says counter/takeaway only (kitchen card shows all types) | ✅ Fixed in v2.1 | All order types receive queueNumber; dine-in: table name is primary, queueNumber secondary but always present |
+| FBQRSYS first SystemAdmin has no bootstrapping process | ✅ Fixed in v2.1 | Seed Script Specification section added; FBQRSYS_ADMIN_EMAIL/PASSWORD env vars; idempotent |
+| Staff.branchId null semantics underdefined (contradicts branch selector note) | ✅ Fixed in v2.1 | Null = restaurant-level access for restaurant managers; all standard staff must have branchId set; single-branch exception documented |
+| PreInvoice listed in schema but never defined (stored or computed?) | ✅ Fixed in v2.1 | PreInvoice is computed, not stored; removed from schema diagram; Order fields serve this purpose |
+| Time-based category availability has no timezone for comparison | ✅ Fixed in v2.1 | availableFrom/availableTo: stored as plain TIME, compared in Asia/Jakarta (WIB); toZonedTime() required |
+| MenuItemVariant and MenuItemAddon have no field specifications | ✅ Fixed in v2.1 | Full field specs added to Menu Item Variants & Add-ons section |
+| MerchantLoyaltyProgram cardinality undefined | ✅ Fixed in v2.1 | One active program per restaurant; isActive + activatedAt + deactivatedAt added; historical programs retained |
+
 ---
 
 ### ADR-019: Per-Branch Separate Menus — Rejected; Correct Pattern is Per-Branch Availability Override
@@ -3407,6 +3648,13 @@ The following are areas where the design is incomplete or where a future AI agen
 
 | Area | Decision | Rationale |
 |---|---|---|
+| **BY_WEIGHT second payment channel** | Same channel as original payment. If original was QRIS → staff triggers a new Midtrans charge from merchant-pos (server-initiated). If original was CASH → cashier records manually. Second `Payment` row has `paymentType: BALANCE_CHARGE`. CustomerSession TTL extended while any OrderItem has `needsWeighing = true`. | Preserves consistent payment audit trail; cashier flow unchanged from standard PAY_AT_CASHIER |
+| **PreInvoice storage** | Not stored. Computed on-the-fly at checkout and returned in the API response. The `Order` record already holds `subtotal`, `taxAmount`, `serviceChargeAmount`, `grandTotal` at creation time — these are the pre-invoice data. No `PreInvoice` Prisma model. | Eliminates a table with no unique data; avoids dual-write complexity; Order fields already serve this purpose |
+| **First SystemAdmin bootstrap** | Seed script using `FBQRSYS_ADMIN_EMAIL` + `FBQRSYS_ADMIN_PASSWORD` env variables. Seed is idempotent. Admin role has all FBQRSYS permissions. Password must be changed on first production login. See Seed Script Specification. | Clearest, most repeatable mechanism; works in CI for integration tests; no one-time setup route needed |
+| **Do dine-in orders get a queueNumber?** | Yes — all order types (DINE_IN, TAKEAWAY, DELIVERY) receive a `queueNumber`. For dine-in it is secondary in the UI (table name is primary), but always present on the kitchen card. `QueueCounter` resets at midnight Asia/Jakarta. | Consistent order creation logic; no conditional branching; kitchen card spec already shows it for all types |
+| **Self-service merchant signup** | Minimal Phase 1 flow: email + restaurant name + password → create Merchant/Restaurant/Branch → send verification email → on verify → redirect to onboarding wizard. No CAPTCHA in Phase 1. `emailVerifiedAt` field on Merchant. See Self-Service Merchant Registration section. | Fastest to build; bot signups unlikely for B2B SaaS in Indonesia at launch scale |
+| **Customer READY notification (browser tab closed)** | Phase 1: accept the gap. Staff delivery to table covers the READY case. Display a banner at checkout: "Pelayan akan mengantarkan pesanan Anda. Tidak perlu menunggu di layar ini." Phase 2: WhatsApp notification when order moves to READY (customer provides phone at checkout). | Waiter service is the norm in Indonesian restaurants; Phase 1 scope is already large; WA notification is the right channel for Indonesia (not SMS) |
+| **MerchantLoyaltyProgram cardinality** | One active program per restaurant at a time. `isActive: bool` + `activatedAt/deactivatedAt: DateTime?` on the model. Deactivating a program retains historical records for balance integrity — existing customer point balances remain valid under the old program's exchange rate until redeemed. | Merchants may want seasonal programs or rate changes; historical integrity requires keeping old program records rather than editing in-place |
 | **Refund authority** | Merchant owner + FBQRSYS admin can both trigger refunds. System auto-triggers in two cases: payment webhook on a suspended merchant, and late webhook beyond `lateWebhookWindowMinutes`. Partial refund supported (Midtrans API supports it). Triggers: `Order → CANCELLED`, `Payment → REFUNDED`, credit note generated. Full flow designed in Step 15 + Step 19. | Merchant owner needs it for customer disputes; admin needs it for platform-level issues; auto-trigger needed for the two edge cases above |
 | **FBQR Points redemption funding** | Merchant-funded. When a customer redeems FBQR Points at a restaurant, the cost is borne by that merchant (deducted from their settlement). FBQR acts as the points ledger but does not subsidise redemption. Exchange rate and per-restaurant redemption cap are set by FBQRSYS. | Cleaner unit economics; aligns merchant incentive with loyalty program participation; avoids FBQR taking on unbounded liability |
 
@@ -3505,7 +3753,7 @@ cp .env.example .env.local
 # Run database migrations
 npm run db:migrate
 
-# Seed demo data
+# Seed demo data (includes first FBQRSYS admin — see seed script spec below)
 npm run db:seed
 
 # Start all apps in dev mode
@@ -3523,6 +3771,25 @@ npm run db:migrate   # Run Prisma migrations
 npm run db:studio    # Open Prisma Studio (DB browser)
 npm run db:seed      # Seed development data
 ```
+
+### Seed Script Specification
+
+The seed script (`packages/database/prisma/seed.ts`) must create the following on first run:
+
+1. **First FBQRSYS SystemAdmin** — credentials from environment variables:
+   ```
+   FBQRSYS_ADMIN_EMAIL=admin@fbqr.app
+   FBQRSYS_ADMIN_PASSWORD=<set before first deploy>
+   ```
+   Creates a `SystemAdmin` record with a `SystemRole` holding all FBQRSYS permissions (equivalent to "Platform Owner" template). **This password must be changed on first production login.** The seed is idempotent — re-running when the admin already exists is a no-op (upsert by email).
+
+2. **Demo merchant** (development only, skipped in `NODE_ENV=production`):
+   - One `Merchant` + `Restaurant` + `Branch` + sample menu categories/items
+   - One `Staff` account (PIN: 1234) for testing kitchen display
+   - Table QR tokens pre-generated so local testing doesn't require Midtrans
+   - `Merchant.status = TRIAL`, `trialEndsAt = NOW() + 14 days`
+
+3. **Default SubscriptionPlan rows** — Starter, Pro, Enterprise tiers with placeholder pricing (edit from FBQRSYS UI after first deploy).
 
 ### Running Individual Apps
 
