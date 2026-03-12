@@ -60,6 +60,9 @@ SystemAdmin          ← FBQRSYS admin accounts (owner + staff with dynamic role
 SystemRole           ← User-created FBQRSYS roles (name, description, [permissions])
 SystemRoleAssignment ← Links SystemAdmin → SystemRole
 SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
+PlatformSettings     ← Singleton (id=1). Platform-level config: support contacts, branding,
+                       billing defaults, feature flags. Never hardcode these values — read from DB.
+                       Full field list in docs/platform-owner.md § PlatformSettings.
 
 ── MERCHANT ──────────────────────────────────────────────────────────
 Merchant             ← Restaurant owner account (email + hashed password)
@@ -398,7 +401,17 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
+| `Branch` | `openingHours` | JSON? | Day-of-week schedule — informational only, does not block orders. Schema: `{ "mon": { "open": "09:00", "close": "22:00", "isClosed": false }, ... }` Keys: `mon tue wed thu fri sat sun`. Displayed to customers on the menu app if non-null. |
 | `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
+| `Restaurant` | `whatsappNumber` | String? | Contact WhatsApp number (E.164 format, e.g. `+6281234567890`). Displayed in `apps/menu` footer and "Contact Restaurant" CTA. |
+| `Restaurant` | `instagramHandle` | String? | Instagram handle without `@`, e.g. `fbqr.app`. Displayed in `apps/menu` footer. |
+| `Restaurant` | `tiktokHandle` | String? | TikTok handle without `@`. Displayed in `apps/menu` footer. |
+| `Restaurant` | `googleMapsUrl` | String? | Google Maps embed or share link. Rendered as "Get Directions" link in `apps/menu`. |
+| `Restaurant` | `reservationEmail` | String? | Email for reservation enquiries. Displayed on the menu app if set. |
+| `Restaurant` | `cuisineType` | String? | Cuisine category label (e.g. "Seafood", "Japanese", "Warung Padang"). Free text; used in future directory/search features. |
+| `MerchantSettings` | `pushNotifications` | JSON | Per-event Web Push toggle map. Schema: `{ "newOrder": true, "waiterCall": true, "lowStock": false, "billingReminder": true }`. Default: all true. Phase 1: always notify all; Phase 2: per-role routing reads this. |
+| `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
+| `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
 
 ### Additional Fields Required in Phase 1 Prisma
 
@@ -528,6 +541,8 @@ The seed script (`packages/database/prisma/seed.ts`) must create the following o
    - `Merchant.status = TRIAL`, `trialEndsAt = NOW() + 14 days`
 
 3. **Default SubscriptionPlan rows** — Starter, Pro, Enterprise tiers with placeholder pricing (edit from FBQRSYS UI after first deploy).
+
+4. **PlatformSettings singleton** — `upsert({ where: { id: 1 }, create: {}, update: {} })` — creates the row with all `@default` values on first run; subsequent seed runs are no-ops. See `docs/platform-owner.md § PlatformSettings` for the full field list and default values.
 
 ---
 

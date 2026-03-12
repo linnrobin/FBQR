@@ -422,6 +422,95 @@ For `BY_WEIGHT` items: `"Kepiting Saus Padang — Deposit Rp 50.000 (harga akhir
 
 Default payment method: **QRIS**. Merchants configure which methods to offer.
 
+### Midtrans Snap Integration — Client-Side Mode Decision
+
+**Use Snap redirect (full page redirect), NOT Snap popup (JavaScript overlay).**
+
+Reasoning:
+- Snap popup requires loading Midtrans' `snap.js` inline on the page and calling `window.snap.pay(snapToken)`. On iOS Safari, this triggers a CSP (Content Security Policy) cross-origin script warning that blocks popup display for users with strict browser security settings.
+- Snap redirect is universally reliable: redirect to `https://app.sandbox.midtrans.com/snap/v2/vtweb/{snap_token}` — Midtrans handles the payment UI, then redirects back to `finish_redirect_url` after completion.
+- The redirect approach works on all browsers, all devices, including WeChat in-app browser (common on Indonesian Android).
+
+**Implementation (Step 15):**
+
+```ts
+// 1. Server: create Snap token via Midtrans API
+const snapResponse = await midtransSnap.createTransaction({
+  transaction_details: {
+    order_id: order.id,
+    gross_amount: order.grandTotal,
+  },
+  custom_expiry: {
+    order_time: order.createdAt.toISOString(),
+    expiry_duration: merchantSettings.paymentTimeoutMinutes,
+    unit: 'minute',
+  },
+  callbacks: {
+    finish: `${process.env.NEXT_PUBLIC_MENU_APP_URL}/${restaurantId}/${tableId}/order/${order.id}?status=finish`,
+    error:  `${process.env.NEXT_PUBLIC_MENU_APP_URL}/${restaurantId}/${tableId}/order/${order.id}?status=error`,
+    pending:`${process.env.NEXT_PUBLIC_MENU_APP_URL}/${restaurantId}/${tableId}/order/${order.id}?status=pending`,
+  },
+})
+// Return snapToken and redirectUrl to client
+return { snapToken, redirectUrl: snapResponse.redirect_url }
+
+// 2. Client: redirect to Midtrans payment page
+window.location.href = redirectUrl
+```
+
+After payment, the customer is redirected back to the order tracking page. The `status` query param from Midtrans is for UI display only — **never trust it for order confirmation**. The authoritative confirmation is the server-side webhook.
+
+### Midtrans Webhook — Signature Verification (MANDATORY)
+
+Every webhook request from Midtrans **must** be verified before processing. An unverified webhook is a critical security hole — any attacker could forge a `SUCCESS` notification for an unpaid order.
+
+**Verification algorithm:**
+
+```ts
+import crypto from 'crypto'
+
+function verifyMidtransWebhook(notification: MidtransNotification): boolean {
+  // Midtrans signature = SHA512(orderId + statusCode + grossAmount + MIDTRANS_SERVER_KEY)
+  const raw = `${notification.order_id}${notification.status_code}${notification.gross_amount}${process.env.MIDTRANS_SERVER_KEY}`
+  const expectedSignature = crypto.createHash('sha512').update(raw).digest('hex')
+  return notification.signature_key === expectedSignature
+}
+
+// In webhook handler — FIRST THING before any DB interaction:
+export async function POST(req: Request) {
+  const notification = await req.json()
+  if (!verifyMidtransWebhook(notification)) {
+    console.warn('Invalid Midtrans webhook signature', { orderId: notification.order_id })
+    return new Response('Forbidden', { status: 403 })
+  }
+  // ... process notification
+}
+```
+
+### Midtrans Transaction Status → Payment/Order Status Mapping
+
+Midtrans sends different `transaction_status` values. Map them correctly:
+
+| Midtrans `transaction_status` | Midtrans `fraud_status` | Action |
+|---|---|---|
+| `settlement` | any | `Payment → SUCCESS`, `Order → CONFIRMED` ← **this is the main success event** |
+| `capture` | `accept` | `Payment → SUCCESS`, `Order → CONFIRMED` ← credit card payment |
+| `capture` | `challenge` | Hold — notify merchant; do not confirm yet; wait for Midtrans manual review |
+| `pending` | any | No action — payment page opened but not completed; poll or wait for next webhook |
+| `deny` | any | `Payment → FAILED`, `Order → CANCELLED` (cancellationReason: PAYMENT_FAILED) |
+| `cancel` | any | `Payment → FAILED`, `Order → CANCELLED` |
+| `expire` | any | `Payment → EXPIRED`, `Order → EXPIRED` |
+| `refund` | any | `Payment → REFUNDED`; Order status per refund rules (see data-models.md) |
+
+> **Critical:** Do NOT only handle `success` — that status does not exist. The actual payment confirmation comes as `settlement` (most methods) or `capture` (credit cards). An agent that checks for `transaction_status === 'success'` will miss all real payments.
+
+### Order Expiry and Midtrans `custom_expiry` Sync
+
+Set `custom_expiry` in the Snap token creation to match `MerchantSettings.paymentTimeoutMinutes`. This ensures Midtrans expires its own payment session at the same time the FBQR order-expiry cron expires the order:
+
+- If customer abandons: Midtrans sends `expire` webhook → order-expiry cron also fires → both set EXPIRED (idempotent, whichever arrives first wins via `WHERE status = 'PENDING'` atomic guard).
+- If there's a mismatch (e.g. Midtrans expires at 15 min, cron runs at 20 min): cron fires first, but Midtrans `expire` webhook still arrives and is handled gracefully (late webhook logic in `data-models.md`).
+
 ### Payment Model Fields
 
 | Field | Type | Notes |
@@ -501,6 +590,48 @@ Applied to `apps/menu` only (not merchant-pos or FBQRSYS).
 | `customCss` | Raw CSS overrides (FBQRSYS admin only; sanitized before storage) |
 
 Applied via CSS custom properties (`--color-primary`, `--color-surface`, etc.) fetched once per session. Changes take effect immediately without a rebuild. Must be applied within **50ms** of session load (no flash of unstyled menu).
+
+### SSR Branding Injection Strategy (No Flash)
+
+Branding CSS variables must be injected **server-side** in the `<head>` — never via `useEffect` or client-side fetch. A client-side approach causes a visible flash of unstyled/default-color menu while the fetch resolves.
+
+**Correct approach (Step 12):**
+
+```tsx
+// apps/menu/app/[restaurantId]/[tableId]/layout.tsx  (Server Component)
+import { prisma } from '@repo/database'
+
+export default async function MenuLayout({ params, children }) {
+  const branding = await prisma.restaurantBranding.findUnique({
+    where: { restaurantId: params.restaurantId },
+  })
+
+  const cssVars = branding ? `
+    :root {
+      --color-primary: ${branding.primaryColor ?? '#E84040'};
+      --color-secondary: ${branding.secondaryColor ?? '#F5F5F5'};
+      --font-family: ${branding.fontFamily ?? 'Inter'}, sans-serif;
+      --border-radius: ${branding.borderRadius === 'pill' ? '9999px' : branding.borderRadius === 'rounded' ? '12px' : '4px'};
+    }
+  ` : ''
+
+  return (
+    <html>
+      <head>
+        {cssVars && <style dangerouslySetInnerHTML={{ __html: cssVars }} />}
+        {/* font preload for configured fontFamily */}
+      </head>
+      <body>{children}</body>
+    </html>
+  )
+}
+```
+
+**Why this works:**
+- The layout is a React Server Component — it fetches branding from DB and renders the `<style>` tag server-side.
+- The browser receives the CSS variables in the initial HTML — no network round-trip, no flash.
+- This branding fetch is included in the 5-minute `unstable_cache` alongside the menu data (same cache key: `restaurantId:branchId`).
+- `customCss` field (FBQRSYS admin only): sanitize with a CSS sanitizer (e.g. `clean-css` with allowlist) before injecting via `dangerouslySetInnerHTML` to prevent XSS.
 
 ---
 

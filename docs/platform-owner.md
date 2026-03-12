@@ -141,6 +141,48 @@ Renewal date → payment attempted (auto-charge via saved method, or manual invo
             └── Grace period expired → status: SUSPENDED (auto-lock, logged in AuditLog)
 ```
 
+### Vercel Cron — Tier Requirements
+
+**Vercel Hobby (free):** Maximum 1 cron invocation per day. Suitable only for the daily billing cron.
+
+**Vercel Pro ($20/mo) — required from Step 15 onward** for sub-daily cron intervals:
+
+| Cron Job | Frequency | Vercel Tier Required |
+|---|---|---|
+| Daily billing (billing reminders, renewal, trial expiry) | Daily `00:01 WIB` | Hobby (free) |
+| Order expiry (PENDING → EXPIRED after timeout) | Every 5 minutes | **Pro required** |
+| `autoResetAvailability` (reset items to available at midnight) | Daily `00:05 WIB` | Hobby (free) |
+| Session cleanup (EXPIRED CustomerSessions older than 7 days) | Daily `01:00 WIB` | Hobby (free) |
+
+> **Action:** Upgrade to Vercel Pro before implementing Step 15 (payment integration). Budget ~$20/mo.
+> The order-expiry cron is not optional — without it, PENDING orders from abandoned payment sessions accumulate indefinitely, block table sessions, and inflate stock hold counts.
+
+**All cron routes must validate the `CRON_SECRET` header before executing:**
+```ts
+// apps/web/app/api/cron/[job]/route.ts
+export async function GET(req: Request) {
+  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+    return new Response('Unauthorized', { status: 401 })
+  }
+  // ... cron logic
+}
+```
+
+**`vercel.json` cron configuration:**
+```json
+{
+  "crons": [
+    { "path": "/api/cron/billing",        "schedule": "1 17 * * *"  },
+    { "path": "/api/cron/order-expiry",   "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/availability-reset", "schedule": "5 17 * * *" },
+    { "path": "/api/cron/session-cleanup","schedule": "0 18 * * *"  }
+  ]
+}
+```
+> Vercel Cron runs in UTC. `00:01 WIB` = `17:01 UTC` (WIB = UTC+7).
+
+---
+
 ### Billing Cron Full Specification
 
 The billing cron runs daily via Vercel Cron. This is the most revenue-critical scheduled job.
@@ -223,6 +265,85 @@ STEP 4 — Send 3-day-before reminders (subset of STEP 1 for closer window)
 | `MerchantSubscription` | `gracePeriodDays` | int default 3 — configurable per merchant |
 | `MerchantBillingInvoice` | `status` | enum: `PENDING \| PAID \| OVERDUE \| CANCELLED` |
 | `MerchantBillingInvoice` | `periodStart` | datetime — subscription period start (for uniqueness) |
+
+### Order Expiry Cron Specification
+
+Runs every 5 minutes (requires Vercel Pro). Transitions PENDING orders past their payment timeout to EXPIRED.
+
+```
+Every 5 minutes:
+
+STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
+  SELECT o.id, o.customerSessionId
+  FROM Order o
+  JOIN Payment p ON p.orderId = o.id
+  JOIN MerchantSettings ms ON ms.restaurantId = o.restaurantId
+  WHERE o.status = 'PENDING'
+    AND p.method != 'CASH'                          -- never expire cash orders
+    AND o.createdAt < NOW() - (ms.paymentTimeoutMinutes * INTERVAL '1 minute')
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Order SET status = 'EXPIRED' WHERE id = o.id AND status = 'PENDING'
+      -- if affectedRows = 0: already processed (race condition guard)
+      UPDATE Payment SET status = 'EXPIRED' WHERE orderId = o.id AND status = 'PENDING'
+      INSERT OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
+      INSERT AuditLog(action: UPDATE, entity: Order, actorType: SYSTEM)
+    COMMIT
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'order-expiry', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `WHERE status = 'PENDING'` atomic update means double-runs are safe.
+**Default `paymentTimeoutMinutes`:** 15 minutes. Also passed as `custom_expiry` to Midtrans at order creation so Midtrans expires the payment session at the same time — keeps FBQR and Midtrans in sync.
+
+### autoResetAvailability Cron Specification
+
+Runs daily at `00:05 WIB` (`17:05 UTC`). Resets items that were manually marked unavailable for the day.
+
+```
+Daily at 00:05 WIB:
+
+STEP 1 — Reset available items
+  UPDATE MenuItem
+  SET isAvailable = true
+  WHERE autoResetAvailability = true
+    AND isAvailable = false
+    AND stockCount IS NULL          -- constraint: autoResetAvailability ignored when stockCount is set
+
+  Returns affected rows for CronRunLog.
+
+STEP 2 — Log run to CronRunLog
+```
+
+**Constraint reminder:** If `stockCount IS NOT NULL` AND `autoResetAvailability = true`, the API must return a validation error at save time — these flags are mutually exclusive. The cron skips `stockCount IS NOT NULL` rows as an additional guard.
+
+### Session Cleanup Cron Specification
+
+Runs daily at `01:00 WIB` (`18:00 UTC`). Lightweight maintenance job.
+
+```
+Daily at 01:00 WIB:
+
+STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
+  UPDATE CustomerSession
+  SET status = 'EXPIRED'
+  WHERE status = 'ACTIVE'
+    AND expiresAt < NOW()
+
+STEP 2 — Auto-resolve orphaned WaiterRequests for expired sessions
+  UPDATE WaiterRequest
+  SET resolvedAt = NOW()
+  WHERE resolvedAt IS NULL
+    AND tableId IN (
+      SELECT tableId FROM CustomerSession
+      WHERE status IN ('EXPIRED', 'COMPLETED')
+        AND updatedAt < NOW() - INTERVAL '1 hour'
+    )
+
+STEP 3 — Log run to CronRunLog
+```
 
 ### FBQRSYS Admin Controls (Billing)
 
@@ -774,3 +895,112 @@ Features organized by platform-owner impact. 🚨 = revenue/legal risk. ⚠️ =
 | **Status page (status.fbqr.app)** | 📋 Trust | BetterUptime or self-hosted; linked from ToS |
 | **Geographic merchant map** | 📋 Analytics | City/province heatmap in FBQRSYS dashboard |
 | **Revenue recognition tracking** | 📋 Accounting | Deferred revenue for annual subscriptions |
+
+---
+
+## PlatformSettings — Singleton Configuration Model
+
+> **For AI agents:** `PlatformSettings` is a singleton row (always exactly one row, `id = 1`) that stores all platform-level values previously hardcoded in the codebase. Build the FBQRSYS Settings Panel UI in Step 5 to read/write these values. Never hardcode them in source code.
+
+### Prisma Model
+
+```prisma
+model PlatformSettings {
+  id                      Int      @id @default(1)   // singleton — always row 1
+
+  // Support contact (displayed to merchants in the help panel)
+  supportEmail            String   @default("support@fbqr.app")
+  supportWhatsapp         String   @default("+6281234567890")
+  supportResponseMessage  String   @default("Kami membalas dalam 1×24 jam kerja")
+
+  // Platform identity
+  platformName            String   @default("FBQR")
+  platformTagline         String   @default("Pesan Lebih Mudah, Layani Lebih Cepat")
+  platformLogoUrl         String?
+  platformFaviconUrl      String?
+
+  // Legal & compliance
+  tosUrl                  String?
+  privacyPolicyUrl        String?
+  dpoEmail                String?                    // Data Protection Officer
+
+  // Billing defaults (overridable per merchant)
+  trialDurationDays       Int      @default(14)
+  gracePeriodDays         Int      @default(7)
+  defaultCurrency         String   @default("IDR")
+
+  // Notification / alert recipients (FBQRSYS owner alerts)
+  ownerAlertEmail         String?                    // Robin's email for platform alerts
+  ownerAlertWhatsapp      String?
+
+  // Feature flags (platform-wide on/off)
+  aiRecommendationsEnabled Boolean @default(false)   // Master switch for AI features
+  publicApiEnabled         Boolean @default(false)   // Public REST API access
+  referralProgramEnabled   Boolean @default(false)   // Merchant referral codes
+
+  updatedAt               DateTime @updatedAt
+}
+```
+
+### Rules
+
+- **Always exactly one row** with `id = 1`. The seed script creates this row on first run (idempotent `upsert`).
+- **Read via server action or API route** — never expose `SUPABASE_SERVICE_ROLE_KEY` on the client. Cache the result in `unstable_cache` with a 60-second TTL.
+- **Update via FBQRSYS Settings Panel** (see below). Requires `settings:manage` permission.
+- **AI agents:** pull values from `PlatformSettings` wherever the previous spec said "hardcoded". Examples:
+  - In-app merchant help panel → `supportEmail`, `supportWhatsapp`, `supportResponseMessage`
+  - Billing grace period cron → `gracePeriodDays`
+  - Trial expiry cron → `trialDurationDays`
+  - Subscription plan invoice email `from` label → `platformName`
+
+---
+
+## FBQRSYS Settings Panel
+
+> **Step:** Build in Step 5 alongside the rest of the FBQRSYS admin UI. Route: `/(fbqrsys)/settings`.
+> **Permission:** All sub-pages require `settings:manage`.
+
+The FBQRSYS Settings Panel is the administrative interface for the `PlatformSettings` singleton and for FBQRSYS staff management. It replaces all hardcoded platform-level values.
+
+### Navigation tabs
+
+| Tab | Route | Contents |
+|---|---|---|
+| **General** | `/settings/general` | Platform name, tagline, logo, favicon URL |
+| **Support** | `/settings/support` | Support email, WhatsApp number, response time message |
+| **Legal & Compliance** | `/settings/legal` | ToS URL, Privacy Policy URL, DPO email |
+| **Billing Defaults** | `/settings/billing` | Trial duration (days), grace period (days), default currency |
+| **Alerts** | `/settings/alerts` | Owner alert email, owner alert WhatsApp |
+| **Feature Flags** | `/settings/features` | AI recommendations toggle, Public API toggle, Referral program toggle |
+| **Staff** | `/settings/staff` | FBQRSYS staff accounts — list, invite, assign roles, deactivate |
+
+### UI requirements
+
+- Each tab renders a **form backed by a server action** — no client-side fetch.
+- All fields show the current persisted value on load.
+- On submit: validate → `upsert({ where: { id: 1 }, ... })` → `revalidatePath('/settings')` → show success toast.
+- URL and email fields must be validated (format check) before saving.
+- `platformLogoUrl` and `platformFaviconUrl` are plain URL text inputs in Phase 1 — file upload (Supabase Storage) deferred to Phase 2.
+- Feature flags render as **toggle switches** (shadcn `Switch` component).
+- **Staff tab** is a separate sub-page (not part of PlatformSettings model) — managed via `SystemAdmin` and `SystemRole` models.
+
+### Seed defaults
+
+The seed script must call:
+
+```ts
+await prisma.platformSettings.upsert({
+  where: { id: 1 },
+  create: {}, // all @default values apply
+  update: {}, // no-op on subsequent seeds
+});
+```
+
+---
+
+## Cross-References
+
+- Schema details for `PlatformSettings` → `docs/data-models.md`
+- Merchant Settings Panel (equivalent for merchant owners) → `docs/merchant.md`
+- Billing cron that reads `gracePeriodDays` and `trialDurationDays` → billing section above
+- `settings:manage` permission definition → FBQRSYS Permissions section above
