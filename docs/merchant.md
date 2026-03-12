@@ -954,6 +954,165 @@ WebhookDeliveryLog — audit log of every webhook attempt
 
 ---
 
+## Self-Service Merchant Registration
+
+> **Both admin-created and self-service signup paths must be supported.** Self-service is the scalable acquisition model; admin-created is for enterprise/negotiated accounts.
+
+### Registration Flow
+
+```
+Visitor hits /register
+    │
+    ▼
+Form: Business name, email, password (min 8 chars), agree to Terms
+    │
+    ▼
+POST /api/auth/register
+  → validate inputs
+  → check email uniqueness (HTTP 409 if duplicate)
+  → create records in one DB transaction:
+      Merchant { email, hashedPassword, status: TRIAL,
+                 trialEndsAt: NOW() + 14 days, onboardingStep: 0 }
+      Restaurant { name: businessName, merchantId }
+      Branch { name: "Pusat", restaurantId }  ← default first branch
+  → send email verification link (Resend) with signed token (24h expiry)
+  → return HTTP 201 with { message: "Verification email sent" }
+    │
+    ▼
+Merchant clicks verification link
+  → POST /api/auth/verify-email?token=...
+  → set Merchant.emailVerifiedAt = NOW()
+  → redirect to /login
+    │
+    ▼
+First login → redirect to onboarding wizard (Step 1)
+```
+
+### Schema Addition
+
+`Merchant.emailVerifiedAt: DateTime?` — unverified merchants can access the wizard but the QR menu endpoint rejects customer scans until `Merchant.emailVerifiedAt IS NOT NULL`.
+
+### Admin-Created Path
+
+FBQRSYS admin fills a simpler form (email, restaurant name, plan). System creates the same records, skips email verification (admin vouches), and emails the merchant a "set your password" link (password reset flow with a first-time flag).
+
+---
+
+## UI & Design Standards (Merchant Apps)
+
+> **The merchant-pos is used under pressure at dinner rush.** If it's slow, confusing, or requires multiple taps to do a simple task, restaurant operations suffer and the owner churns. Apply these standards to all merchant-facing UI in `apps/web`.
+
+### Design Philosophy by App
+
+| App | Target feeling | Reference products |
+|---|---|---|
+| `apps/web` merchant-pos | Clean, fast, zero clutter — works under pressure at dinner rush | Linear, Notion, Vercel dashboard |
+| `apps/web` merchant-kitchen | High contrast, glanceable at 3 metres, touch-friendly | Airport departure boards, Grafana dashboards in dark mode |
+| `apps/web` FBQRSYS | Professional B2B admin — trustworthy and data-dense | Stripe dashboard, Vercel admin |
+
+### Design Tokens (shared via `packages/config/tokens`)
+
+```ts
+// Color palette
+primary:   '#E8622A'   // warm coral-orange — energy, appetite, Indonesian warmth
+surface:   '#FAFAF9'   // off-white — cleaner than pure white
+neutral:   '#1C1917'   // stone-950 — body text
+muted:     '#78716C'   // stone-500 — secondary text
+border:    '#E7E5E4'   // stone-200 — dividers
+
+// Status colors (consistent across all apps)
+success:   '#16A34A'   // green-600
+warning:   '#D97706'   // amber-600
+danger:    '#DC2626'   // red-600
+info:      '#2563EB'   // blue-600
+
+// Font: Geist Sans (Next.js default)
+// Border radius: --radius: 0.625rem (shadcn default)
+```
+
+### Typography Scale
+
+```
+H1:       30px / 36px / 700   — page titles
+H2:       24px / 32px / 600   — section headings
+H3:       20px / 28px / 600   — card headings
+Body:     16px / 24px / 400   — default body text
+Small:    14px / 20px / 400   — secondary labels, metadata
+Micro:    12px / 16px / 400   — badges, timestamps, table captions
+Mono:     14px / 20px / 400   — invoice numbers, order IDs
+```
+
+### Component Rules
+
+**Loading states — always use skeletons, never spinners:**
+```tsx
+// ✅ Correct
+<Skeleton className="h-4 w-[200px]" />
+// ❌ Wrong
+<Spinner />
+```
+
+**Empty states — never show a blank div.** Every list, table, and grid must have:
+1. Explanation of why it is empty (not just "No data")
+2. Next action the user should take
+3. Relevant icon (not stock clipart)
+
+**Toast notifications — use Sonner (ships with shadcn/ui):**
+```ts
+toast.success('Menu berhasil disimpan')
+toast.error('Gagal menyimpan. Periksa koneksi internet Anda.')
+toast.info('3 pesanan baru masuk')
+```
+
+**Confirmation dialogs — only for destructive or irreversible actions:**
+- ✅ Deleting a menu item, cancelling an order, revoking staff access
+- ❌ Saving a form, changing a toggle — save immediately with a toast
+
+### Animation (Framer Motion)
+
+```ts
+// Page transitions — subtle fade + slight upward slide
+const pageVariants = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  exit:    { opacity: 0, y: -8 }
+}
+transition: { duration: 0.15, ease: 'easeOut' }
+
+// List item stagger (kitchen display)
+transition: { staggerChildren: 0.04 }
+```
+
+**Rule:** Animation must never slow down a task. If an animation makes staff wait, remove it.
+
+### Responsive Breakpoints
+
+```
+apps/web (merchant-pos):  Tablet (1024px) as minimum — kitchen staff use iPads
+                           Desktop (1280px+) — primary for merchant owner dashboard
+merchant-kitchen:          1080p landscape (1920×1080) — TV/monitor in kitchen
+FBQRSYS:                   Desktop only (1280px+) — platform admin at workstation
+```
+
+### Accessibility Baseline
+
+- **WCAG 2.1 AA** minimum for all interactive elements
+- All interactive elements reachable by keyboard (`Tab`, `Enter`, `Space`, `Esc`)
+- Colour contrast ratio ≥ 4.5:1 for body text, ≥ 3:1 for large text
+- Focus ring always visible (Tailwind `focus-visible:ring-2`)
+- `aria-label` on icon-only buttons
+
+### Code Quality
+
+- No inline styles — Tailwind only (exception: dynamic CSS custom properties for branding in `apps/menu`)
+- No magic numbers — use Tailwind spacing/color tokens
+- Components in `packages/ui` must be truly generic (no business logic)
+- Business-aware components live in each app's `components/` directory
+- Every new page component needs a `loading.tsx` (Next.js built-in skeleton)
+- Every new page component needs an `error.tsx` (Next.js built-in error boundary)
+
+---
+
 ## Cross-References
 
 - Full schema details → `docs/data-models.md`
