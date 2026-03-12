@@ -35,7 +35,7 @@ URL: https://menu.fbqr.app/{restaurantId}/{tableId}?token={tableToken}&sig={sig}
     │
     ▼
 Server validates:
-  - sig = HMAC-SHA256(tableToken + ":" + exp, SERVER_SECRET) and exp > now
+  - sig = HMAC-SHA256(tableToken + ":" + exp, process.env.QR_SIGNING_SECRET) and exp > now
   - Token matches table record
   - Restaurant status = ACTIVE (not SUSPENDED or CANCELLED)
   - Table status ≠ CLOSED
@@ -54,7 +54,7 @@ Server validates:
 1. Lookup `Table` by `tableToken` — return human-friendly HTML error page (not JSON 4xx) for blocked states
 2. Get `restaurantId` and `tableId` via `Table → Branch → Restaurant`
 3. Generate `expiryTimestamp = now + 24h` (Unix seconds)
-4. Generate `sig = HMAC-SHA256(tableToken + ":" + expiryTimestamp, SERVER_SECRET)`
+4. Generate `sig = HMAC-SHA256(tableToken + ":" + expiryTimestamp, process.env.QR_SIGNING_SECRET)`
 5. Redirect (HTTP 302) to: `https://menu.fbqr.app/{restaurantId}/{tableId}?token={tableToken}&sig={sig}&exp={expiryTimestamp}`
 
 The menu app validates on load: `sig` must match and `exp` must be in the future. Invalid/expired requests redirect back to `/r/{tableToken}` — legitimate customers are never permanently locked out.
@@ -214,47 +214,7 @@ Without the `tableId` guard, a customer moving from Table 5 to Table 8 would res
 
 ## Order Status Lifecycle
 
-### Status Definitions
-
-| Status | Meaning | Kitchen visibility |
-|---|---|---|
-| `PENDING` | Order row created AND payment initiated (or cash approval pending) | Not visible to kitchen |
-| `CONFIRMED` | Payment verified (Midtrans webhook) OR cashier confirmed cash | Visible to kitchen |
-| `PREPARING` | Kitchen acknowledged and started preparing | Visible |
-| `READY` | All items marked ready by kitchen | Visible |
-| `COMPLETED` | Order closed | Historical |
-| `CANCELLED` | Cancelled (before payment: customer cancelled; after CONFIRMED: triggers refund) | Removed |
-| `EXPIRED` | PENDING order where no payment confirmation arrived within timeout | Historical |
-
-### State Machine
-
-```
-PENDING ──┬──► CONFIRMED ──► PREPARING ──► READY ──► COMPLETED
-          │         │
-          │         └──► CANCELLED  (after confirmation; triggers refund)
-          │
-          ├──► CANCELLED  (before payment: customer cancelled)
-          │
-          └──► EXPIRED    (no payment webhook within timeout; terminal, silent)
-```
-
-**Additional transitions (system only):**
-- `EXPIRED → CONFIRMED` — late webhook revival (within `lateWebhookWindowMinutes`)
-- `EXPIRED → CANCELLED` — late webhook beyond window, or revival checks fail
-
-**Invalid transitions** that must be rejected: `READY → PREPARING`, `COMPLETED → CANCELLED`, any unlisted transition.
-
-### Payment → Order Status Mapping
-
-| Payment.status | Resulting Order.status | Notes |
-|---|---|---|
-| `PENDING` | `PENDING` | Awaiting Midtrans callback |
-| `PENDING_CASH` | `PENDING` | Awaiting cashier confirmation |
-| `SUCCESS` | `CONFIRMED` | Midtrans webhook verified — pushed to kitchen |
-| `FAILED` | `CANCELLED` | Payment declined; `cancellationReason: PAYMENT_FAILED` |
-| `EXPIRED` | `EXPIRED` | No confirmation within timeout |
-| `REFUNDED` | `CANCELLED` (if CONFIRMED/PREPARING/READY) | Pre-completion refund |
-| `REFUNDED` | `COMPLETED` (unchanged) | Post-completion refund: only Payment.status changes; credit note generated |
+> **Single source of truth:** `docs/data-models.md` owns the authoritative Order Status Lifecycle diagram, all valid state transitions, invalid transitions, and the Payment → Order Status Mapping table. **Do not duplicate or deviate from that state machine here.** If you are implementing order status logic, read `docs/data-models.md` first.
 
 ### When is an Order Row Created?
 
@@ -361,7 +321,7 @@ If any step fails → full rollback.
 |---|---|
 | Token rotation on session close | Old QR token immediately invalid; in-flight PENDING orders auto-cancelled |
 | Session expiry | CustomerSession TTL rejects new orders even with valid token |
-| Short-lived signed session token | `sig = HMAC-SHA256(tableToken + expiry, SERVER_SECRET)` — expires 24h; static QR via redirect issues fresh sig |
+| Short-lived signed session token | `sig = HMAC-SHA256(tableToken + expiry, process.env.QR_SIGNING_SECRET)` — expires 24h; static QR via redirect issues fresh sig |
 | Token scoped to table + restaurant | Only works for one specific table at one restaurant |
 | Rate limiting per session | Max N PENDING orders per CustomerSession at one time (default: 3, configurable) |
 | Midtrans webhook signature verification | All webhook calls verified via SHA512 signature |
