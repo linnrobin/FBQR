@@ -74,6 +74,25 @@ FBQR/                              # Monorepo root
 
 ---
 
+## Authentication Model
+
+| Role | Auth Method | Scope |
+|---|---|---|
+| **FBQRSYS admin** | Email + password (JWT) | Full platform access |
+| **Merchant owner** | Email + password (JWT) | Their restaurant only |
+| **Merchant staff** (cashier, supervisor) | PIN (4–6 digit) | Assigned restaurant/branch |
+| **Kitchen staff** | PIN (4–6 digit) | Kitchen display only |
+| **Customer (anonymous)** | QR token | Table-scoped session |
+| **Customer (registered)** | Email + password / Google OAuth | Loyalty points, order history |
+
+> **PIN auth security:** PIN sessions have a configurable inactivity timeout (default 4 hours) after which the device returns to the PIN entry screen. High-sensitivity actions (`CANCEL`, `REFUND`) require `orders:manage` permission explicitly and are always logged in `AuditLog` with `actorId`, `actorName`, and `cancellationReason`. A `requireSupervisorFor: CANCEL` flag in `MerchantSettings` is a Phase 2 addition; schema must anticipate it.
+
+> **1 Merchant = 1 Restaurant brand (firm rule).** `Merchant` = owner account. `Restaurant` = the brand (menu, branding, settings). `Branch` = physical location. A second restaurant brand requires a new Merchant account with a different email. See ADR-007.
+
+> **Customer login is optional.** Anonymous QR sessions handle all ordering. Login unlocks loyalty point earning and order history.
+
+---
+
 ## Architecture Decision Records (ADRs)
 
 > **For AI agents:** These records explain the *why* behind key design decisions. If you are about to suggest a change that conflicts with a decision below, read the rationale first. Where a status says **Decided**, the decision is firm for Phase 1. Where noted as open or Phase 2, proposals are welcome.
