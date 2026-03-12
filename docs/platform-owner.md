@@ -321,7 +321,9 @@ STEP 2 — Log run to CronRunLog
 
 ### Session Cleanup Cron Specification
 
-Runs daily at `01:00 WIB` (`18:00 UTC`). Lightweight maintenance job.
+Runs daily at `01:00 WIB` (`18:00 UTC`). **Leak-recovery fallback only** — not the primary mechanism.
+
+> **Important:** WaiterRequest auto-resolve is synchronous in application code (see `docs/data-models.md` and `docs/customer.md`). This cron only catches requests that slipped through due to a server crash or uncaught exception during session close. It must not be relied upon as the normal resolution path.
 
 ```
 Daily at 01:00 WIB:
@@ -332,7 +334,7 @@ STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
   WHERE status = 'ACTIVE'
     AND expiresAt < NOW()
 
-STEP 2 — Auto-resolve orphaned WaiterRequests for expired sessions
+STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled synchronously at session close)
   UPDATE WaiterRequest
   SET resolvedAt = NOW()
   WHERE resolvedAt IS NULL

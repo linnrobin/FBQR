@@ -410,7 +410,16 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
     │     → same payment channel as original order
     │     → Session TTL extended while any OrderItem has needsWeighing = true
     │
-    └── Remaining balance = 0 → no action needed
+    ├── Remaining balance = 0 → no action needed (deposit exactly covered final price)
+    │
+    └── Remaining balance < 0 (Overpayment — e.g. deposit Rp 50.000, crab weighed Rp 40.000)
+          → [Issue Refund Rp XXX] button appears in merchant-pos
+          → Midtrans channel: trigger partial refund via Midtrans Refund API
+               (refund_amount = depositAmount − finalLineTotal)
+          → Cash channel: prompt cashier to return physical change
+          → Second Payment row created (paymentType: BALANCE_REFUND, amount: negative delta)
+          → Original Payment.status → REFUNDED (partial)
+          → AuditLog(action: UPDATE, entity: Payment, actorType: STAFF)
 ```
 
 ### Constraints

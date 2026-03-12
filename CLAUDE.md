@@ -11,20 +11,26 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-12
-Version        : 2.7
+Version        : 2.8
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Post-split bug patches (v2.7) — two issues introduced by docs/ refactor:
-                 BUG 1 — QR_SIGNING_SECRET naming mismatch fixed: all three occurrences of
-                   SERVER_SECRET in docs/customer.md replaced with
-                   process.env.QR_SIGNING_SECRET (redirect handler, validation spec,
-                   Secondary Defences table). Previous name would have caused silent
-                   undefined env var at Step 12 runtime.
-                 RISK 2 — State machine dual-maintenance trap resolved: duplicate Order
-                   Status Lifecycle section removed from docs/customer.md (Status
-                   Definitions table, State Machine diagram, Payment → Order Status
-                   Mapping table). Replaced with a canonical reference to
-                   docs/data-models.md as single source of truth. Prevents future agents
-                   acting on stale state logic when new statuses are added.
+Last completed : Pre-flight checklist fixes (v2.8) — 4 logic/integration bugs patched:
+                 FIX 1 — BY_WEIGHT overpayment ("crab too small") logic: staff flow in
+                   docs/merchant.md now handles remaining balance < 0 — [Issue Refund]
+                   button, Midtrans partial refund API for QRIS, cashier change prompt for
+                   cash, BALANCE_REFUND Payment row, partial REFUNDED status + AuditLog.
+                 FIX 2 — Ghost Waiter: WaiterRequest auto-resolve is now explicitly
+                   synchronous (same DB transaction as session close) in docs/data-models.md
+                   and docs/customer.md. Session cleanup cron in docs/platform-owner.md
+                   demoted to leak-recovery fallback only. Prevents ghost alerts when a
+                   table turns over within the same day.
+                 FIX 3 — Midtrans order_time timezone: toISOString() (UTC/ISO 8601)
+                   replaced with formatInTimeZone(date, 'Asia/Jakarta', 'yyyy-MM-dd
+                   HH:mm:ss xx') using date-fns-tz in docs/customer.md Snap snippet.
+                   Prevents Midtrans 400 rejection and expiry-sync mismatch.
+                 FIX 4 — Prisma partial unique index: docs/data-models.md index table
+                   updated — "unique partial (WHERE NOT NULL)" replaced with @unique
+                   Prisma annotation. PostgreSQL natively ignores NULL in UNIQUE
+                   constraints; the raw partial syntax crashes the Prisma generator.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
@@ -32,7 +38,8 @@ Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  estimated wait time display — formula in docs/merchant.md, UI Phase 2;
                  Hidang mode full flow — deferred to Phase 2;
                  customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
-                 BY_WEIGHT remaining-balance second-charge mechanism — deferred to Step 15
+                 BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
+                   refund API integration detail deferred to Step 15
 ```
 
 ---
