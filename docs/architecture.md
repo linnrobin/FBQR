@@ -586,6 +586,30 @@ export async function updateMenuItem(formData: unknown) {
 
 ---
 
+### ADR-025: Late Webhook Revival — Payment Arrives After Order Timeout
+
+**Context:** A customer pays via Midtrans, the payment is processed, but the Midtrans webhook to FBQR is delayed (e.g. network error, Midtrans retry delay). FBQR's Order Expiry Cron transitions the order `PENDING → EXPIRED` before the webhook arrives. Later — potentially 5 to 60 minutes later — the webhook arrives with a valid `SUCCESS` status.
+
+**Decision:** If all revival conditions pass, revive the order: run the full standard webhook transaction (stock decrement, Order → CONFIRMED, Payment → SUCCESS, push to kitchen via Supabase Realtime, notify merchant).
+
+**Revival conditions (all must pass):**
+1. The elapsed time since expiry is ≤ `MerchantSettings.lateWebhookWindowMinutes` (default: 60 minutes).
+2. The Restaurant is not `SUSPENDED` or `CANCELLED`.
+3. The Table does **not** have a new `ACTIVE` `CustomerSession` (the table has not been reseated since the order expired).
+4. The original `CustomerSession` still exists in EXPIRED or COMPLETED state.
+
+**If any condition fails:** Auto-refund via Midtrans Refund API + notify merchant + log `AuditLog(action: LATE_WEBHOOK_REFUND)`.
+
+**If all conditions pass:** Revive + log `AuditLog(action: LATE_WEBHOOK_REVIVAL)`.
+
+**If the webhook arrives after `lateWebhookWindowMinutes` has elapsed:** Always auto-refund, regardless of table state. Kitchen may be closed; food may have been restocked.
+
+**Implementation:** See `docs/customer.md` § Late Webhook Handling for the complete flow and SQL. The `lateWebhookWindowMinutes` setting is configurable per merchant — an always-open café with a reliable connection may lower this to 15 minutes; a high-traffic restaurant may increase it to 90 minutes.
+
+**Status:** Decided. Implement in Step 15 (Midtrans integration).
+
+---
+
 ## CI/CD Pipeline
 
 > **For AI agents:** Set this up in Step 1 alongside the monorepo scaffold. Every commit to any branch should be validated automatically.

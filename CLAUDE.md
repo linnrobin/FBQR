@@ -10,17 +10,103 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-12
-Version        : 3.0
+Last updated   : 2026-03-13
+Version        : 3.4
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Phase 0 complete — final gap closed (v3.0):
-                 iOS Web Push limitation documented in two places:
-                   docs/merchant.md § Notifications: full note covering iOS 15 (no support),
-                   iOS 16.4+ (PWA/Add to Home Screen required), Android/desktop (standard),
-                   kitchen display iPad implications, and onboarding banner requirement.
-                   docs/architecture.md tech stack table: Web Push row updated with iOS
-                   limitation summary and cross-reference to merchant.md.
-                 All 100% of v2.0 content now present, refined, and consistent across docs/.
+Last completed : Pre-coding QA audit pass (v3.4) — 18 issues (4 critical, 5 high, 7 medium, 2 low) fixed:
+                 CRITICAL #1 — data-models.md OrderItem.status: added COMPLETED to enum
+                   (PENDING|PREPARING|READY|COMPLETED); clarified ⚖️ and ⚠️ are display
+                   states from needsWeighing/stock-out flags, NOT additional enum values.
+                 CRITICAL #2 — data-models.md Order model: explicit note that paymentMode
+                   (PAY_FIRST|PAY_AT_CASHIER) is NOT an Order field — it lives on
+                   MerchantSettings and is read at order creation time.
+                 CRITICAL #3 — ui-ux.md Payment Status Badges: split into two sub-tables —
+                   Payment.status badges (transaction outcome) vs Payment.paymentType badges
+                   (financial intent for BY_WEIGHT). BALANCE_CHARGE and BALANCE_REFUND are
+                   paymentType values, not status values. Added DEPOSIT paymentType badge.
+                   Added schema clarification note before the table.
+                 CRITICAL #4 — data-models.md Payment: BALANCE_REFUND amount is ALWAYS
+                   positive (>= 0); refund direction is indicated by paymentType alone.
+                   Removed misleading "(amount: negative)" comment. Added SIGN CONVENTION
+                   block to prevent aggregation bugs.
+                 HIGH #5 — data-models.md + platform-owner.md: added confirmedAt = NOW()
+                   to ALL Order → CONFIRMED transitions (webhook handler idempotency UPDATE,
+                   Close Register Mark as Paid). Kitchen elapsed timer formula now explicit:
+                   elapsed = NOW() - confirmedAt; null confirmedAt → timer shows "–".
+                 HIGH #6 — data-models.md WaiterRequest.notifyRoleId: changed "(FK? nullable)"
+                   to explicit "(string? FK → MerchantRole.id; nullable)".
+                 HIGH #7 — CronRunLog: confirmed already defined in Phase 2 Scaffolding table
+                   (no new fix needed; audit agent had false positive on this one).
+                 HIGH #8 — data-models.md MerchantBillingInvoice: expanded tree entry from
+                   3-field stub to complete schema (id, merchantId, subscriptionId,
+                   invoiceNumber, periodStart, periodEnd, amount, tax, total, status, dueAt,
+                   paidAt, pdfUrl, currency, createdAt, UNIQUE INDEX (merchantId, periodStart)).
+                 HIGH #9 — data-models.md Order.idempotencyKey: added scope clarification
+                   (global uniqueness is safe due to UUID entropy) and expiry semantics
+                   (application checks Order.createdAt < NOW() - 24h before returning existing
+                   Order; if expired, creates new Order).
+                 MEDIUM #10 — data-models.md OrderItem.kitchenStationId: explicit type
+                   clarification (stored as plain UUID string, NOT a live FK; preserves
+                   historical routing after station deactivation/rename).
+                 MEDIUM #11 — data-models.md MerchantSettings: added 9 previously scattered
+                   fields to the Phase 1 Prisma Additional Fields table:
+                   paymentMode, paymentTimeoutMinutes, maxPendingOrders, maxOrderValueIDR,
+                   maxActiveOrders, orderingPaused, orderingPausedMessage,
+                   lateWebhookWindowMinutes, eodCashCleanupHour.
+                 MEDIUM #12 — data-models.md Payment.provider: confirmed already documented
+                   with CASH/QRIS/EWALLET/VA/CARD rules (no change needed).
+                 MEDIUM #13 — data-models.md Phase 2 Scaffolding: added MenuCategory
+                   availableFrom/availableTo field specs (String? "HH:MM" WIB, date-fns-tz,
+                   both fields must be set together, overnight ranges supported).
+                 MEDIUM #14 — data-models.md Payment tree: expanded to full schema (added id,
+                   orderId, amount, currency, createdAt, updatedAt). Embedded SIGN CONVENTION
+                   and BY_WEIGHT SAME-CHANNEL CONSTRAINT blocks directly in the Payment entry.
+                 MEDIUM #15 — data-models.md Payment: added BY_WEIGHT SAME-CHANNEL CONSTRAINT
+                   block (DEPOSIT, BALANCE_CHARGE, BALANCE_REFUND must share method+provider;
+                   CASH BALANCE_REFUND: no Midtrans API, physical change, audit row retained).
+                 MEDIUM #16 — data-models.md + merchant.md: kitchenStationOverride clarified
+                   as live FK → KitchenStation.id (nullable); kitchen schema table in
+                   merchant.md updated with explicit FK types for all three fields.
+                 LOW #17 — data-models.md Restaurant.reservationEmail: confirmed already in
+                   Phase 2 Scaffolding table at correct location (no change needed).
+                 LOW #18 — data-models.md MerchantIntegration: confirmed stub already in Phase
+                   2 Scaffolding; credentials field encryption detail deferred to Phase 2.
+Previously: UI/UX specification pass (v3.3) — full design system + screen-specific specs added.
+                 CRITICAL #1 — data-models.md CustomerSession: full field table with expiresAt
+                   TTL formula (expiresAt = NOW() + tableSessionTimeoutMinutes) and updatedAt.
+                   expiresAt is required by the Session Cleanup Cron; missing it = runtime crash.
+                 CRITICAL #2 — data-models.md MerchantSettings additional fields: added
+                   tableSessionTimeoutMinutes (default 120 min) and enableDirtyState (default
+                   false) with MerchantSettings scope clarification (restaurant-level, shared
+                   by all branches; per-branch overrides deferred to Phase 2).
+                 HIGH #3 — platform-owner.md Session Cleanup Cron STEP 1b: added comment
+                   explaining AVAILABLE-table skip (only updates OCCUPIED tables — if no order
+                   was placed during the session the table is already AVAILABLE, skip it).
+                 HIGH #4 — platform-owner.md Session Cleanup Cron STEP 1b: added
+                   `cs.restaurantId = r.id` explicit cross-restaurant safety guard.
+                 HIGH #5 — merchant.md + customer.md BY_WEIGHT: BALANCE_REFUND for CASH
+                   deposits now explicit — no Midtrans API call; cashier returns physical
+                   change; BALANCE_REFUND Payment row still created for audit (method=CASH,
+                   midtransTransactionId=null). Same-channel constraint now covers BALANCE_REFUND
+                   in addition to BALANCE_CHARGE.
+                 HIGH #6 — data-models.md: SystemAdmin, SystemRole, SystemRoleAssignment now
+                   have full field specs (id, email, passwordHash, createdByAdminId, etc.).
+                 MEDIUM #7 — platform-owner.md Order Expiry Cron code block: "Every 5 minutes
+                   (UTC — no timezone conversion)" — removes all ambiguity.
+                 MEDIUM #8 — platform-owner.md: new QueueCounter Daily Reset & Pruning Cron
+                   spec — prunes rows older than 30 days; vercel.json updated with all 6 crons;
+                   cron frequency table updated.
+                 MEDIUM #10 — data-models.md MerchantSettings additional fields: explicit
+                   scope note (restaurant-level, not per-branch; per-branch Phase 2).
+                 MEDIUM #11 — data-models.md Order Status Lifecycle: PENDING_CASH clarified
+                   as Payment status, not Order status; three CONFIRMED paths documented.
+                 MEDIUM #12 — already covered by CRITICAL #2 above.
+                 LOW #13 — merchant.md staff:manage: Phase 2 sub-permissions note added.
+                 LOW #14 — customer.md Order Status Lifecycle: three CONFIRMED paths added
+                   with cross-reference to ADR-025 and platform-owner.md Close Register.
+                 LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
+                   revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
+                 Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
 Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
@@ -171,6 +257,7 @@ Do not try to finish one more thing. Stop, commit, update CURRENT STATE and docs
 | `docs/merchant.md` | Merchant RBAC, onboarding wizard, branding, menu management, kitchen routing, promotions, table management, analytics dashboard, delivery integration (merchant side) | Menu field specs, kitchen display format, role templates |
 | `docs/customer.md` | QR flow (all 9 sections), customer session, order lifecycle, payment flow, customer UI requirements, loyalty (customer side), AI recommendations | QR validation steps, payment→order mapping, customer UI rules |
 | `docs/architecture.md` | All ADRs, authentication model, tech stack decisions, competitive research, feature backlog, open questions | ADR content, auth table, backlog items |
+| `docs/ui-ux.md` | Global design system: color palette, status badge colors, typography, spacing, border radius, shadows, z-index, component patterns (cards, tables, forms, badges, buttons, modals, toasts, loading/empty states), navigation structure, responsive rules, animation rules, language/copy conventions, accessibility baseline | Specific table columns, form field order, chart types for individual screens (those belong in domain docs) |
 
 ### Step → Doc routing table
 
@@ -182,32 +269,33 @@ Read **all listed files** before writing code for a step.
 | **Step 2** | Prisma schema + migrations + seed | `data-models.md` ← primary; `architecture.md` (ADRs explaining why) |
 | **Step 3** | Auth: JWT, PIN auth, NextAuth | `data-models.md` (Merchant, Staff, Customer models); `architecture.md` (auth model, ADR-005) |
 | **Step 4** | Dynamic RBAC — role/permission engine | `merchant.md` (RBAC section); `platform-owner.md` (FBQRSYS permissions); `architecture.md` (ADR-005) |
-| **Step 5** | FBQRSYS — merchant management UI | `platform-owner.md` ← primary; `data-models.md` (Merchant model) |
-| **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs) |
-| **Step 7** | Merchant onboarding — trial/free tier | `merchant.md` (onboarding wizard, checklist) |
-| **Step 8** | Restaurant branding + CSS injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu) |
-| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec) |
-| **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015) |
-| **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec) |
-| **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, layouts) |
-| **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs) |
-| **Step 14** | Item detail modal: variants, add-ons | `customer.md`; `merchant.md` (variant/addon field specs) |
-| **Step 15** | Cart + pre-invoice + Midtrans + cash | `customer.md` ← primary; `data-models.md` (Payment model) |
-| **Step 16** | Order tracking + real-time + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types) |
-| **Step 17** | Takeaway/counter mode, queue display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter) |
+| **Step 5** | FBQRSYS — merchant management UI | `platform-owner.md` ← primary; `data-models.md` (Merchant model); `ui-ux.md` (design system + FBQRSYS screen specs in platform-owner.md § UI Specifications) |
+| **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs); `ui-ux.md` (billing screen specs in platform-owner.md § UI Specifications) |
+| **Step 7** | Merchant onboarding — trial/free tier | `merchant.md` (onboarding wizard, checklist); `ui-ux.md` (wizard screen spec in merchant.md § UI Specifications) |
+| **Step 8** | Restaurant branding + CSS injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu); `ui-ux.md` (color tokens, apps/menu theming) |
+| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec); `ui-ux.md` (menu list + item form specs in merchant.md § UI Specifications) |
+| **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015); `ui-ux.md` (floor map + QR modal specs in merchant.md § UI Specifications) |
+| **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec); `ui-ux.md` (promotions list + form specs in merchant.md § UI Specifications) |
+| **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, layouts); `ui-ux.md` ← design system (color tokens, apps/menu branding override, Grid layout screen spec in customer.md § UI Specifications) |
+| **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs); `ui-ux.md` (List/Bundle/Spotlight screen specs in customer.md § UI Specifications) |
+| **Step 14** | Item detail modal: variants, add-ons | `customer.md`; `merchant.md` (variant/addon field specs); `ui-ux.md` (item detail bottom sheet spec in customer.md § UI Specifications) |
+| **Step 15** | Cart + pre-invoice + Midtrans + cash | `customer.md` ← primary; `data-models.md` (Payment model); `ui-ux.md` (cart sheet + checkout + payment screen specs in customer.md § UI Specifications) |
+| **Step 16** | Order tracking + real-time + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types); `ui-ux.md` (order tracking screen spec in customer.md § UI Specifications) |
+| **Step 17** | Takeaway/counter mode, queue display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter); `ui-ux.md` (queue display screen spec in customer.md § UI Specifications) |
 | **Step 18** | Push notifications — Web Push API | `architecture.md` (push notification design); `merchant.md` (notification routing) |
 | **Step 19** | Invoice + MerchantBillingInvoice PDF | `platform-owner.md` (MerchantBillingInvoice); `merchant.md` (Invoice format) |
-| **Step 20** | merchant-kitchen: queue, priorities, stations | `merchant.md` ← primary (kitchen display, station routing, priority) |
-| **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, export) |
+| **Step 20** | merchant-kitchen: queue, priorities, stations | `merchant.md` ← primary (kitchen display, station routing, priority); `ui-ux.md` (kitchen display dark theme tokens + order card spec in merchant.md § UI Specifications) |
+| **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, export); `ui-ux.md` (analytics dashboard chart types + stat card specs in merchant.md § UI Specifications) |
 | **Step 22** | Delivery platform integration | `merchant.md` (delivery flows); `architecture.md` (ADR-012, webhook idempotency) |
 | **Step 23** | AI recommendation engine | `customer.md` (AI customer-facing); `merchant.md` (AI settings) |
-| **Step 24** | Audit log — middleware + viewer UI | `platform-owner.md` ← primary; `data-models.md` (AuditLog model) |
+| **Step 24** | Audit log — middleware + viewer UI | `platform-owner.md` ← primary; `data-models.md` (AuditLog model); `ui-ux.md` (audit log screen spec in platform-owner.md § UI Specifications) |
 | **Step 25** | Merchant loyalty + customer account | `merchant.md` (loyalty config); `customer.md` (customer account, loyalty balance) |
 | **Step 26** | Platform loyalty + gamification | `customer.md` (loyalty tiers); `platform-owner.md` (platform loyalty) |
 | **Step 27** | WhatsApp Business integration | `platform-owner.md` (MerchantIntegration model); `merchant.md` (WA notification flows) |
 | **Step 28** | Remaining backlog | `architecture.md` (backlog); read domain docs per specific item |
 | **Any step** | Schema cross-check | `data-models.md` — confirm model fields before writing Prisma queries |
 | **Any step** | Design question / ADR lookup | `architecture.md` — check if the question was already decided |
+| **Any UI step** | Design system reference | `ui-ux.md` — colors, typography, component patterns, navigation, responsive rules |
 
 ### Write rules — when to update docs/ files
 
@@ -223,6 +311,10 @@ Read **all listed files** before writing code for a step.
 | Made a new architecture decision (new package, pattern, constraint) | `docs/architecture.md` — add an ADR |
 | Resolved an open question | `docs/architecture.md` (move to Resolved); update CLAUDE.md CURRENT STATE |
 | Discovered a new doc gap | CLAUDE.md `Known doc gaps` in CURRENT STATE |
+| Changed global colors, typography, spacing, component patterns, navigation structure, or animation rules | `docs/ui-ux.md` |
+| Changed screen-specific UI (table columns, form field order, chart types) for FBQRSYS screens | `docs/platform-owner.md` § UI Specifications |
+| Changed screen-specific UI for merchant-pos or kitchen screens | `docs/merchant.md` § UI Specifications |
+| Changed screen-specific UI for customer menu screens | `docs/customer.md` § UI Specifications |
 
 ### Conflict resolution
 

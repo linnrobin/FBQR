@@ -57,8 +57,22 @@ The following must always be logged — use a shared `auditLog()` helper, never 
 ```
 ── PLATFORM ──────────────────────────────────────────────────────────
 SystemAdmin          ← FBQRSYS admin accounts (owner + staff with dynamic roles)
+                       id (string UUID PK)
+                       email (string, unique)
+                       passwordHash (string)     — bcrypt; min 60 chars
+                       createdAt (datetime)
+                       createdByAdminId (string? FK → SystemAdmin) — who created this admin;
+                                                 null for the seed-bootstrapped Platform Owner
 SystemRole           ← User-created FBQRSYS roles (name, description, [permissions])
+                       id (string UUID PK)
+                       name (string)             — e.g. "Platform Owner", "Merchant Manager"
+                       permissions (string[])    — array of permission keys (e.g. "merchants:manage")
+                       createdAt (datetime)
 SystemRoleAssignment ← Links SystemAdmin → SystemRole
+                       id (string UUID PK)
+                       systemAdminId (string FK → SystemAdmin)
+                       systemRoleId  (string FK → SystemRole)
+                       createdAt (datetime)
 SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
 PlatformSettings     ← Singleton (id=1). Platform-level config: support contacts, branding,
                        billing defaults, feature flags. Never hardcode these values — read from DB.
@@ -76,7 +90,23 @@ Merchant             ← Restaurant owner account (email + hashed password)
   │
   ├── MerchantSubscription   ← Active plan (planId, cycle, currentPeriodEnd, autoRenew)
   │     └── MerchantBillingInvoice ← FBQR → merchant invoices (NOT customer invoices)
-  │                                   (invoiceNumber, amount, dueAt, paidAt, pdfUrl)
+  │                                   id (string UUID PK)
+  │                                   merchantId (string FK → Merchant.id)
+  │                                   subscriptionId (string FK → MerchantSubscription.id)
+  │                                   invoiceNumber (string unique) e.g. "FBQR-202603-{merchantSlug}"
+  │                                   periodStart (datetime) — subscription period start
+  │                                   periodEnd (datetime)   — subscription period end
+  │                                   amount (int) — subscription fee in IDR (excl. tax)
+  │                                   tax (int) — PPN 11% of amount
+  │                                   total (int) — amount + tax
+  │                                   status (enum: PENDING | PAID | OVERDUE | CANCELLED)
+  │                                   dueAt (datetime) — payment deadline
+  │                                   paidAt (datetime?) — when payment was confirmed
+  │                                   pdfUrl (string?) — Supabase Storage URL (signed, expiring)
+  │                                   currency (string default "IDR")
+  │                                   createdAt (datetime)
+  │                                   UNIQUE INDEX: (merchantId, periodStart) — idempotency guard
+  │                                     prevents duplicate invoice creation from cron double-fire
   │
   └── Restaurant             ← Exactly one per Merchant
         ├── RestaurantBranding   ← Logo, colors, font, layout — shown to customers only
@@ -89,8 +119,14 @@ Merchant             ← Restaurant owner account (email + hashed password)
         │     └── Table          ← Each table (QR token, status: AVAILABLE/OCCUPIED/RESERVED/DIRTY/CLOSED)
         ├── MenuCategory         ← layout override, availableFrom/availableTo, kitchenStationId
         │     └── MenuItem       ← Price, image, allergens, isHalal, isVegetarian,
-        │           │              estimatedPrepTime, stockCount, isAvailable
-        │           │              kitchenStationOverride (optional per-item station override)
+        │           │              estimatedPrepTime, stockCount, isAvailable,
+        │           │              autoResetAvailability, priceType (FIXED|BY_WEIGHT)
+        │           │              kitchenStationOverride (string? FK → KitchenStation.id; nullable;
+  │           │                if set, overrides MenuCategory.kitchenStationId for this item)
+        │           │              CONSTRAINT: autoResetAvailability and stockCount are mutually
+        │           │              exclusive. The API must return a validation error if both are
+        │           │              set. autoResetAvailability is ignored (treated as false) when
+        │           │              stockCount IS NOT NULL. See merchant.md for full field spec.
         │           ├── MenuItemVariant   ← e.g. Small/Medium/Large + price delta
         │           └── MenuItemAddon     ← e.g. Extra Cheese (+5k), No Onion (0)
         ├── Promotion            ← Discounts, combos (linked to MenuItems)
@@ -101,11 +137,19 @@ Merchant             ← Restaurant owner account (email + hashed password)
 Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPLETED | CANCELLED | EXPIRED
   │  orderType: DINE_IN | TAKEAWAY | DELIVERY
   │  branchId (string) — FK to Branch; required; enables per-branch reporting
+  │  NOTE: paymentMode (PAY_FIRST | PAY_AT_CASHIER) is NOT a field on Order.
+  │        It is read from MerchantSettings.paymentMode at order creation and
+  │        payment processing time. The Order model has no paymentMode column.
   │  confirmedAt (datetime?) — set in the same DB transaction that sets status = CONFIRMED;
   │                            null until confirmed; used as start time for kitchen elapsed timer
   │  idempotencyKey (string?) — client-generated UUID sent with "Place Order" request;
-  │                              unique index; expires 24h; prevents duplicate orders on
-  │                              double-tap or network retry
+  │                              unique index (global across all Orders — safe because UUIDs
+  │                              are universally unique; two customers at two restaurants
+  │                              generating the same UUID is astronomically unlikely);
+  │                              PostgreSQL UNIQUE constraint permits multiple NULL values
+  │                              (no partial index needed); expires 24h (application checks
+  │                              Order.createdAt < NOW() - 24h before returning existing
+  │                              Order — if expired, creates a new Order instead)
   │  queueNumber (int) — auto-increments per branch per day; ALL order types receive a number
   │                       (DINE_IN, TAKEAWAY, DELIVERY); for dine-in the table name is primary
   │                       in the UI hierarchy, but queueNumber is always present for kitchen
@@ -120,7 +164,10 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │
   ├── OrderItem      ← unitPrice (int), variantPriceDelta (int), addonPriceTotal (int), lineTotal (int)
   │                    variantSnapshot (JSON), addonSnapshot (JSON) — metadata only
-  │                    kitchenPriority (int, per-station), kitchenStationId (snapshot)
+  │                    kitchenPriority (int, per-station)
+  │                    kitchenStationId (string — snapshot of KitchenStation.id at order time;
+  │                      stored as a plain UUID string, NOT a live FK; preserves historical
+  │                      routing even if the station is later deactivated or renamed)
   │                    NOTE: tax and service charge are applied at Order level, not per OrderItem.
   │                    The Order record stores subtotal, taxAmount, serviceChargeAmount, grandTotal
   │                    as computed at checkout time. This is intentional — Indonesian PPN applies
@@ -130,7 +177,7 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │     cancellationReason: CUSTOMER_REQUEST | PAYMENT_FAILED | MERCHANT_CANCEL | SYSTEM_EXPIRED | REFUND
   ├── WaiterRequest  ← Customer pressed a waiter-call button; resolved by staff
   │                    branchId (FK), tableId (FK)
-  │                    notifyRoleId (FK? nullable) — when set, only staff with that MerchantRole receive
+  │                    notifyRoleId (string? FK → MerchantRole.id; nullable) — when set, only staff with that MerchantRole receive
   │                      the push alert; null = all branch staff notified. Merchants configure per-type
   │                      routing in MerchantSettings (e.g. BILL alerts → Cashier role only,
   │                      CALL alerts → all). Phase 1: always null (notify all). Phase 2 UI: role-routing
@@ -157,7 +204,11 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                    taxAmount, serviceChargeAmount, grandTotal at creation time — these
   │                    values serve as the pre-invoice data. Do not create a PreInvoice table.
   ├── Invoice        ← Generated after payment confirmed — PDF, legal receipt
-  └── Payment        ← method: QRIS | EWALLET | VA | CARD | CASH
+  └── Payment        ← id (string UUID PK)
+                        orderId (string FK → Order.id; required)
+                        amount (int) — IDR; ALWAYS positive (>= 0). See SIGN CONVENTION below.
+                        currency (string default "IDR")
+                        method: QRIS | EWALLET | VA | CARD | CASH
                         provider: GOPAY | OVO | DANA | SHOPEEPAY | BCA | MANDIRI | BNI | OTHER | null
                         Rules: CASH → provider always null; QRIS → provider optional (Midtrans may
                           return which e-wallet was used — store it if available; null if unknown);
@@ -166,9 +217,24 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
                           FULL — standard single-charge order (default)
                           DEPOSIT — upfront deposit for BY_WEIGHT item
                           BALANCE_CHARGE — second charge after weighing (remaining balance > 0)
-                          BALANCE_REFUND — refund row when deposit > finalLineTotal (amount: negative)
+                          BALANCE_REFUND — refund row when deposit > finalLineTotal
+                        SIGN CONVENTION: Payment.amount is ALWAYS a positive integer (>= 0).
+                          For BALANCE_REFUND, the amount stored is the refund amount as a
+                          positive number. The refund direction (money flows back to customer)
+                          is communicated by paymentType = BALANCE_REFUND alone. Never store
+                          negative values in Payment.amount — this prevents sign-convention
+                          bugs in aggregation queries (e.g. SUM(amount) for revenue reporting).
+                        BY_WEIGHT SAME-CHANNEL CONSTRAINT: For any Order with multiple Payments
+                          (DEPOSIT + BALANCE_CHARGE or BALANCE_REFUND), all Payments must use
+                          the same method and provider as the DEPOSIT Payment. The API reads
+                          method and provider from the DEPOSIT row and enforces matching at
+                          INSERT time. For BALANCE_REFUND via CASH: no Midtrans API call;
+                          cashier returns physical change; BALANCE_REFUND Payment row is still
+                          created for audit (method = CASH, midtransTransactionId = null).
                         status: PENDING | PENDING_CASH | SUCCESS | FAILED | EXPIRED | REFUNDED
                         midtransTransactionId (string?) — unique; idempotency guard on webhook
+                        createdAt (datetime)
+                        updatedAt (datetime)
 
 ── CUSTOMERS ─────────────────────────────────────────────────────────
 Customer             ← Optional registered account (email / Google OAuth)
@@ -176,12 +242,24 @@ Customer             ← Optional registered account (email / Google OAuth)
   └── MerchantLoyaltyBalance  ← Per-restaurant points + earned title
 
 CustomerSession      ← Scoped to Restaurant + Table + QR token
+  │  id (string UUID PK)
+  │  restaurantId (string FK → Restaurant.id)  — owning restaurant
+  │  tableId (string FK → Table.id)            — physical table this session is for
+  │  customerId (string? FK → Customer.id)     — null for anonymous sessions
   │  status: ACTIVE | COMPLETED | EXPIRED
-  │  ipAddress (string)       — client IP at session creation
-  │  userAgent (string)       — browser/device fingerprint
-  │  deviceHash (string?)     — optional hashed device identifier for fraud detection
-  │  sessionCookie (string)   — unique cookie value stored client-side; allows page refresh
-  │                             recovery without re-scanning QR
+  │  sessionCookie (string)    — unique; httpOnly cookie stored client-side; enables page-refresh
+  │                               recovery without re-scanning QR
+  │  expiresAt (datetime)      — set at creation: NOW() + MerchantSettings.tableSessionTimeoutMinutes
+  │                               (default 120 min). Extended while any OrderItem.needsWeighing = true
+  │                               so a BY_WEIGHT session never expires before staff enters the weight.
+  │                               Session Cleanup Cron queries `WHERE expiresAt < NOW()`.
+  │                               THIS FIELD MUST EXIST IN PRISMA SCHEMA — the cron will fail at runtime
+  │                               if it is absent.
+  │  ipAddress (string)        — client IP at session creation
+  │  userAgent (string)        — browser/device User-Agent string
+  │  deviceHash (string?)      — optional hashed device fingerprint for fraud detection
+  │  createdAt (datetime)      — session start timestamp
+  │  updatedAt (datetime)      — auto-updated by Prisma on every write
   └── (multiple Orders can be linked to one CustomerSession)
 
 MerchantLoyaltyProgram ← Per-restaurant loyalty config (name, IDR per point, redemption rate,
@@ -211,6 +289,13 @@ PENDING ──┬──► CONFIRMED ──► PREPARING ──► READY ──�
           │
           └──► EXPIRED    (no payment webhook within timeout; terminal, silent)
 ```
+
+**Three paths from PENDING → CONFIRMED:**
+1. **Midtrans webhook** (`paymentMode = PAY_FIRST`) — webhook handler atomically sets Order CONFIRMED + Payment SUCCESS in one transaction.
+2. **Cashier confirms** (`paymentMode = PAY_AT_CASHIER`) — cashier taps [Mark as Paid] in Close Register. Paired Payment has `status = PENDING_CASH` while the Order remains `PENDING`.
+3. **Late webhook revival** — a Midtrans SUCCESS webhook arrives for an order that already expired. If revival conditions pass (see `docs/customer.md` § Late Webhook Handling), the order is revived to CONFIRMED.
+
+> **`PENDING_CASH` is a Payment status, not an Order status.** When `paymentMode = PAY_AT_CASHIER`, the Order is `PENDING` and its paired Payment is `PENDING_CASH`. "A PENDING_CASH order" is shorthand for "an Order with a PENDING_CASH Payment." The Order never gets its own `PENDING_CASH` status — only Payment does.
 
 ### Valid order status transitions (state machine)
 
@@ -279,7 +364,8 @@ EXPIRED     → PENDING order where no payment confirmation arrived within timeo
 
 **Idempotency rule — use atomic update, not a read-then-write:**
 ```sql
-UPDATE "Order" SET status = 'CONFIRMED' WHERE id = $orderId AND status = 'PENDING'
+UPDATE "Order" SET status = 'CONFIRMED', confirmedAt = NOW()
+WHERE id = $orderId AND status = 'PENDING'
 -- check affectedRows: if 0, webhook is duplicate → log and return HTTP 200 immediately
 ```
 A plain read-then-write (`SELECT` status → `UPDATE` if PENDING) has a race condition under concurrent Midtrans retries: two workers can both read `PENDING` before either writes `CONFIRMED`. The atomic `WHERE status = 'PENDING'` clause is the correct guard. This prevents duplicate kitchen pushes even under concurrent webhook delivery.
@@ -288,8 +374,11 @@ A plain read-then-write (`SELECT` status → `UPDATE` if PENDING) has a race con
 ```
 BEGIN TRANSACTION
   1. INSERT or verify Payment row (unique constraint on midtransTransactionId for idempotency)
-  2. UPDATE Order SET status = 'CONFIRMED' WHERE id = $orderId AND status = 'PENDING'
+  2. UPDATE Order SET status = 'CONFIRMED', confirmedAt = NOW()
+        WHERE id = $orderId AND status = 'PENDING'
      → if affectedRows = 0: webhook is duplicate; ROLLBACK; return HTTP 200
+     → confirmedAt is used as the start time for the kitchen elapsed timer
+       (merchant-kitchen shows elapsed = NOW() - confirmedAt; null confirmedAt → timer shows "–")
   3. For each OrderItem with stockCount set:
      UPDATE MenuItem SET stockCount = stockCount - qty WHERE id = $itemId AND stockCount >= qty
      → if any affectedRows = 0: mark OrderItem with ⚠️ stock-out flag (handled by cashier)
@@ -408,11 +497,13 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Merchant` | `onboardingChecklist` | JSON default `[]` | Setup checklist tracking |
 | `Merchant` | `wizardCompletedAt` | datetime? | Onboarding analytics |
 | `Staff` | `seenCoachMarks` | string[] default `[]` | In-app coach marks dismissed |
-| `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY`) nullable | Per-item kitchen status |
+| `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY\|COMPLETED`) nullable | Per-item kitchen status. Phase 1: always null. Phase 2: kitchen staff can mark individual items done. `COMPLETED` means the item is done; the Order itself moves to `READY` only when all items are `COMPLETED`. **Note:** `⚖️ Needs weighing` and `⚠️ Stock-out` are display states derived from `OrderItem.needsWeighing` (bool) and a stock-out flag set during the webhook transaction — they are NOT enum values on this field. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
 | `Branch` | `openingHours` | JSON? | Day-of-week schedule — informational only, does not block orders. Schema: `{ "mon": { "open": "09:00", "close": "22:00", "isClosed": false }, ... }` Keys: `mon tue wed thu fri sat sun`. Displayed to customers on the menu app if non-null. |
+| `MenuCategory` | `availableFrom` | String? | Time-of-day availability start in `HH:MM` format (24h, WIB). Example: `"06:00"` for a Breakfast category. `null` = always available. The menu API compares current WIB time against this range using `date-fns-tz` with `Asia/Jakarta`. Phase 1: UI allows setting; Phase 2: smarter time-window UI. |
+| `MenuCategory` | `availableTo` | String? | Time-of-day availability end in `HH:MM` format (24h, WIB). Example: `"11:00"` for a Breakfast category. `null` = always available. Must be > `availableFrom`; overnight ranges (e.g. `"22:00"` to `"02:00"`) are supported by comparing modularly. Both fields must be set together — setting only one is a validation error. |
 | `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
 | `Restaurant` | `whatsappNumber` | String? | Contact WhatsApp number (E.164 format, e.g. `+6281234567890`). Displayed in `apps/menu` footer and "Contact Restaurant" CTA. |
 | `Restaurant` | `instagramHandle` | String? | Instagram handle without `@`, e.g. `fbqr.app`. Displayed in `apps/menu` footer. |
@@ -420,6 +511,18 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Restaurant` | `googleMapsUrl` | String? | Google Maps embed or share link. Rendered as "Get Directions" link in `apps/menu`. |
 | `Restaurant` | `reservationEmail` | String? | Email for reservation enquiries. Displayed on the menu app if set. |
 | `Restaurant` | `cuisineType` | String? | Cuisine category label (e.g. "Seafood", "Japanese", "Warung Padang"). Free text; used in future directory/search features. |
+| `MerchantSettings` | `restaurantId` | String (FK, unique) | One-to-one with Restaurant. Scope: **restaurant-level** — all branches share the same MerchantSettings. Per-branch overrides are a Phase 2 feature (deferred). |
+| `MerchantSettings` | `paymentMode` | Enum: `PAY_FIRST \| PAY_AT_CASHIER` | Default: `PAY_FIRST`. Controls whether customers pay via Midtrans before the order is confirmed (`PAY_FIRST`) or a cashier confirms cash payment manually (`PAY_AT_CASHIER`). **Read from this field at order creation time — never stored on the Order row itself.** |
+| `MerchantSettings` | `paymentTimeoutMinutes` | Int | Default: `15`. Minutes before a PENDING Midtrans order is expired by the Order Expiry Cron. Also passed as `custom_expiry` to Midtrans at order creation to keep FBQR and Midtrans timeouts in sync. |
+| `MerchantSettings` | `maxPendingOrders` | Int | Default: `3`. Maximum number of PENDING orders per CustomerSession at any time. Fraud / kitchen-overwhelm guard. Configurable per merchant. |
+| `MerchantSettings` | `maxOrderValueIDR` | Int | Default: `5000000` (Rp 5,000,000). Maximum allowed grandTotal per order. Orders exceeding this limit are rejected at the API. Configurable per merchant. |
+| `MerchantSettings` | `maxActiveOrders` | Int? | Default: `null` (no cap). When set, the order creation API atomically rejects new orders if `COUNT(orders WHERE status IN (CONFIRMED, PREPARING)) >= maxActiveOrders`. Prevents kitchen overwhelm for small operations. |
+| `MerchantSettings` | `orderingPaused` | Boolean | Default: `false`. When `true`, the order creation API rejects all new orders with HTTP 503 and returns `orderingPausedMessage` to display in `apps/menu`. |
+| `MerchantSettings` | `orderingPausedMessage` | String? | Default: `null`. Custom message shown to customers when `orderingPaused = true` (e.g. "Sedang tutup, buka kembali jam 16:00"). Falls back to a generic message if null. |
+| `MerchantSettings` | `lateWebhookWindowMinutes` | Int | Default: `60`. Minutes after order expiry during which a late Midtrans SUCCESS webhook may still revive the order (see ADR-025 Late Webhook Revival). Beyond this window, the webhook triggers auto-refund instead. |
+| `MerchantSettings` | `eodCashCleanupHour` | Int | Default: `3` (3 AM WIB, 0–23 range). Hour of day in WIB timezone at which the EOD PENDING_CASH Cleanup Cron runs for this merchant. Allows merchants to configure their own end-of-day cutoff. |
+| `MerchantSettings` | `enableDirtyState` | Boolean | Default: `false`. When `false`: session end moves table `OCCUPIED → AVAILABLE`. When `true`: session end moves table `OCCUPIED → DIRTY` — staff must mark clean before the table is bookable again. |
+| `MerchantSettings` | `tableSessionTimeoutMinutes` | Int | Default: `120`. Minutes until a `CustomerSession` expires from creation. Used at session creation: `expiresAt = NOW() + tableSessionTimeoutMinutes`. Affects Session Cleanup Cron and session expiry behavior. |
 | `MerchantSettings` | `pushNotifications` | JSON | Per-event Web Push toggle map. Schema: `{ "newOrder": true, "waiterCall": true, "lowStock": false, "billingReminder": true }`. Default: all true. Phase 1: always notify all; Phase 2: per-role routing reads this. |
 | `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
@@ -493,6 +596,7 @@ Define these indexes at migration time (Step 2). Missing indexes on these tables
 | `Payment` | `(midtransTransactionId)` — unique | Idempotency guard; DB-level duplicate prevention |
 | `CustomerSession` | `(tableId, status)` | Finding active session for a table |
 | `CustomerSession` | `(sessionCookie)` | Cookie-based session lookup on page load |
+| `Order` | `(platformName, platformOrderId)` — unique partial `WHERE platformOrderId IS NOT NULL` | Delivery webhook idempotency — prevents duplicate orders from GrabFood/GoFood/ShopeeFood webhook retries. Note: Prisma does not support raw partial index syntax; implement via `@@unique([platformName, platformOrderId])` with application-level guard (skip insert if `platformOrderId IS NULL`). |
 | `MenuItem` | `(categoryId, isAvailable, deletedAt)` | Menu render query |
 | `OrderItem` | `(orderId)` | Fetching items for an order |
 | `OrderItem` | `(kitchenStationId, kitchenPriority)` | Kitchen display per-station query |

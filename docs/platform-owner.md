@@ -150,9 +150,11 @@ Renewal date → payment attempted (auto-charge via saved method, or manual invo
 | Cron Job | Frequency | Vercel Tier Required |
 |---|---|---|
 | Daily billing (billing reminders, renewal, trial expiry) | Daily `00:01 WIB` | Hobby (free) |
-| Order expiry (PENDING → EXPIRED after timeout) | Every 5 minutes | **Pro required** |
+| Order expiry (PENDING → EXPIRED after timeout) | Every 1 min (Pro) / 5 min (Hobby) | **Pro recommended** |
 | `autoResetAvailability` (reset items to available at midnight) | Daily `00:05 WIB` | Hobby (free) |
-| Session cleanup (EXPIRED CustomerSessions older than 7 days) | Daily `01:00 WIB` | Hobby (free) |
+| QueueCounter pruning (delete rows older than 30 days) | Daily `00:02 WIB` | Hobby (free) |
+| Session cleanup (expire stale CustomerSessions + fix ghost-occupied tables) | Daily `01:00 WIB` | Hobby (free) |
+| EOD PENDING_CASH cleanup (safety-net batch cancel) | Nightly `eodCashCleanupHour WIB` (default 03:00) | Hobby (free) |
 
 > **Action:** Upgrade to Vercel Pro before implementing Step 15 (payment integration). Budget ~$20/mo.
 > The order-expiry cron is not optional — without it, PENDING orders from abandoned payment sessions accumulate indefinitely, block table sessions, and inflate stock hold counts.
@@ -172,10 +174,12 @@ export async function GET(req: Request) {
 ```json
 {
   "crons": [
-    { "path": "/api/cron/billing",        "schedule": "1 17 * * *"  },
-    { "path": "/api/cron/order-expiry",   "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/availability-reset", "schedule": "5 17 * * *" },
-    { "path": "/api/cron/session-cleanup","schedule": "0 18 * * *"  }
+    { "path": "/api/cron/billing",              "schedule": "1 17 * * *"  },
+    { "path": "/api/cron/order-expiry",         "schedule": "*/1 * * * *" },
+    { "path": "/api/cron/availability-reset",   "schedule": "5 17 * * *"  },
+    { "path": "/api/cron/queue-counter-prune",  "schedule": "2 17 * * *"  },
+    { "path": "/api/cron/session-cleanup",      "schedule": "0 18 * * *"  },
+    { "path": "/api/cron/eod-cash-cleanup",     "schedule": "0 20 * * *"  }
   ]
 }
 ```
@@ -218,7 +222,9 @@ STEP 2 — Attempt auto-renewal for subscriptions due today
     │       UPDATE MerchantSubscription SET
     │         currentPeriodEnd = currentPeriodEnd + interval(billingCycle),
     │         lastRenewalAt = NOW(),
-    │         failedAttempts = 0
+    │         failedAttempts = 0,
+    │         reminderSentAt = NULL,       -- ← REQUIRED: reset so next cycle's reminders fire
+    │         reminderSentAt3d = NULL      -- ← REQUIRED: reset so 3-day reminder fires next cycle
     │       INSERT MerchantBillingInvoice(status: PAID, paidAt: NOW(), ...)
     │       AuditLog(action: CREATE, entity: MerchantBillingInvoice, actorType: SYSTEM)
     │     COMMIT
@@ -268,10 +274,12 @@ STEP 4 — Send 3-day-before reminders (subset of STEP 1 for closer window)
 
 ### Order Expiry Cron Specification
 
-Runs every 5 minutes (requires Vercel Pro). Transitions PENDING orders past their payment timeout to EXPIRED.
+Runs on a short interval to transition PENDING orders past their payment timeout to EXPIRED.
+
+> **Vercel plan note:** Vercel Hobby supports only daily/hourly crons. **Vercel Pro** supports 1-minute intervals. Recommended: run every **1 minute** on Pro. If constrained to Hobby, a 5-minute interval is acceptable because the default `paymentTimeoutMinutes` is 15 minutes — worst-case expiry lag is 5 minutes, which is tolerable. **Upgrade to Vercel Pro before Step 15 (payment integration).** Budget ~$20/mo.
 
 ```
-Every 5 minutes:
+Every 5 minutes (UTC — no timezone conversion; runs globally at UTC intervals):
 
 STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
   SELECT o.id, o.customerSessionId
@@ -319,6 +327,36 @@ STEP 2 — Log run to CronRunLog
 
 **Constraint reminder:** If `stockCount IS NOT NULL` AND `autoResetAvailability = true`, the API must return a validation error at save time — these flags are mutually exclusive. The cron skips `stockCount IS NOT NULL` rows as an additional guard.
 
+### QueueCounter Daily Reset & Pruning Cron Specification
+
+Runs daily at `00:02 WIB` (`17:02 UTC`), immediately after the `autoResetAvailability` cron. Ensures a fresh counter row exists for each branch for the new day, and prunes old counter rows to prevent unbounded table growth.
+
+> **`QueueCounter` is not auto-reset** — a new counter row is created lazily on the first order of each day (by the Order creation API, via `SELECT FOR UPDATE`). This cron is only needed for **pruning** old rows. It does NOT need to pre-create rows (the lazy creation in the Order API handles that).
+
+```
+Daily at 00:02 WIB:
+
+STEP 1 — Prune QueueCounter rows older than 30 days
+  DELETE FROM QueueCounter
+  WHERE date < (CURRENT_DATE AT TIME ZONE 'Asia/Jakarta') - INTERVAL '30 days'
+  RETURNING branchId, date
+
+  -- Note: 30-day window retains enough history for monthly reporting queries.
+  -- CURRENT_DATE AT TIME ZONE 'Asia/Jakarta' ensures we compare WIB dates, not UTC dates.
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'queue-counter-prune', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `DELETE WHERE date < ...` is inherently idempotent — re-running deletes nothing if already pruned.
+
+**Scale note:** At ~365 rows/branch/year, with 100 branches this is 36,500 rows/year. Without pruning, this grows indefinitely. The 30-day retention window balances history depth against storage growth.
+
+**`vercel.json` addition:**
+```json
+{ "path": "/api/cron/queue-counter-prune", "schedule": "2 17 * * *" }
+```
+
 ### Session Cleanup Cron Specification
 
 Runs daily at `01:00 WIB` (`18:00 UTC`). **Leak-recovery fallback only** — not the primary mechanism.
@@ -333,6 +371,29 @@ STEP 1 — Expire stale ACTIVE CustomerSessions past their TTL
   SET status = 'EXPIRED'
   WHERE status = 'ACTIVE'
     AND expiresAt < NOW()
+  RETURNING tableId, restaurantId   -- capture for STEP 1b
+
+STEP 1b — Update Table.status for newly expired sessions
+  -- Without this step, tables stay OCCUPIED indefinitely after session timeout:
+  -- staff see ghost-occupied tables on the floor map and cannot reassign them.
+  --
+  -- Only updates OCCUPIED tables. If t.status = AVAILABLE (customer scanned QR but
+  -- never placed an order), the table is already in the correct state — skip it.
+  -- This prevents erroneously touching RESERVED or CLOSED tables.
+  UPDATE "Table" t
+  SET status = CASE
+    WHEN ms.enableDirtyState = true THEN 'DIRTY'
+    ELSE 'AVAILABLE'
+  END
+  FROM CustomerSession cs
+  JOIN Branch b ON b.id = t.branchId
+  JOIN Restaurant r ON r.id = b.restaurantId
+  JOIN MerchantSettings ms ON ms.restaurantId = r.id
+  WHERE t.id = cs.tableId
+    AND cs.restaurantId = r.id                         -- explicit cross-restaurant safety guard
+    AND cs.status = 'EXPIRED'
+    AND cs.updatedAt >= NOW() - INTERVAL '5 minutes'   -- only rows just expired in STEP 1
+    AND t.status = 'OCCUPIED'
 
 STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled synchronously at session close)
   UPDATE WaiterRequest
@@ -346,6 +407,92 @@ STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled syn
 
 STEP 3 — Log run to CronRunLog
 ```
+
+### EOD PENDING_CASH Cleanup Cron Specification
+
+Runs nightly at `03:00 WIB` (`20:00 UTC`), or at the hour configured in `MerchantSettings.eodCashCleanupHour` (default: 3). Two-part process: an operator-triggered "Close Register" flow followed by a safety-net batch cleanup.
+
+#### Close Register Button (manual trigger, per-branch)
+
+A "Close Register" button in `apps/web/(kitchen)` allows a cashier to initiate end-of-day cash reconciliation:
+
+```
+Cashier clicks "Close Register" for their branch:
+
+STEP 1 — Load all PENDING_CASH orders for this branch
+  SELECT o.id, o.totalAmount, o.customerNote, cs.tableId
+  FROM Order o
+  JOIN CustomerSession cs ON cs.id = o.customerSessionId
+  JOIN Payment p ON p.orderId = o.id
+  WHERE o.branchId = $branchId
+    AND p.method = 'CASH'
+    AND o.status = 'PENDING'
+    AND p.status = 'PENDING_CASH'
+  ORDER BY o.createdAt ASC
+
+  → Display each order as a card:
+      Table {number} | {itemCount} items | Rp {totalAmount}
+      [Mark as Paid] [Cancel Order]
+
+STEP 2 — For each order the cashier processes:
+  ├── [Mark as Paid]:
+  │     BEGIN TRANSACTION
+  │       UPDATE Payment SET status = 'SUCCESS' WHERE orderId = o.id
+  │       UPDATE Order SET status = 'CONFIRMED', confirmedAt = NOW()
+  │         WHERE id = o.id AND status = 'PENDING'
+  │       -- confirmedAt is the start time for the kitchen elapsed timer
+  │       INSERT OrderEvent(fromStatus: PENDING, toStatus: CONFIRMED, actorType: STAFF)
+  │       INSERT AuditLog(action: UPDATE, entity: Order, actorType: STAFF)
+  │     COMMIT
+  │     → Order sent to kitchen (Supabase Realtime broadcast on channel orders:{branchId})
+  │
+  └── [Cancel Order]:
+        BEGIN TRANSACTION
+          UPDATE Payment SET status = 'FAILED' WHERE orderId = o.id
+          UPDATE Order SET status = 'CANCELLED', cancelledAt = NOW()
+            WHERE id = o.id AND status = 'PENDING'
+          INSERT OrderEvent(fromStatus: PENDING, toStatus: CANCELLED, actorType: STAFF)
+          INSERT AuditLog(action: CANCEL, entity: Order, actorType: STAFF)
+        COMMIT
+        → Restore stockCount for any item where stockCount IS NOT NULL:
+            UPDATE MenuItem SET stockCount = stockCount + qty WHERE id = $itemId
+
+STEP 3 — Log run to CronRunLog
+```
+
+#### Safety-Net Batch Cleanup Cron (automatic, nightly)
+
+Runs after `eodCashCleanupHour` to batch-cancel any PENDING_CASH orders that were not manually processed. This is a fallback — the Close Register button is the preferred path.
+
+```
+Nightly at eodCashCleanupHour WIB (default 03:00):
+
+STEP 1 — Batch-cancel stale PENDING_CASH orders
+  SELECT o.id
+  FROM Order o
+  JOIN Payment p ON p.orderId = o.id
+  WHERE o.status = 'PENDING'
+    AND p.method = 'CASH'
+    AND p.status = 'PENDING_CASH'
+    AND o.createdAt < NOW() - INTERVAL '12 hours'  -- safety: never cancel same-day orders
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Payment SET status = 'FAILED' WHERE orderId = o.id
+      UPDATE Order SET status = 'CANCELLED', cancelledAt = NOW()
+        WHERE id = o.id AND status = 'PENDING'
+      INSERT OrderEvent(fromStatus: PENDING, toStatus: CANCELLED, actorType: SYSTEM,
+        actorNote: 'EOD cash cleanup — not confirmed before close of business')
+      INSERT AuditLog(action: CANCEL, entity: Order, actorType: SYSTEM)
+    COMMIT
+    → Restore stockCount: UPDATE MenuItem SET stockCount = stockCount + qty
+        WHERE id = $itemId AND stockCount IS NOT NULL
+
+STEP 2 — Log run to CronRunLog
+  INSERT CronRunLog(jobName: 'eod-cash-cleanup', startedAt, completedAt, status, affectedRows)
+```
+
+**Idempotency:** `WHERE status = 'PENDING'` atomic update prevents double-cancellation. If the cron fires twice, the second pass finds no matching rows.
 
 ### FBQRSYS Admin Controls (Billing)
 
@@ -1006,3 +1153,329 @@ await prisma.platformSettings.upsert({
 - Merchant Settings Panel (equivalent for merchant owners) → `docs/merchant.md`
 - Billing cron that reads `gracePeriodDays` and `trialDurationDays` → billing section above
 - `settings:manage` permission definition → FBQRSYS Permissions section above
+
+---
+
+## UI Specifications (FBQRSYS)
+
+> **For AI agents building Step 5 (FBQRSYS merchant management UI) and Step 6 (billing).** This section specifies exact screen layouts, table columns, form field order, chart types, and empty states. Read `docs/ui-ux.md` first for global design system rules (colors, typography, component patterns). This section adds screen-specific detail only.
+
+---
+
+### Screen 1 — Login Screen
+
+**Route:** `/login` (FBQRSYS) — separate from merchant login
+
+**Layout:** Centered card on full-page background (`bg-stone-50`). Logo above the card.
+
+**Card contents (top to bottom):**
+1. FBQR logo (`platformLogoUrl` or text "FBQR") — centered, `h-10`
+2. Heading: `"Masuk ke FBQRSYS"` — H2, centered
+3. Email input — `type="email"`, label: "Email", required
+4. Password input — `type="password"`, label: "Kata Sandi", required, show/hide toggle
+5. Primary button: `"Masuk"` — full width
+6. Error state (wrong credentials): Red alert box below the form — `"Email atau kata sandi salah."`
+
+**No "Forgot password" link on login page** — FBQRSYS accounts are admin accounts; password reset is manual (contact Platform Owner). If needed in future, add below the button.
+
+**Card width:** `max-w-sm`
+
+---
+
+### Screen 2 — Dashboard / Home
+
+**Route:** `/fbqrsys/dashboard`
+**Permission:** `reports:read`
+
+**Layout:** Page heading "Dashboard" + date range selector (top right). Then two rows of stat cards. Then charts below.
+
+**Stat cards (row 1 — live platform metrics):**
+
+| Card | Value | Format | Delta |
+|---|---|---|---|
+| Platform MRR | Sum of active subscription amounts this month | `Rp X.XXX.XXX` | % vs prior month |
+| Active Merchants | Count with status `ACTIVE` | Integer | Count vs prior month |
+| Trial Merchants | Count with status `TRIAL` | Integer | Count vs last week |
+| Suspended Merchants | Count with status `SUSPENDED` | Integer | Count vs last week (red if increasing) |
+
+**Stat cards (row 2 — growth and orders):**
+
+| Card | Value | Format | Delta |
+|---|---|---|---|
+| New Signups (this month) | Count of new merchants | Integer | % vs prior month |
+| Total GMV (this month) | Sum of all order grandTotal | `Rp X.XXX.XXX` | % vs prior month |
+| Platform ARR | MRR × 12 | `Rp X.XXX.XXX` | vs prior quarter |
+| Avg Trial Conversion | % of trials → ACTIVE (rolling 90 days) | `X%` | vs prior 90 days |
+
+**Charts section (below stat cards):**
+
+| Chart | Type | X-axis | Y-axis | Notes |
+|---|---|---|---|---|
+| Merchant Growth | Line chart (Recharts) | Days (last 30) | Cumulative active merchants | Two series: ACTIVE and TRIAL |
+| Revenue by Plan Tier | Stacked bar chart | Months (last 6) | IDR MRR | One bar segment per plan (Free, Starter, Pro, Enterprise) |
+| New Signups Trend | Bar chart | Days (last 30) | Count | Simple single-series |
+| Top 5 Merchants by GMV | Horizontal bar chart | IDR | Merchant name | Shows restaurant name, not merchant email |
+
+**Date range selector:** Default "Last 30 days". Options: Last 7 days, Last 30 days, Last 3 months, Last 12 months, Custom range (date picker).
+
+---
+
+### Screen 3 — Merchant List
+
+**Route:** `/fbqrsys/merchants`
+**Permission:** `merchants:read`
+
+**Page header:** "Merchants" (H1) + `"+ Tambah Merchant"` button (primary, top right, requires `merchants:create`)
+
+**Filters (above table, horizontal row):**
+1. Search input — placeholder: `"Cari nama restoran atau email..."` — searches `Restaurant.name` and `Merchant.email`
+2. Status filter — dropdown: All, Trial, Active, Suspended, Cancelled, Free
+3. Plan filter — dropdown: All, + each SubscriptionPlan name
+4. Date filter — "Joined" date range picker
+
+**Table columns (left to right):**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Restaurant Name | `Restaurant.name` | `min-w-[200px]` | Yes |
+| Email | `Merchant.email` | `min-w-[200px]` | Yes |
+| Status | `Merchant.status` badge | `w-[120px]` | Yes |
+| Plan | `SubscriptionPlan.name` | `w-[120px]` | Yes |
+| GMV (this month) | Sum of confirmed orders | `w-[140px]` | Yes |
+| Joined | `Merchant.createdAt` | `w-[130px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions (kebab menu):**
+1. Lihat Detail
+2. Edit
+3. Suspend / Unsuspend (conditional: shows "Suspend" if ACTIVE/TRIAL; shows "Unsuspend" if SUSPENDED) — requires `merchants:suspend`
+4. Buka sebagai Merchant (impersonate — Phase 2)
+
+**Bulk actions (checkbox column at far left):**
+- Suspend Selected (requires `merchants:suspend`)
+- Export Selected to CSV
+
+**Empty state:**
+- Icon: `Building2`
+- Heading: "Belum ada merchant"
+- Description: "Tambahkan merchant pertama ke platform."
+- CTA: "+ Tambah Merchant"
+
+---
+
+### Screen 4 — Merchant Detail
+
+**Route:** `/fbqrsys/merchants/[merchantId]`
+**Permission:** `merchants:read`
+
+**Layout:** Breadcrumb (FBQRSYS / Merchants / [Restaurant Name]) + two-column layout (main content left, sidebar right).
+
+**Main content sections:**
+
+**Section 1: Restaurant Info**
+- Restaurant name (H2)
+- Status badge (large size per ui-ux.md B.4)
+- Cuisine type
+- Email
+- Joined date
+- Trial ends / Renewal date
+
+**Section 2: Subscription**
+- Current plan name + price
+- Billing cycle (monthly / yearly)
+- Current period: Start → End dates
+- Auto-renew toggle status
+- Failed attempts count (show in red if > 0)
+- [Change Plan] button, [Extend Trial] button
+
+**Section 3: Branches**
+- List of branches (name, address, table count)
+- `multiBranchEnabled` toggle (requires FBQRSYS admin — `merchants:update`)
+- `branchLimit` input
+
+**Section 4: Billing History**
+Table columns: Invoice #, Period, Amount, Status badge, Paid At, [Download PDF]
+Default: last 12 invoices. [Load more] link below.
+
+**Right sidebar:**
+
+**Admin Notes panel:**
+- Text area for internal notes (`Merchant.notes`)
+- Save button — auto-save on blur
+
+**Assigned To panel:**
+- Staff member selector (`Merchant.assignedToAdminId`)
+- Shows assigned staff name + avatar
+
+**Danger Zone panel (bottom of sidebar):**
+- [Suspend Account] — red destructive button (requires `merchants:suspend`)
+- [Delete Account] — secondary destructive (requires `merchants:delete`); shows confirmation dialog
+
+**Action buttons (top right of page):**
+- [Edit] — navigates to edit form
+- [Suspend / Unsuspend] — primary action based on current status
+
+---
+
+### Screen 5 — Create Merchant Form
+
+**Route:** `/fbqrsys/merchants/new`
+**Permission:** `merchants:create`
+
+**Layout:** Single-page form with two columns on desktop (left: main fields; right: plan/settings).
+
+**Field order (left column):**
+1. Restaurant Name * — `text input`
+2. Owner Email * — `type="email"`
+3. Temporary Password * — `type="password"` with strength indicator; OR "Send Set Password Email" toggle (if toggled, no password field shown — system emails a set-password link instead)
+4. Cuisine Type — `text input` (optional)
+5. Phone Number — `text input` (optional, E.164 format hint)
+
+**Field order (right column):**
+6. Subscription Plan * — `select` dropdown (lists all `SubscriptionPlan` records)
+7. Billing Cycle — radio: Monthly / Yearly
+8. Trial? — toggle: if ON, ignore plan billing, set `status = TRIAL` with `trialEndsAt`; if OFF, status = ACTIVE immediately
+9. Multi-Branch Enabled — toggle (off by default; requires justification)
+10. Branch Limit — number input (shown only when Multi-Branch toggle is ON)
+11. Internal Notes — textarea (optional)
+12. Assigned To — staff selector dropdown
+
+**Submit button:** `"Buat Akun Merchant"` (primary, bottom right)
+**Cancel:** Secondary button, navigates back to merchant list
+
+---
+
+### Screen 6 — Subscription Plans List
+
+**Route:** `/fbqrsys/billing/plans`
+**Permission:** `billing:manage`
+
+**Layout:** Card grid (not a table) — 3 columns on desktop, 1 on mobile.
+
+**Each plan card:**
+```
+┌─────────────────────────────┐
+│  Pro                        │  ← plan name (H3)
+│  Rp 299.000 / bulan         │  ← price (large, primary color)
+│                             │
+│  Batasan:                   │
+│  • X cabang                 │
+│  • X meja                   │
+│  • Fitur AI                 │
+│  • Loyalty program          │
+│                             │
+│  [Edit Plan]                │  ← secondary button
+└─────────────────────────────┘
+```
+
+**"Free / Warung" plan card** uses `bg-stone-50` instead of white — visually distinguished as the no-revenue tier.
+
+**"+ Tambah Plan" button** — top right of page (primary).
+
+---
+
+### Screen 7 — Merchant Billing
+
+**Route:** `/fbqrsys/billing`
+**Permission:** `billing:manage`
+
+**Stat cards (top row):**
+- Total MRR (this month)
+- Invoices Issued (this month)
+- Invoices Overdue (count, shown in red if > 0)
+- Collection Rate (paid on time %)
+
+**Table — All Merchant Billing Invoices:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Invoice # | `MerchantBillingInvoice.invoiceNumber` | `w-[160px]` | No |
+| Merchant | `Restaurant.name` | `min-w-[180px]` | Yes |
+| Plan | `SubscriptionPlan.name` | `w-[120px]` | Yes |
+| Amount | `MerchantBillingInvoice.amount` (IDR) | `w-[140px]` | Yes |
+| Status | Status badge | `w-[100px]` | Yes |
+| Period | Start – End dates | `w-[180px]` | Yes |
+| Due Date | `MerchantBillingInvoice.dueAt` | `w-[130px]` | Yes |
+| Paid At | `MerchantBillingInvoice.paidAt` | `w-[130px]` | Yes |
+| Actions | [Download PDF] | `w-[100px]` | No |
+
+**Invoice status badge colors:** Use standard badge colors from `docs/ui-ux.md`:
+- `PENDING` → yellow
+- `PAID` → green
+- `OVERDUE` → red
+- `CANCELLED` → neutral/stone
+
+**Filters:** Status dropdown, Plan dropdown, Date range (due date).
+
+---
+
+### Screen 8 — FBQRSYS Staff List
+
+**Route:** `/fbqrsys/settings/staff`
+**Permission:** `admins:manage`
+
+**Page header:** "Staff FBQRSYS" (H2) + `"+ Undang Staff"` button (primary, top right)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Nama | `SystemAdmin` (name or email prefix) | `min-w-[180px]` | Yes |
+| Email | `SystemAdmin.email` | `min-w-[200px]` | Yes |
+| Role | `SystemRole.name` via `SystemRoleAssignment` | `w-[160px]` | Yes |
+| Dibuat Oleh | `SystemAdmin.createdByAdminId` → name | `w-[160px]` | No |
+| Bergabung | `SystemAdmin.createdAt` | `w-[130px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions:**
+1. Edit Role
+2. Nonaktifkan (deactivate account) — requires confirmation dialog
+
+**Invite flow (modal, medium size):**
+1. Email * — `type="email"`
+2. Role * — select from existing `SystemRole` records + "+ Buat Role Baru" option
+3. [Kirim Undangan] button — sends "set your password" email via Resend
+
+---
+
+### Screen 9 — Audit Log Viewer
+
+**Route:** `/fbqrsys/audit-log`
+**Permission:** `reports:read`
+
+**Page header:** "Log Aktivitas" (H1)
+
+**Filters (above table):**
+1. Search input — searches `actorName`, `entity`, `entityId`
+2. Actor Type filter — dropdown: All, Staff, Admin, Customer, System
+3. Action filter — dropdown: All, CREATE, UPDATE, DELETE, LOGIN, LOGOUT, SUSPEND, CANCEL, REFUND, etc.
+4. Entity filter — dropdown: All, Order, MenuItem, Staff, Merchant, Promotion, etc.
+5. Date range picker — default: Last 7 days
+6. Restaurant filter (FBQRSYS-level only: filter by restaurant)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Waktu | `AuditLog.createdAt` | `w-[150px]` | Yes (default sort desc) |
+| Aktor | `actorName` + `actorType` badge | `min-w-[160px]` | No |
+| Tindakan | `action` badge | `w-[100px]` | Yes |
+| Entitas | `entity` + `entityId` (truncated) | `min-w-[180px]` | Yes |
+| Restoran | `restaurantId` → Restaurant name | `w-[160px]` | Yes |
+| IP | `ipAddress` | `w-[130px]` | No |
+
+**Row expand (click row):** Shows `oldValue` and `newValue` JSON diff side-by-side in a collapsible panel below the row. Use a simple JSON viewer component with syntax highlighting (`bg-stone-950 text-stone-100` code block).
+
+**Action badge colors:**
+- CREATE: `bg-green-100 text-green-800`
+- UPDATE: `bg-blue-100 text-blue-800`
+- DELETE: `bg-red-100 text-red-700`
+- LOGIN / LOGOUT: `bg-stone-100 text-stone-600`
+- SUSPEND / CANCEL / REFUND: `bg-red-100 text-red-700`
+- LATE_WEBHOOK_REVIVAL: `bg-purple-100 text-purple-700`
+
+**Empty state:**
+- Icon: `Shield`
+- Heading: "Belum ada log aktivitas"
+- Description: "Perubahan dan aktivitas akun akan muncul di sini."
+- No CTA
