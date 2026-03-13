@@ -576,7 +576,8 @@ Set `custom_expiry` in the Snap token creation to match `MerchantSettings.paymen
 | `provider` | enum? | `GOPAY \| OVO \| DANA \| SHOPEEPAY \| BCA \| MANDIRI \| BNI \| OTHER \| null` |
 | `paymentType` | enum | `FULL \| DEPOSIT \| BALANCE_CHARGE \| BALANCE_REFUND` — `FULL` standard order; `DEPOSIT` upfront BY_WEIGHT charge; `BALANCE_CHARGE` second charge (balance > 0); `BALANCE_REFUND` refund row when deposit exceeded final price (**amount is always POSITIVE** — refund direction indicated by `paymentType` alone; see data-models.md SIGN CONVENTION) |
 | `status` | enum | `PENDING \| PENDING_CASH \| SUCCESS \| FAILED \| EXPIRED \| REFUNDED` |
-| `amount` | int | IDR charged |
+| `amount` | int | IDR charged (always positive — see SIGN CONVENTION in data-models.md) |
+| `currency` | string | Default `"IDR"`. Infrastructure field for future multi-currency expansion; always `"IDR"` today. |
 | `midtransTransactionId` | string? | Unique; idempotency guard on webhook |
 
 **Provider rules:**
@@ -827,7 +828,7 @@ Customer orders BY_WEIGHT item
 Order → CONFIRMED → kitchen shows ⚖️ "Needs weighing" on item
     │
     ▼
-Kitchen/cashier weighs item → enters weight in merchant-pos
+Kitchen staff taps ⚖️ badge on KDS card → KDS numpad modal opens → staff enters weight
     │
     ▼
 If remaining balance > 0:

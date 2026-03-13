@@ -179,9 +179,11 @@ export async function GET(req: Request) {
     { "path": "/api/cron/availability-reset",   "schedule": "5 17 * * *"  },
     { "path": "/api/cron/queue-counter-prune",  "schedule": "2 17 * * *"  },
     { "path": "/api/cron/session-cleanup",      "schedule": "0 18 * * *"  },
-    { "path": "/api/cron/eod-cash-cleanup",     "schedule": "0 20 * * *"  }
+    { "path": "/api/cron/eod-cash-cleanup",     "schedule": "0 20 * * *"  },
+    { "path": "/api/cron/balance-charge-alert", "schedule": "0 23 * * *"  }
   ]
 }
+// 0 23 UTC = 06:00 WIB (UTC+7)
 ```
 > Vercel Cron runs in UTC. `00:01 WIB` = `17:01 UTC` (WIB = UTC+7).
 
