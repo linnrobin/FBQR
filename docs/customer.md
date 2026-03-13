@@ -1193,3 +1193,509 @@ Use `Payment.status = SUCCESS` as the gate, not `Order.status`.
 | Step 16 | Order tracking screen: real-time status, Call Waiter, rating |
 | Step 17 | Takeaway/counter mode: counter QR, queue numbers, queue display |
 | Step 25 | Merchant loyalty program + customer account (apps/menu side) |
+
+---
+
+## UI Specifications (Customer Menu App)
+
+> **For AI agents building Steps 12–17 and Step 25** (`apps/menu`). This section specifies exact screen layouts, component anatomy, interaction patterns, and empty states for all customer-facing screens. Read `docs/ui-ux.md` first for global design system rules. This section adds screen-specific detail only.
+>
+> **Critical rule:** All colors, fonts, and border radii in `apps/menu` are merchant-overridable via CSS custom properties (`--color-primary`, `--font-family`, `--border-radius`). All design specs below use FBQR defaults; merchant branding overrides them at runtime.
+
+---
+
+### Screen 1 — Loading / QR Validation Screen
+
+**Route:** `/r/[tableToken]` (redirect handler), then `/{restaurantId}/{tableId}` (menu load)
+
+**Loading state (full-page):**
+- Background: `--color-primary` (brand color) — full screen
+- FBQR logo or restaurant logo (if already loaded from cache) — centered, white
+- Loading spinner (exception to the "always use skeletons" rule — this is full-page initial load, not content loading)
+- Spinner: `animate-spin border-4 border-white border-t-transparent rounded-full h-10 w-10`
+- Duration: shown while HMAC sig is verified + session created + menu data fetched
+
+**Error states (full-page, no skeleton — human-readable HTML pages):**
+
+| Error | Heading | Body | Icon |
+|---|---|---|---|
+| Invalid/expired QR | "QR Code Tidak Valid" | "QR code ini tidak valid atau sudah kedaluwarsa. Minta staff untuk membantu." | `QrCode` crossed |
+| Table RESERVED | "Meja Direservasi" | "Meja ini sudah direservasi. Silakan tanya staff untuk meja yang tersedia." | `CalendarClock` |
+| Table DIRTY | "Meja Sedang Disiapkan" | "Meja ini sedang dibersihkan. Silakan tanya staff." | `Sparkles` |
+| Table CLOSED | "Meja Tidak Tersedia" | "Meja ini sementara tidak tersedia. Silakan tanya staff." | `Lock` |
+| Restaurant SUSPENDED | "Restoran Sementara Tidak Tersedia" | "Kami sedang melakukan perbaikan. Silakan kembali lagi nanti." | `AlertCircle` |
+
+Error page layout: centered card, icon (64×64px, primary color), heading (H2), body text (Small), no CTA except for the QR-expired case which has `[Muat Ulang QR]` button.
+
+---
+
+### Screen 2 — Menu Home (Grid Layout)
+
+**Route:** `/{restaurantId}/{tableId}` with `menuLayout = GRID`
+
+**Header (sticky, `z-30`):**
+```
+[Logo 40×40]   [Restaurant Name]             [🛒 2]
+```
+- Background: `bg-white border-b border-stone-100 shadow-sm`
+- Logo: `rounded-full` (or `rounded` if `borderRadius = sharp`)
+- Cart icon: `ShoppingCart` with item count badge (primary color, `rounded-full`)
+- Height: `h-16` (64px)
+
+**Opening hours bar (below header, shown if `Branch.openingHours` is set):**
+- If open: `"Buka hari ini: 09:00 – 22:00"` — `bg-green-50 text-green-700 text-sm py-1 px-4`
+- If closed today: `"Tutup hari ini"` — `bg-stone-50 text-stone-500 text-sm py-1 px-4`
+
+**Category tabs (sticky, `z-20`, below header):**
+- Horizontal scrollable; `overflow-x-auto` with hidden scrollbar
+- Each tab: `whitespace-nowrap px-4 py-3 text-sm font-medium`
+- Active: `border-b-2 border-[--color-primary] text-[--color-primary]`
+- Inactive: `text-stone-500`
+- Scroll-spy: updates active tab as user scrolls through sections
+
+**Search bar** (below category tabs, visible only in GRID layout when merchant enables it):
+- `placeholder="Cari menu..."` with `Search` icon on left
+- `bg-stone-100 rounded-full px-4 py-2 text-sm` (pill shape if `borderRadius = pill`)
+
+**Item grid:**
+- Columns: `grid grid-cols-2 sm:grid-cols-3 gap-3 px-4`
+- Category section heading: `text-base font-semibold text-stone-900 px-4 pt-6 pb-2`
+
+**Item card anatomy (GRID layout):**
+```
+┌─────────────────┐
+│                 │
+│   [Item Image]  │  ← aspect-ratio: 1/1; object-cover; rounded top corners
+│                 │
+│  Nasi Goreng    │  ← text-sm font-semibold text-stone-900, 2-line clamp
+│  Rp 35.000      │  ← text-sm font-medium text-[--color-primary]
+│                 │
+│  [Dietary]      │  ← small inline badges (Halal, Vegetarian, etc.)
+│                 │
+│  [+ Tambah]     │  ← bg-[--color-primary] text-white h-8 rounded-[--border-radius] w-full
+└─────────────────┘
+```
+
+**Out-of-stock item card:** `opacity-60` + "Habis" badge (`bg-stone-200 text-stone-500`) overlaid on image + button disabled.
+
+**AI recommendation badge ("🔥 Terlaris"):**
+- Shown on item card image (top-left corner): `bg-primary text-white text-xs px-2 py-0.5 rounded-br-md`
+
+**Sticky bottom cart bar:**
+```
+[🛒 2 Item]                        [Rp 70.000  Lihat Keranjang →]
+```
+- Background: `bg-[--color-primary]`
+- Text: white
+- Height: `h-14` (56px)
+- `position: fixed; bottom: 0; left: 0; right: 0; z-[30]`
+- Only shown when cart has ≥ 1 item
+- Cart count badge animation: scale 1 → 1.3 → 1 on item add (Framer Motion)
+
+---
+
+### Screen 3 — Menu Home (List Layout)
+
+**Route:** `/{restaurantId}/{tableId}` with `menuLayout = LIST`
+
+**Same header and category tabs as Grid layout.**
+
+**Search bar** — always visible at top, below category tabs:
+- `placeholder="Cari menu..."` — full width input
+
+**Item row anatomy (LIST layout):**
+```
+[Image 56×56]  Nasi Goreng Spesial             Rp 35.000  [+]
+               Nasi goreng dengan telur...                 ↑
+               [Halal] [🌶️]                               button
+```
+- Image: `w-14 h-14 rounded-md object-cover flex-shrink-0`
+- Name: `text-sm font-semibold text-stone-900` — 1-line clamp
+- Description: `text-xs text-stone-500` — 2-line clamp
+- Price: `text-sm font-medium text-[--color-primary]`
+- Add button: `h-8 w-8 bg-[--color-primary] text-white rounded-full flex items-center justify-center`
+- Row separator: `border-b border-stone-100`
+- Row padding: `px-4 py-3`
+
+**Category filter chips** (shown below search bar in List layout):
+- Horizontal scrollable row of chips
+- Active chip: `bg-[--color-primary] text-white`
+- Inactive chip: `bg-stone-100 text-stone-600`
+- Height: `h-8 px-4 rounded-full text-sm`
+
+---
+
+### Screen 4 — Menu Home (Bundle Layout)
+
+**Route:** `/{restaurantId}/{tableId}` with `menuLayout = BUNDLE`
+
+**Same header and category tabs.**
+
+**Bundle card anatomy (full-width, one per item):**
+```
+┌──────────────────────────────────────────────────────┐
+│  [Full-width image, aspect 16:7]                     │
+│──────────────────────────────────────────────────────│
+│  MEAL SET A                     ~~Rp 85.000~~        │
+│  Burger + Fries + Minuman       Rp 65.000            │
+│                                 [+ Tambah]           │
+└──────────────────────────────────────────────────────┘
+```
+- Card: `mx-4 rounded-xl overflow-hidden shadow-sm border border-stone-100`
+- Cards spaced: `space-y-4 pb-4`
+- Original price (crossed out): `text-sm text-stone-400 line-through`
+- Discounted price: `text-lg font-bold text-[--color-primary]`
+- Savings badge: `bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded` — "Hemat Rp 20.000"
+- Add button: full-width at bottom — `bg-[--color-primary] text-white h-10 rounded-b-xl`
+
+---
+
+### Screen 5 — Menu Home (Spotlight Layout)
+
+**Route:** `/{restaurantId}/{tableId}` with `menuLayout = SPOTLIGHT`
+
+**No category tabs — all items in one horizontal swipeable carousel.**
+
+**Item card anatomy (one per screen, full-page):**
+```
+┌──────────────────────────────────┐
+│                                  │
+│   [Full-width hero image]        │  ← aspect-ratio: 4:3; fills top 55% of viewport
+│                                  │
+│──────────────────────────────────│
+│  Wagyu Sirloin 200g              │  ← Display size (36px, font-bold)
+│  Rp 485.000                      │  ← H2, text-[--color-primary]
+│                                  │
+│  Slow-braised wagyu sirloin...   │  ← text-sm text-stone-600, 4-line clamp
+│                                  │
+│  [Allergen badges]               │
+│  [Chef's note if any]            │
+│                                  │
+│  [+ Tambahkan ke Pesanan]        │  ← full-width primary button
+└──────────────────────────────────┘
+      ←  3 / 12  →                 ← pagination indicator below card
+```
+
+**Navigation:** Swipe left/right (Framer Motion `drag="x"`) + arrow buttons on desktop.
+**Pagination indicator:** `"3 / 12"` in `text-sm text-stone-400` centered below.
+
+---
+
+### Screen 6 — Item Detail Modal (Bottom Sheet)
+
+Triggered by tapping any item card/row in Grid, List, or Bundle layouts.
+
+**Component:** shadcn `Sheet` with `side="bottom"` — slides up from bottom.
+**Height:** `max-h-[90vh]` with `overflow-y-auto`. Drag handle at top for swipe-to-dismiss.
+
+**Content (top to bottom, scrollable):**
+1. **Item Image** — full-width, `aspect-ratio: 16/9`, `object-cover`; no image = gradient placeholder using `--color-primary`
+2. **Item Name** — H2, `text-stone-900`
+3. **Price** — H3, `text-[--color-primary]`; for BY_WEIGHT: `"Deposit Rp 50.000"` + small note `"(harga akhir ditentukan setelah ditimbang)"`
+4. **Badges row** — dietary + allergen badges inline (Halal, Vegetarian, Vegan, Spicy 🌶️, Contains Nuts ⚠️)
+5. **Estimated prep time** — `text-xs text-stone-500` — `"⏱ ~15 menit"` (shown only if set)
+6. **Description** — `text-sm text-stone-600` (full text, no clamp)
+7. **Variants section** (if variants exist) — required selection:
+   - Section label: `"Pilih Ukuran *"` (or variant group name)
+   - Radio buttons styled as pill chips: `border border-stone-200 rounded-[--border-radius] px-4 py-2 text-sm`
+   - Selected: `border-[--color-primary] bg-[--color-primary]/10 text-[--color-primary]`
+   - Price delta shown: `"+Rp 5.000"` or `"-Rp 3.000"` in `text-xs text-stone-500`
+8. **Add-ons section** (if add-ons exist) — optional multi-select:
+   - Section label: `"Tambahan (Opsional)"`
+   - Checkbox chips (same style as variants but with checkbox icon)
+   - Price shown per add-on
+9. **Allergen warning** (if allergens set) — `bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-xs text-amber-800`
+10. **Special Request** — textarea, `placeholder="Catatan khusus... (contoh: tidak pedas, tanpa bawang)"`, max 200 chars
+11. **Quantity selector** — `[−] [2] [+]` — centered row; quantity cannot go below 1
+
+**Footer (sticky at bottom of sheet):**
+```
+[Tambahkan ke Pesanan — Rp 70.000]
+```
+- Full-width primary button
+- Shows updated total (base price × qty + variants + add-ons)
+- Disabled if required variant not selected
+
+---
+
+### Screen 7 — Cart Sheet / Drawer
+
+Triggered by tapping the sticky bottom cart bar.
+
+**Component:** shadcn `Sheet` with `side="bottom"`.
+**Height:** `max-h-[85vh]` with `overflow-y-auto`.
+
+**Content:**
+1. **Header:** `"Keranjang Anda"` (H3) + `[×]` close button
+2. **Item list** — each cart item row:
+   ```
+   [Image 48×48]  Item Name           [−] [1] [+]
+                  Variant: Large
+                  Tambahan: Extra Spicy
+                  Rp 45.000           [🗑 Hapus]
+   ```
+   - Quantity change updates total immediately (optimistic UI)
+3. **Promo code field** (if merchant has active promotions with codes):
+   - `"Kode Promo"` label + text input + [Gunakan] button
+   - Applied promo shown as a dismissible green chip: `"PROMO10 — Hemat Rp 15.000 ✕"`
+4. **Order Summary:**
+   - Subtotal: `Rp X.XXX`
+   - Diskon: `-Rp X.XXX` (shown only if promo applied)
+   - Service Charge: `Rp X.XXX` (shown only if > 0)
+   - PPN 11%: `Rp X.XXX`
+   - **Total: Rp X.XXX** — bold, larger
+5. **Upsell prompt** (if `aiUpsell` enabled): `"Tambah minuman? 🥤"` + 2–3 horizontal item chips
+6. **Loyalty redemption** (if merchant loyalty enabled + customer logged in):
+   - `"Poin Anda: 250 pts = Rp 2.500"` + [Gunakan Poin] toggle
+7. **CTA button:**
+   - PAY_FIRST mode: `[Lanjut ke Pembayaran]`
+   - PAY_AT_CASHIER mode: `[Pesan & Bayar di Kasir]`
+
+**Empty cart state:** `"Keranjang kosong"` with a shopping bag illustration.
+
+---
+
+### Screen 8 — Pre-Invoice / Checkout Screen
+
+**Route:** `/{restaurantId}/{tableId}/checkout`
+
+**Layout:** Full-page (not a modal). Replaces the menu view.
+
+**Back button** at top left: `[← Kembali]` — returns to menu.
+
+**Content sections:**
+
+**Section 1: Order Summary**
+- Heading: `"Ringkasan Pesanan"` (H3)
+- Item list (read-only, condensed): Name + Qty + Line Total per row
+- Divider
+- Subtotal, Service Charge, PPN breakdown (each on its own row)
+- **Grand Total** — bold, 20px, `text-[--color-primary]`
+
+**Section 2: Metode Pembayaran** (shown only in PAY_FIRST mode)
+- Heading: `"Cara Bayar"` (H3)
+- Options rendered as radio cards:
+  ```
+  ◉ QRIS (disarankan)                     [QR icon]
+    Bayar dengan GoPay, OVO, DANA, dll.    0.7% biaya
+
+  ○ Transfer Virtual Account               [Bank icon]
+    BCA, Mandiri, BNI, dll.                Rp 4.000 biaya
+
+  ○ Kartu Kredit/Debit                     [Card icon]
+    Visa, Mastercard                       2.9% biaya
+  ```
+  - Each option: `border rounded-[--border-radius] p-3 cursor-pointer`
+  - Selected: `border-[--color-primary] bg-[--color-primary]/5`
+
+**Section 3: Catatan** (optional customer note — if not yet entered)
+- Textarea: `"Catatan untuk dapur... (tidak pedas, dll.)"`, max 200 chars
+
+**Section 4: Login prompt** (for anonymous customers):
+- Subtle card: `"Masuk untuk mendapatkan poin loyalty"`
+- [Masuk / Daftar] button (secondary) + "Lanjutkan tanpa akun →" link
+
+**Section 5: Loyalty** (if logged in + loyalty enabled):
+- Points balance + equivalent IDR
+- [Gunakan Poin] toggle
+
+**CTA button (bottom, full-width, sticky):**
+- PAY_FIRST: `[Bayar Sekarang — Rp 85.000]`
+- PAY_AT_CASHIER: `[Kirim Pesanan — Bayar di Kasir]`
+
+---
+
+### Screen 9 — Payment Processing Screen (QRIS)
+
+After tapping "Bayar Sekarang" in PAY_FIRST mode, customer is redirected to Midtrans Snap redirect URL (full-page redirect — not embedded). This screen is the Midtrans-hosted payment page; FBQR does not control its layout.
+
+**Return from Midtrans:**
+- Customer is redirected back to `/{restaurantId}/{tableId}/order/{orderId}?status=finish`
+- A brief loading state shown while the webhook status is confirmed server-side
+- Loading message: `"Memverifikasi pembayaran Anda..."`
+- After webhook confirmation: transition to Order Tracking Screen
+
+**PAY_AT_CASHIER pending state** (after submitting order):
+```
+┌─────────────────────────────────┐
+│  ⏳                             │
+│  Menunggu konfirmasi kasir      │
+│                                 │
+│  Pesanan Anda sedang menunggu   │
+│  dikonfirmasi oleh kasir.       │
+│  Silakan tunjukkan layar ini    │
+│  ke kasir.                      │
+│                                 │
+│  Order #042                     │
+│  Meja 5                         │
+│  Total: Rp 85.000               │
+└─────────────────────────────────┘
+```
+- Background: `bg-amber-50`
+- Spinner or subtle animated loading indicator
+- Updates in real-time via Supabase Realtime — transitions to Order Tracking when cashier confirms
+
+---
+
+### Screen 10 — Order Tracking Screen
+
+**Route:** `/{restaurantId}/{tableId}/order/{orderId}`
+
+**Header:** Same restaurant header as menu. Back button not shown (order is in progress).
+
+**Section 1: Order Confirmation Banner** (shown immediately after payment)
+- `"Pesanan diterima! 🎉"` — H2, `text-green-700 bg-green-50 rounded-xl px-6 py-4`
+- Animated entrance: scale in from center (Framer Motion)
+- Auto-dismisses after 5 seconds or on tap
+
+**Section 2: Order Status Timeline**
+```
+✅ CONFIRMED — Pesanan dikonfirmasi       19:34
+🔄 PREPARING — Sedang disiapkan  ← pulse  19:36
+○  READY — Siap diambil
+○  COMPLETED — Selesai
+```
+- Each step: circle icon + label + timestamp (if reached) + actor
+- Current active step: animated pulse (see ui-ux.md E.3)
+- Completed steps: `text-stone-400` with checkmark
+- Status updates via Supabase Realtime without page refresh
+
+**Section 3: Items Ordered**
+- Compact list: Qty × Name + variant/addon summary + line total
+- BY_WEIGHT items show ⚖️ badge and deposit amount until weighed
+
+**Section 4: Payment Summary**
+- Grand Total, payment method badge, payment status badge
+
+**Section 5: READY banner** (shown when order moves to READY)
+```
+┌─────────────────────────────────────────────────────┐
+│  🎉 Pesanan Siap!                                   │
+│  Pelayan akan segera mengantarkan pesanan Anda.     │
+│  (or: "Silakan ambil pesanan Anda di konter.")      │
+└─────────────────────────────────────────────────────┘
+```
+- `bg-green-100 border border-green-300 rounded-xl px-6 py-4`
+- Subtle pulse animation on the banner (draws attention when tab is re-opened)
+
+**Section 6: Call Waiter buttons** (3 buttons, always visible while session is ACTIVE)
+```
+[📞 Panggil Pelayan]  [🆘 Butuh Bantuan]  [🧾 Minta Struk]
+```
+- Button style: outlined, `border border-[--color-primary] text-[--color-primary]`
+- [Butuh Bantuan] button opens a bottom sheet with a text input for a note
+
+**Section 7: Add More Items button**
+- `[+ Tambah Pesanan Lagi]` — secondary button
+- Navigates back to menu; creates a new Order linked to same session
+- Shown only while session is ACTIVE
+
+**Section 8: Rating prompt** (shown when order reaches COMPLETED)
+```
+Bagaimana makanannya?
+★ ★ ★ ★ ★  ← tappable stars
+[Tambahkan komentar... (opsional)]
+[Kirim Ulasan]
+```
+- Stars: large touch targets (`h-10 w-10` each), `text-amber-400` when filled
+- Comment textarea: optional, max 500 chars
+- After submitting: shows `"Terima kasih atas ulasan Anda! 💛"` confirmation
+
+**Section 9: Invoice download link**
+- `[📄 Unduh Invoice PDF]` — text link with `Download` icon
+- Shown after order is CONFIRMED
+
+---
+
+### Screen 11 — Error Screens
+
+**Full-page error screens** (for flow interruptions, not recoverable inline errors):
+
+**Restaurant closed / ordering paused:**
+```
+[Pause icon]
+"Restoran Sedang Tutup"
+"Dapur sedang sibuk. Silakan coba dalam beberapa menit."
+[Coba Lagi]   (refreshes the page)
+```
+
+**Session expired:**
+```
+[Clock icon]
+"Sesi Berakhir"
+"Sesi meja Anda telah berakhir. Scan ulang QR code untuk memulai sesi baru."
+```
+- Read-only access: below this message, show existing orders from the expired session in a compact list (view-only, no new actions)
+
+**Table unavailable (DIRTY / RESERVED / CLOSED):**
+- Use the same error designs specified in Screen 1 above.
+
+**Order cancelled by cashier:**
+```
+[X Circle icon]
+"Pesanan Dibatalkan"
+"Pesanan Anda dibatalkan oleh kasir. Silakan hubungi staff untuk informasi lebih lanjut."
+[Hubungi Staff]  (shows WhatsApp button if Restaurant.whatsappNumber is set)
+```
+
+**Error screen layout (all):**
+- Full-page centered layout: icon (64px) + H2 + body text + optional CTA
+- Icon color: `text-stone-300` (neutral, not alarming)
+- Background: `bg-[--color-secondary]` or `bg-stone-50`
+
+---
+
+### Screen 12 — Takeaway / Counter Mode
+
+**Counter QR scan:** Same flow as dine-in QR — the QR code at the counter is a special table record with `orderType = TAKEAWAY`. Session and menu load identically.
+
+**Key differences in UI:**
+- No table-identifier header (shows `"Takeaway"` instead of table name)
+- After placing order: no "Call Waiter" button
+- After placing order: shows queue number prominently
+
+**Queue Number Display (post-order confirmation):**
+```
+┌─────────────────────────────────────┐
+│  ← Kembali ke Menu                  │
+│                                     │
+│  Nomor Antrian Anda                 │  ← text-sm text-stone-500
+│                                     │
+│         #042                        │  ← Display size (36px), font-black, text-[--color-primary]
+│                                     │
+│  Pesanan Anda sedang disiapkan      │  ← status text
+│                                     │
+│  Perhatikan layar antrian           │
+│  di area kasir.                     │
+└─────────────────────────────────────┘
+```
+- Queue number: large, prominent, centered
+- Status updates via Supabase Realtime
+
+**Order Queue Display Screen (`/kitchen/queue-display`):**
+This screen is shown on a dedicated TV or large monitor facing the customer waiting area. It is part of `apps/web/(kitchen)`, not `apps/menu`.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                                                                      │
+│    PESANAN SIAP     ← H1, green, centered                           │
+│                                                                      │
+│   [042]  [047]  [051]  [055]   ← large numbers, grid layout        │
+│                                                                      │
+│─────────────────────────────────────────────────────────────────────│
+│                                                                      │
+│    SEDANG DISIAPKAN     ← H1, amber, centered                       │
+│                                                                      │
+│   [043]  [044]  [048]  [049]  [052]                                 │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- Full-screen, dark background: `bg-stone-950`
+- "PESANAN SIAP" section: large white numbers on `bg-green-700` tiles
+- "SEDANG DISIAPKAN" section: large white numbers on `bg-stone-700` tiles
+- Number tile: `h-20 w-20 flex items-center justify-center text-3xl font-black rounded-xl`
+- New number appearing: slide-in animation (from above for READY, from right for PREPARING)
+- READY numbers cleared after configurable duration (merchant setting); fade-out animation
+- Restaurant name/logo in top-left corner; branch name in top-right
+- Real-time updates via Supabase Realtime (no polling)

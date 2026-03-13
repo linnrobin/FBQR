@@ -1151,3 +1151,329 @@ await prisma.platformSettings.upsert({
 - Merchant Settings Panel (equivalent for merchant owners) → `docs/merchant.md`
 - Billing cron that reads `gracePeriodDays` and `trialDurationDays` → billing section above
 - `settings:manage` permission definition → FBQRSYS Permissions section above
+
+---
+
+## UI Specifications (FBQRSYS)
+
+> **For AI agents building Step 5 (FBQRSYS merchant management UI) and Step 6 (billing).** This section specifies exact screen layouts, table columns, form field order, chart types, and empty states. Read `docs/ui-ux.md` first for global design system rules (colors, typography, component patterns). This section adds screen-specific detail only.
+
+---
+
+### Screen 1 — Login Screen
+
+**Route:** `/login` (FBQRSYS) — separate from merchant login
+
+**Layout:** Centered card on full-page background (`bg-stone-50`). Logo above the card.
+
+**Card contents (top to bottom):**
+1. FBQR logo (`platformLogoUrl` or text "FBQR") — centered, `h-10`
+2. Heading: `"Masuk ke FBQRSYS"` — H2, centered
+3. Email input — `type="email"`, label: "Email", required
+4. Password input — `type="password"`, label: "Kata Sandi", required, show/hide toggle
+5. Primary button: `"Masuk"` — full width
+6. Error state (wrong credentials): Red alert box below the form — `"Email atau kata sandi salah."`
+
+**No "Forgot password" link on login page** — FBQRSYS accounts are admin accounts; password reset is manual (contact Platform Owner). If needed in future, add below the button.
+
+**Card width:** `max-w-sm`
+
+---
+
+### Screen 2 — Dashboard / Home
+
+**Route:** `/fbqrsys/dashboard`
+**Permission:** `reports:read`
+
+**Layout:** Page heading "Dashboard" + date range selector (top right). Then two rows of stat cards. Then charts below.
+
+**Stat cards (row 1 — live platform metrics):**
+
+| Card | Value | Format | Delta |
+|---|---|---|---|
+| Platform MRR | Sum of active subscription amounts this month | `Rp X.XXX.XXX` | % vs prior month |
+| Active Merchants | Count with status `ACTIVE` | Integer | Count vs prior month |
+| Trial Merchants | Count with status `TRIAL` | Integer | Count vs last week |
+| Suspended Merchants | Count with status `SUSPENDED` | Integer | Count vs last week (red if increasing) |
+
+**Stat cards (row 2 — growth and orders):**
+
+| Card | Value | Format | Delta |
+|---|---|---|---|
+| New Signups (this month) | Count of new merchants | Integer | % vs prior month |
+| Total GMV (this month) | Sum of all order grandTotal | `Rp X.XXX.XXX` | % vs prior month |
+| Platform ARR | MRR × 12 | `Rp X.XXX.XXX` | vs prior quarter |
+| Avg Trial Conversion | % of trials → ACTIVE (rolling 90 days) | `X%` | vs prior 90 days |
+
+**Charts section (below stat cards):**
+
+| Chart | Type | X-axis | Y-axis | Notes |
+|---|---|---|---|---|
+| Merchant Growth | Line chart (Recharts) | Days (last 30) | Cumulative active merchants | Two series: ACTIVE and TRIAL |
+| Revenue by Plan Tier | Stacked bar chart | Months (last 6) | IDR MRR | One bar segment per plan (Free, Starter, Pro, Enterprise) |
+| New Signups Trend | Bar chart | Days (last 30) | Count | Simple single-series |
+| Top 5 Merchants by GMV | Horizontal bar chart | IDR | Merchant name | Shows restaurant name, not merchant email |
+
+**Date range selector:** Default "Last 30 days". Options: Last 7 days, Last 30 days, Last 3 months, Last 12 months, Custom range (date picker).
+
+---
+
+### Screen 3 — Merchant List
+
+**Route:** `/fbqrsys/merchants`
+**Permission:** `merchants:read`
+
+**Page header:** "Merchants" (H1) + `"+ Tambah Merchant"` button (primary, top right, requires `merchants:create`)
+
+**Filters (above table, horizontal row):**
+1. Search input — placeholder: `"Cari nama restoran atau email..."` — searches `Restaurant.name` and `Merchant.email`
+2. Status filter — dropdown: All, Trial, Active, Suspended, Cancelled, Free
+3. Plan filter — dropdown: All, + each SubscriptionPlan name
+4. Date filter — "Joined" date range picker
+
+**Table columns (left to right):**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Restaurant Name | `Restaurant.name` | `min-w-[200px]` | Yes |
+| Email | `Merchant.email` | `min-w-[200px]` | Yes |
+| Status | `Merchant.status` badge | `w-[120px]` | Yes |
+| Plan | `SubscriptionPlan.name` | `w-[120px]` | Yes |
+| GMV (this month) | Sum of confirmed orders | `w-[140px]` | Yes |
+| Joined | `Merchant.createdAt` | `w-[130px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions (kebab menu):**
+1. Lihat Detail
+2. Edit
+3. Suspend / Unsuspend (conditional: shows "Suspend" if ACTIVE/TRIAL; shows "Unsuspend" if SUSPENDED) — requires `merchants:suspend`
+4. Buka sebagai Merchant (impersonate — Phase 2)
+
+**Bulk actions (checkbox column at far left):**
+- Suspend Selected (requires `merchants:suspend`)
+- Export Selected to CSV
+
+**Empty state:**
+- Icon: `Building2`
+- Heading: "Belum ada merchant"
+- Description: "Tambahkan merchant pertama ke platform."
+- CTA: "+ Tambah Merchant"
+
+---
+
+### Screen 4 — Merchant Detail
+
+**Route:** `/fbqrsys/merchants/[merchantId]`
+**Permission:** `merchants:read`
+
+**Layout:** Breadcrumb (FBQRSYS / Merchants / [Restaurant Name]) + two-column layout (main content left, sidebar right).
+
+**Main content sections:**
+
+**Section 1: Restaurant Info**
+- Restaurant name (H2)
+- Status badge (large size per ui-ux.md B.4)
+- Cuisine type
+- Email
+- Joined date
+- Trial ends / Renewal date
+
+**Section 2: Subscription**
+- Current plan name + price
+- Billing cycle (monthly / yearly)
+- Current period: Start → End dates
+- Auto-renew toggle status
+- Failed attempts count (show in red if > 0)
+- [Change Plan] button, [Extend Trial] button
+
+**Section 3: Branches**
+- List of branches (name, address, table count)
+- `multiBranchEnabled` toggle (requires FBQRSYS admin — `merchants:update`)
+- `branchLimit` input
+
+**Section 4: Billing History**
+Table columns: Invoice #, Period, Amount, Status badge, Paid At, [Download PDF]
+Default: last 12 invoices. [Load more] link below.
+
+**Right sidebar:**
+
+**Admin Notes panel:**
+- Text area for internal notes (`Merchant.notes`)
+- Save button — auto-save on blur
+
+**Assigned To panel:**
+- Staff member selector (`Merchant.assignedToAdminId`)
+- Shows assigned staff name + avatar
+
+**Danger Zone panel (bottom of sidebar):**
+- [Suspend Account] — red destructive button (requires `merchants:suspend`)
+- [Delete Account] — secondary destructive (requires `merchants:delete`); shows confirmation dialog
+
+**Action buttons (top right of page):**
+- [Edit] — navigates to edit form
+- [Suspend / Unsuspend] — primary action based on current status
+
+---
+
+### Screen 5 — Create Merchant Form
+
+**Route:** `/fbqrsys/merchants/new`
+**Permission:** `merchants:create`
+
+**Layout:** Single-page form with two columns on desktop (left: main fields; right: plan/settings).
+
+**Field order (left column):**
+1. Restaurant Name * — `text input`
+2. Owner Email * — `type="email"`
+3. Temporary Password * — `type="password"` with strength indicator; OR "Send Set Password Email" toggle (if toggled, no password field shown — system emails a set-password link instead)
+4. Cuisine Type — `text input` (optional)
+5. Phone Number — `text input` (optional, E.164 format hint)
+
+**Field order (right column):**
+6. Subscription Plan * — `select` dropdown (lists all `SubscriptionPlan` records)
+7. Billing Cycle — radio: Monthly / Yearly
+8. Trial? — toggle: if ON, ignore plan billing, set `status = TRIAL` with `trialEndsAt`; if OFF, status = ACTIVE immediately
+9. Multi-Branch Enabled — toggle (off by default; requires justification)
+10. Branch Limit — number input (shown only when Multi-Branch toggle is ON)
+11. Internal Notes — textarea (optional)
+12. Assigned To — staff selector dropdown
+
+**Submit button:** `"Buat Akun Merchant"` (primary, bottom right)
+**Cancel:** Secondary button, navigates back to merchant list
+
+---
+
+### Screen 6 — Subscription Plans List
+
+**Route:** `/fbqrsys/billing/plans`
+**Permission:** `billing:manage`
+
+**Layout:** Card grid (not a table) — 3 columns on desktop, 1 on mobile.
+
+**Each plan card:**
+```
+┌─────────────────────────────┐
+│  Pro                        │  ← plan name (H3)
+│  Rp 299.000 / bulan         │  ← price (large, primary color)
+│                             │
+│  Batasan:                   │
+│  • X cabang                 │
+│  • X meja                   │
+│  • Fitur AI                 │
+│  • Loyalty program          │
+│                             │
+│  [Edit Plan]                │  ← secondary button
+└─────────────────────────────┘
+```
+
+**"Free / Warung" plan card** uses `bg-stone-50` instead of white — visually distinguished as the no-revenue tier.
+
+**"+ Tambah Plan" button** — top right of page (primary).
+
+---
+
+### Screen 7 — Merchant Billing
+
+**Route:** `/fbqrsys/billing`
+**Permission:** `billing:manage`
+
+**Stat cards (top row):**
+- Total MRR (this month)
+- Invoices Issued (this month)
+- Invoices Overdue (count, shown in red if > 0)
+- Collection Rate (paid on time %)
+
+**Table — All Merchant Billing Invoices:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Invoice # | `MerchantBillingInvoice.invoiceNumber` | `w-[160px]` | No |
+| Merchant | `Restaurant.name` | `min-w-[180px]` | Yes |
+| Plan | `SubscriptionPlan.name` | `w-[120px]` | Yes |
+| Amount | `MerchantBillingInvoice.amount` (IDR) | `w-[140px]` | Yes |
+| Status | Status badge | `w-[100px]` | Yes |
+| Period | Start – End dates | `w-[180px]` | Yes |
+| Due Date | `MerchantBillingInvoice.dueAt` | `w-[130px]` | Yes |
+| Paid At | `MerchantBillingInvoice.paidAt` | `w-[130px]` | Yes |
+| Actions | [Download PDF] | `w-[100px]` | No |
+
+**Invoice status badge colors:** Use standard badge colors from `docs/ui-ux.md`:
+- `PENDING` → yellow
+- `PAID` → green
+- `OVERDUE` → red
+- `CANCELLED` → neutral/stone
+
+**Filters:** Status dropdown, Plan dropdown, Date range (due date).
+
+---
+
+### Screen 8 — FBQRSYS Staff List
+
+**Route:** `/fbqrsys/settings/staff`
+**Permission:** `admins:manage`
+
+**Page header:** "Staff FBQRSYS" (H2) + `"+ Undang Staff"` button (primary, top right)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Nama | `SystemAdmin` (name or email prefix) | `min-w-[180px]` | Yes |
+| Email | `SystemAdmin.email` | `min-w-[200px]` | Yes |
+| Role | `SystemRole.name` via `SystemRoleAssignment` | `w-[160px]` | Yes |
+| Dibuat Oleh | `SystemAdmin.createdByAdminId` → name | `w-[160px]` | No |
+| Bergabung | `SystemAdmin.createdAt` | `w-[130px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions:**
+1. Edit Role
+2. Nonaktifkan (deactivate account) — requires confirmation dialog
+
+**Invite flow (modal, medium size):**
+1. Email * — `type="email"`
+2. Role * — select from existing `SystemRole` records + "+ Buat Role Baru" option
+3. [Kirim Undangan] button — sends "set your password" email via Resend
+
+---
+
+### Screen 9 — Audit Log Viewer
+
+**Route:** `/fbqrsys/audit-log`
+**Permission:** `reports:read`
+
+**Page header:** "Log Aktivitas" (H1)
+
+**Filters (above table):**
+1. Search input — searches `actorName`, `entity`, `entityId`
+2. Actor Type filter — dropdown: All, Staff, Admin, Customer, System
+3. Action filter — dropdown: All, CREATE, UPDATE, DELETE, LOGIN, LOGOUT, SUSPEND, CANCEL, REFUND, etc.
+4. Entity filter — dropdown: All, Order, MenuItem, Staff, Merchant, Promotion, etc.
+5. Date range picker — default: Last 7 days
+6. Restaurant filter (FBQRSYS-level only: filter by restaurant)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Waktu | `AuditLog.createdAt` | `w-[150px]` | Yes (default sort desc) |
+| Aktor | `actorName` + `actorType` badge | `min-w-[160px]` | No |
+| Tindakan | `action` badge | `w-[100px]` | Yes |
+| Entitas | `entity` + `entityId` (truncated) | `min-w-[180px]` | Yes |
+| Restoran | `restaurantId` → Restaurant name | `w-[160px]` | Yes |
+| IP | `ipAddress` | `w-[130px]` | No |
+
+**Row expand (click row):** Shows `oldValue` and `newValue` JSON diff side-by-side in a collapsible panel below the row. Use a simple JSON viewer component with syntax highlighting (`bg-stone-950 text-stone-100` code block).
+
+**Action badge colors:**
+- CREATE: `bg-green-100 text-green-800`
+- UPDATE: `bg-blue-100 text-blue-800`
+- DELETE: `bg-red-100 text-red-700`
+- LOGIN / LOGOUT: `bg-stone-100 text-stone-600`
+- SUSPEND / CANCEL / REFUND: `bg-red-100 text-red-700`
+- LATE_WEBHOOK_REVIVAL: `bg-purple-100 text-purple-700`
+
+**Empty state:**
+- Icon: `Shield`
+- Heading: "Belum ada log aktivitas"
+- Description: "Perubahan dan aktivitas akun akan muncul di sini."
+- No CTA

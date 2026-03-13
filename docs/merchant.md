@@ -1308,3 +1308,661 @@ Read-only (for merchant owner with `billing:read`): current plan, renewal date, 
 - FBQRSYS platform admin (subscription management, merchant controls) → `docs/platform-owner.md`
 - Customer ordering flow → `docs/customer.md`
 - Architecture decisions (ADRs) → `docs/architecture.md`
+
+---
+
+## UI Specifications (Merchant POS)
+
+> **For AI agents building Steps 7–11, 20, and 21.** This section specifies exact screen layouts, table columns, form field order, chart types, and empty states for all merchant-facing screens. Read `docs/ui-ux.md` first for global design system rules (colors, typography, component patterns). This section adds screen-specific detail only.
+
+---
+
+### Screen 1 — Login Screen
+
+**Routes:** `/login` (owner email login), `/staff-login` (PIN login)
+
+**Email login layout** (owner path — same card structure as FBQRSYS login):
+1. FBQR logo — centered
+2. Heading: `"Masuk ke Merchant POS"` — H2, centered
+3. Email input — `type="email"`, label: "Email", required
+4. Password input — `type="password"`, label: "Kata Sandi", required, show/hide toggle
+5. "Lupa kata sandi?" link — below password field, right-aligned
+6. Primary button: `"Masuk"` — full width
+
+**PIN login layout** (staff path — large numpad):
+- Heading: `"Masukkan PIN"` — centered
+- Staff name field — `text input`, label: "Nama Staff", required; auto-suggests from staff list
+- PIN pad — 3×4 grid of large round buttons (digits 0–9 + delete + confirm)
+  - Button size: `h-16 w-16` (64×64px) — must be finger-tap friendly on tablet
+  - Digit buttons: `bg-white border border-stone-200 text-stone-900 text-2xl font-semibold rounded-full`
+  - Delete button: `bg-stone-100` with `Delete` icon
+  - Confirm button: `bg-primary text-white` with `ArrowRight` icon
+- PIN display: 4–6 dots showing filled/empty state (no digits shown)
+- Error state: Red shake animation + "PIN salah. Coba lagi."
+
+---
+
+### Screen 2 — Onboarding Wizard
+
+**Route:** `/merchant/onboarding/step-[1-5]`
+
+**Layout:** Full-page wizard — no sidebar during onboarding. Progress bar at top.
+
+**Progress indicator:** `"Langkah 1 dari 5"` with a filled bar (`bg-primary`) showing completion fraction.
+Step labels shown below bar (only for current and completed steps).
+
+**Each step — one screen, one task:**
+
+| Step | Heading | Fields |
+|---|---|---|
+| 1 (REQUIRED) | "Info Restoran Anda" | Restaurant Name *, Cuisine Type, Logo upload (drag-and-drop or click), Branch Address * |
+| 2 | "Tambahkan Menu Pertama" | Simplified inline form: Category Name, then up to 5 items (Name + Price). Live preview panel on the right shows how the menu will look in `apps/menu`. |
+| 3 (REQUIRED) | "Buat Meja & QR Code" | Table Name/Number *. On save: immediately shows a QR code with "Scan sekarang untuk melihat menu Anda!" instruction. QR code is large (200×200px), centered. |
+| 4 | "Pengaturan Pembayaran" | Payment mode: radio (QRIS / Bayar di Kasir / Keduanya). QRIS is default and always available. |
+| 5 | "Tambahkan Staff" | Staff Name, PIN (4–6 digits), Role (select or use template). "+ Tambah Staff Lagi" link for multiple staff. |
+
+**Footer controls:**
+- Back button (secondary, left) — always visible except on Step 1
+- Next / Selesai button (primary, right)
+- "Lewati ke Dashboard" link (text link, centered below) — only appears after Step 1 and 3 are complete
+
+---
+
+### Screen 3 — Dashboard / Home
+
+**Route:** `/merchant/dashboard`
+
+**Live operations panel (top, real-time via Supabase Realtime):**
+
+Row 1 — Stat cards:
+
+| Card | Value | Color when non-zero |
+|---|---|---|
+| Pesanan Aktif | Count: PENDING + CONFIRMED + PREPARING + READY | Primary color |
+| Meja Terisi | X dari Y tables OCCUPIED | Primary color |
+| Permintaan Pelayan | Count of open WaiterRequests | Warning (amber) if > 0 |
+| Pendapatan Hari Ini | Sum of confirmed order grandTotal (IDR) | — |
+
+**Ordering status toggle** — prominent row below stat cards:
+- Green state: `bg-green-100 text-green-800` — "Pesanan: Diterima" with a [Jeda Pesanan] button
+- Red state: `bg-red-100 text-red-700` — "Pesanan: DIJEDA" with a [Lanjutkan Pesanan] button + custom pause message
+
+**Onboarding checklist card** (shown until dismissed, stored in `Merchant.onboardingChecklist`):
+See checklist layout in the main "Merchant Onboarding" section of this file.
+
+**Revenue chart:**
+- Type: Area chart (Recharts) — soft fill under the line
+- X-axis: Last 7 days (day labels)
+- Y-axis: IDR amounts
+- Series: Revenue (IDR)
+- Data: Confirmed orders, summed by day
+
+**Recent orders table** (last 10 orders, refreshes via Supabase Realtime):
+
+| Column | Source |
+|---|---|
+| # | `Order.queueNumber` |
+| Meja | `Table.name` |
+| Item | Item count + truncated list |
+| Total | `Order.grandTotal` (IDR) |
+| Status | Status badge |
+| Waktu | `Order.createdAt` (HH:mm) |
+
+Click row → navigates to order detail page.
+
+**WaiterRequest alerts panel** (right side, or below charts on smaller screens):
+- Each open request shown as a card: Table name + request type badge + elapsed time
+- [Tandai Selesai] button on each card
+- Updates in real-time via Supabase Realtime
+
+---
+
+### Screen 4 — Menu Management List
+
+**Route:** `/merchant/menu`
+**Permission:** `menu:manage`
+
+**Layout:** Category tabs on the left sidebar (or top tab bar on smaller screens). Item list/grid on the right.
+
+**Category list (left panel):**
+- Each category shown as a row: drag handle (grip icon) + category name + item count badge + [Edit] icon
+- Active category: `bg-primary-light border-l-2 border-primary`
+- "+ Tambah Kategori" button at bottom
+
+**Item list (right panel) for selected category:**
+
+**Controls (above item list):**
+- Search input — `"Cari item..."` — filters within current category
+- [+ Tambah Item] button (primary)
+- View toggle: List view / Grid view (icon buttons, top right)
+
+**List view — table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Sort | Drag handle `⠿` | `w-[40px]` | Drag to reorder |
+| Image | Thumbnail 48×48px, rounded | `w-[60px]` | No |
+| Nama | `MenuItem.name` | `min-w-[200px]` | Yes |
+| Harga | `MenuItem.price` (IDR) | `w-[120px]` | Yes |
+| Status | Available / Habis badge | `w-[100px]` | Yes |
+| Stok | `MenuItem.stockCount` or "—" | `w-[80px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions:** Edit, Tandai Habis (toggle availability), Duplikat, Hapus
+
+**Drag-to-reorder:** Grip handle on far left. Dragging updates `sortOrder` via PATCH request on drop. Visual feedback: dragged row has `shadow-lg opacity-80`.
+
+**"Habis" indicator:** Items with `isAvailable = false` shown with `opacity-60` and a red "Habis" badge.
+
+**Empty state (no items in category):**
+- Icon: `UtensilsCrossed`
+- Heading: "Belum ada item menu"
+- Description: "Tambahkan item menu ke kategori ini."
+- CTA: "+ Tambah Item"
+
+---
+
+### Screen 5 — Menu Item Form (Create/Edit)
+
+**Route:** `/merchant/menu/items/new`, `/merchant/menu/items/[itemId]/edit`
+**Permission:** `menu:manage`
+
+**Layout:** Two-column form. Left: main fields. Right: image + advanced fields.
+
+**Left column — field order:**
+1. Nama Item * — text input, max 100 chars
+2. Deskripsi — textarea, max 500 chars, optional; helper: "Tampil di halaman detail item pelanggan"
+3. Harga * — number input, IDR, integer only; prefix: "Rp"
+4. Kategori * — select dropdown (lists all active MenuCategory records)
+5. Tipe Harga — radio: Harga Tetap (FIXED) / Per Berat (BY_WEIGHT)
+   - If BY_WEIGHT selected: additional fields appear:
+     - Harga per Satuan * — number input, IDR
+     - Label Satuan * — text input ("per 100g", "per ekor", "per kg")
+     - Deposit * — number input, IDR
+6. Allergen — multi-select checkboxes: Kacang, Dairy, Gluten, Seafood, Eggs, Soy
+7. Isyarat Persiapan — number input (minutes), optional; helper: "Tampil ke pelanggan sebagai '~X menit'"
+
+**Left column — dietary badges:**
+8. Halal — toggle switch
+9. Vegetarian — toggle switch
+10. Vegan — toggle switch
+11. Tingkat Kepedasan — radio: Tidak Pedas / Mild / Sedang / Pedas (values 0–3)
+
+**Left column — availability:**
+12. Tersedia — toggle switch (default: ON)
+13. Reset Otomatis Tengah Malam — toggle switch; helper: "Otomatis tersedia lagi setiap hari tengah malam"; disabled + warning shown if stockCount is set
+14. Stok — number input, optional; helper: "Dikosongkan = stok tidak terbatas"; disabled if autoResetAvailability is ON
+
+**Right column — field order:**
+1. Foto Item — image upload dropzone; shows preview after upload; guidance: "Maks 800×800px, JPG/PNG/WebP"
+2. Stasiun Dapur Override — select dropdown (lists KitchenStation records + "Gunakan Kategori"); helper: "Mengabaikan pengaturan stasiun di kategori"
+3. Urutan Tampil — number input; helper: "Angka lebih kecil tampil lebih dulu"
+4. **Variasi** section — card with "+ Tambah Variasi" button; each variant row: Name * + Price Delta + Default toggle + Delete icon
+5. **Tambahan (Add-ons)** section — card with "+ Tambah Tambahan" button; each addon row: Name * + Price Delta + Max Qty + Default toggle + Delete icon
+
+**Submit buttons (bottom):**
+- [Simpan] — primary button
+- [Batal] — secondary button, navigates back to menu list
+
+---
+
+### Screen 6 — Category Management
+
+**Route:** `/merchant/menu/categories` (or accessible via the left panel on Screen 4)
+**Permission:** `menu:manage`
+
+**List layout (each category row):**
+```
+[⠿ drag]  [Category Image 40×40]  Category Name         [time window badge]  [layout badge]  [Active toggle]  [Edit ✎]
+```
+
+**Time window badge:** Shown only if `availableFrom` or `availableTo` is set.
+- Format: `"06:00 – 11:00 WIB"` in `bg-blue-100 text-blue-800` badge
+- If outside current time window: `bg-stone-100 text-stone-400` (greyed, with "Tidak aktif sekarang" tooltip)
+
+**Layout override badge:** Shown only if `menuLayoutOverride` is set.
+- Shows layout name: "Grid" / "List" / "Bundle" / "Spotlight" in a neutral badge
+
+**Category edit form (modal, medium size):**
+1. Nama Kategori * — text input
+2. Gambar Kategori — image upload (optional)
+3. Layout Override — select: Tidak Ada (ikuti restoran) / Grid / List / Bundle / Spotlight
+4. Tampil Dari — time picker (HH:MM, 24h), optional
+5. Tampil Hingga — time picker, optional
+6. Stasiun Dapur — select dropdown (KitchenStation records); default: no station (items use item-level or restaurant default)
+7. Aktif — toggle switch
+8. [Simpan] / [Batal]
+
+---
+
+### Screen 7 — Table Management / Floor Map
+
+**Route:** `/merchant/tables`
+**Permission:** `tables:manage`
+
+**Layout:** Two view modes toggled at top right:
+- **Floor Map** (grid view) — default
+- **List View** (table)
+
+**Floor Map view:**
+- Responsive grid of table cards: `grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3`
+- Ordered by `Table.sortOrder`
+
+**Table card anatomy:**
+```
+┌─────────────────┐
+│  Meja 5         │  ← Table.name (font-semibold)
+│  4 kursi        │  ← Table.capacity (text-sm text-stone-500)
+│                 │
+│  [TERISI]       │  ← status badge (large size)
+│                 │
+│  [QR] [···]     │  ← QR button + kebab menu
+└─────────────────┘
+```
+
+Card background color (based on status):
+- AVAILABLE: `bg-white border-stone-200`
+- OCCUPIED: `bg-orange-50 border-orange-200`
+- DIRTY: `bg-amber-50 border-amber-200`
+- RESERVED: `bg-blue-50 border-blue-200`
+- CLOSED: `bg-stone-100 border-stone-200`
+
+**Kebab menu actions (per table):**
+1. Tandai Bersih (only shown when status = DIRTY)
+2. Reservasi (set to RESERVED)
+3. Tutup Meja (set to CLOSED)
+4. Buka Meja (set to AVAILABLE — shown when CLOSED or RESERVED)
+5. Rename Meja
+6. Edit (opens edit form)
+7. Hapus (only allowed if status = AVAILABLE and no active session)
+
+**Pause Orders toggle** — prominent banner/button at top of page (synced with `MerchantSettings.orderingPaused`):
+- Green: "Pesanan: Aktif" + [Jeda Pesanan] button
+- Red: "PESANAN DIJEDA" + [Lanjutkan] button
+
+**List view — table columns:**
+
+| Column | Source | Width |
+|---|---|---|
+| Nama Meja | `Table.name` | `min-w-[140px]` |
+| Kapasitas | `Table.capacity` | `w-[100px]` |
+| Status | Status badge | `w-[140px]` |
+| Sesi Aktif | CustomerSession status / empty | `w-[100px]` |
+| QR Token | Truncated `Table.tableToken` | `w-[160px]` |
+| Actions | QR button + kebab | `w-[120px]` |
+
+**"+ Tambah Meja" button** — top right, opens create form (name, capacity).
+
+---
+
+### Screen 8 — QR Code Modal
+
+Triggered from the [QR] button on a table card or the table list.
+
+**Modal size:** Medium (`max-w-lg`)
+
+**Content (top to bottom):**
+1. Modal title: `"QR Code — Meja [Name]"` (H3)
+2. QR code image — centered, 240×240px, with `alt="QR code for [table name]"`
+   - Generated from `Table.tableToken` redirect URL using the `qrcode` package
+   - Error correction level: M (recoverable up to 15% damage)
+3. URL label — monospace text, small: `menu.fbqr.app/r/{tableToken}` (truncated)
+4. Table name — `text-sm text-stone-500` below QR
+5. Buttons row:
+   - [Unduh PNG] — primary button; downloads QR as PNG
+   - [Unduh PDF] — secondary button; downloads printable A4 PDF with QR + restaurant name + table name
+   - [Cetak] — secondary button; opens browser print dialog
+6. "Rotasi Token" link (text link) — bottom of modal; shows confirmation dialog before rotating
+
+**Confirmation dialog for token rotation:**
+- Heading: "Ganti QR Code?"
+- Body: "QR code lama akan langsung tidak berlaku. Pelanggan yang sudah scan QR lama perlu scan QR baru."
+- Buttons: [Ganti QR] (destructive) + [Batal] (secondary)
+
+---
+
+### Screen 9 — Promotions List
+
+**Route:** `/merchant/promotions`
+**Permission:** `promotions:manage`
+
+**Page header:** "Promosi" (H1) + `"+ Buat Promosi"` button (primary, top right)
+
+**Filters:** Status dropdown (All, Aktif, Tidak Aktif, Kedaluwarsa), Type dropdown (All, Persentase, Fixed, BOGO, Item Gratis)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Nama | `Promotion.name` | `min-w-[200px]` | Yes |
+| Tipe | Type badge | `w-[120px]` | Yes |
+| Diskon | Formatted value | `w-[120px]` | Yes |
+| Kode | `Promotion.code` or "Auto" | `w-[120px]` | No |
+| Penggunaan | `usageCount / usageLimit` or `usageCount / ∞` | `w-[100px]` | Yes |
+| Berlaku Hingga | `Promotion.validTo` or "Tidak Terbatas" | `w-[160px]` | Yes |
+| Status | Active badge | `w-[100px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Type badge colors:**
+- PERCENTAGE: `bg-blue-100 text-blue-800`
+- FIXED_AMOUNT: `bg-green-100 text-green-800`
+- BOGO: `bg-purple-100 text-purple-700`
+- FREE_ITEM: `bg-amber-100 text-amber-800`
+
+**Row actions:** Edit, Duplikat, Nonaktifkan (toggle), Hapus
+
+---
+
+### Screen 10 — Promotion Form
+
+**Route:** `/merchant/promotions/new`, `/merchant/promotions/[promotionId]/edit`
+**Permission:** `promotions:manage`
+
+**Field order:**
+1. Nama Promosi * — text input, max 100 chars
+2. Tipe * — select: Persentase Diskon / Potongan Harga / Beli 1 Gratis 1 (BOGO) / Item Gratis
+3. Nilai Diskon — number input (shown for PERCENTAGE: "%" suffix; for FIXED_AMOUNT: "Rp" prefix; hidden for BOGO/FREE_ITEM)
+4. Diskon Maksimal — number input, IDR, optional (shown only for PERCENTAGE type); helper: "Batas maksimal potongan harga"
+5. Minimum Pesanan — number input, IDR, optional; helper: "Minimum total belanja untuk menggunakan promo ini"
+6. Berlaku Untuk * — radio: Semua Item / Kategori Tertentu / Item Tertentu
+   - If Kategori Tertentu: multi-select checkbox list of categories
+   - If Item Tertentu: multi-select search for menu items
+7. Kode Promo — text input, optional; placeholder: "contoh: PROMO10"; helper: "Kosongkan untuk promo otomatis (tanpa kode)"
+8. Batas Penggunaan — number input, optional; helper: "Kosongkan = tidak terbatas"
+9. Batas per Pelanggan — number input, optional; helper: "Hanya berlaku untuk pelanggan terdaftar"
+10. Berlaku Dari — date+time picker, optional
+11. Berlaku Hingga — date+time picker, optional
+12. Aktif — toggle switch (default: ON)
+
+**Submit:** [Simpan Promosi] (primary) + [Batal] (secondary)
+
+---
+
+### Screen 11 — Staff Management List
+
+**Route:** `/merchant/staff`
+**Permission:** `staff:manage`
+
+**Page header:** "Staff" (H1) + `"+ Tambah Staff"` button (primary, top right)
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| Nama | `Staff.name` | `min-w-[180px]` | Yes |
+| Cabang | `Branch.name` (or "Semua Cabang" if null) | `w-[160px]` | Yes |
+| Role | `MerchantRole.name` | `w-[160px]` | Yes |
+| Status | Online dot + "Online" / "Offline" | `w-[100px]` | No |
+| Terakhir Login | `Staff.lastLoginAt` (relative time) | `w-[150px]` | Yes |
+| Actions | Kebab menu | `w-[60px]` | No |
+
+**Row actions:** Edit, Reset PIN, Nonaktifkan, Hapus
+
+**Empty state:**
+- Icon: `Users`
+- Heading: "Hanya Anda yang bisa login"
+- Description: "Tambahkan staff untuk berbagi akses ke restoran."
+- CTA: "+ Tambah Staff"
+
+---
+
+### Screen 12 — Staff Form
+
+**Route:** Modal (create/edit) — opened from the staff list page
+
+**Modal size:** Medium (`max-w-lg`)
+
+**Field order:**
+1. Nama Staff * — text input
+2. Cabang * — select dropdown (lists all Branch records); helper: "Staff hanya bisa akses data cabang yang dipilih"; required even for single-branch restaurants
+3. Role * — select dropdown (lists all MerchantRole records); "+ Buat Role Baru" option at bottom
+4. PIN * — 4–6 digit number input; show/hide toggle; confirmation field (repeat PIN)
+
+**Submit:** [Simpan] (primary) + [Batal] (secondary)
+
+---
+
+### Screen 13 — Role Management
+
+**Route:** `/merchant/staff/roles`
+**Permission:** `staff:manage`
+
+**Layout:** Card list of existing roles. Each role is a card.
+
+**Role card anatomy:**
+```
+┌──────────────────────────────────────────────────────┐
+│  Kasir                          [Edit] [Hapus]       │
+│                                                      │
+│  Izin:                                               │
+│  [orders:view] [orders:manage] [invoices:read]       │  ← permission chips
+│                                                      │
+│  3 staff menggunakan role ini                        │
+└──────────────────────────────────────────────────────┘
+```
+
+Permission chips: `bg-stone-100 text-stone-700 rounded px-2 py-0.5 text-xs`
+
+**"+ Buat Role" button** — top right
+
+**Role create/edit form (modal, medium size):**
+1. Nama Role * — text input; placeholder: "contoh: Kasir, Supervisor, Koordinator Dapur"
+2. Izin * — checklist of all system-defined permissions:
+   - Each permission as a toggle row with permission key + description
+   - Grouped by domain: Menu, Pesanan, Dapur, Staff, Meja, Pengaturan, Laporan
+3. **Template presets** — row of suggestion chips at top of checklist: "Owner", "Supervisor", "Kasir", "Kitchen Admin", "Kitchen Staff"
+   - Clicking a preset chips the checklist — user can then modify
+   - A helper note: "Template adalah titik awal. Anda bisa ubah sesuai kebutuhan."
+
+---
+
+### Screen 14 — Orders List
+
+**Route:** `/merchant/orders`
+**Permission:** `orders:view`
+
+**Page header:** "Pesanan" (H1)
+
+**Filters (horizontal row):**
+1. Status filter — tab bar: Semua / Menunggu / Dikonfirmasi / Disiapkan / Siap / Selesai / Dibatalkan
+2. Tipe filter — dropdown: Semua / Dine-in / Takeaway / Delivery
+3. Pembayaran filter — dropdown: Semua / QRIS / Tunai / GoPay / OVO / VA / Kartu
+4. Date range picker — default: Today
+
+**Table columns:**
+
+| Column | Source | Width | Sortable |
+|---|---|---|---|
+| # Antrian | `Order.queueNumber` | `w-[80px]` | No |
+| Tipe | Order type badge (Dine-in / Takeaway / Delivery icon + label) | `w-[120px]` | Yes |
+| Meja / Customer | Table name for dine-in; "—" for takeaway | `min-w-[140px]` | Yes |
+| Item | Item count + first item name | `min-w-[160px]` | No |
+| Total | `Order.grandTotal` (IDR) | `w-[120px]` | Yes |
+| Pembayaran | Payment method badge | `w-[100px]` | Yes |
+| Status | Order status badge | `w-[140px]` | Yes |
+| Waktu | `Order.createdAt` (HH:mm) | `w-[80px]` | Yes |
+| Actions | [Lihat] button + kebab | `w-[100px]` | No |
+
+**Click row or [Lihat]:** Navigate to order detail page.
+
+**Order type badge:**
+- Dine-in: `ChairIcon` + "Dine-in" — `bg-stone-100 text-stone-700`
+- Takeaway: `ShoppingBag` + "Takeaway" — `bg-blue-100 text-blue-700`
+- Delivery: `Truck` + "Delivery" — `bg-purple-100 text-purple-700`
+
+---
+
+### Screen 15 — Order Detail
+
+**Route:** `/merchant/orders/[orderId]`
+**Permission:** `orders:view`
+
+**Layout:** Breadcrumb + two-column layout (main left, timeline right).
+
+**Left column — main content:**
+
+**Section 1: Order Header**
+- Order # (H2): `"#042 — Meja 5"`
+- Status badge (large)
+- Type badge
+- Created at time + elapsed since creation
+- [Konfirmasi] / [Batalkan] / [Selesaikan] action buttons based on current status and permissions
+
+**Section 2: Items**
+Table with columns: Nama Item, Variant, Tambahan, Qty, Harga Satuan, Total
+
+For BY_WEIGHT items: row shows ⚖️ icon + deposit amount + "Harga akhir ditentukan setelah ditimbang" note.
+After weighing: shows actual weight, final line total, and any remaining charge or refund.
+
+**Section 3: Payment Summary**
+- Subtotal: `Rp X.XXX`
+- Service Charge: `Rp X.XXX` (hidden if 0)
+- PPN (11%): `Rp X.XXX`
+- **Total: Rp X.XXX** (bold, larger)
+- Payment Method badge
+- Payment Status badge
+
+**Section 4: Customer Note**
+Shown only if `Order.customerNote` is non-empty.
+- Label: "Catatan Pelanggan"
+- Content in a muted quote block: `bg-amber-50 border-l-4 border-amber-400 pl-3 py-2 text-sm`
+
+**Right column — Order Timeline**
+Vertical timeline of `OrderEvent` records:
+- Each event: circle dot + status label + actor name + timestamp
+- Dot colors match status badge colors from ui-ux.md A.2
+
+---
+
+### Screen 16 — Kitchen Display
+
+**Route:** `/merchant/kitchen`
+**Permission:** `kitchen:view`
+**Design philosophy:** High contrast, glanceable at 3 metres, touch-friendly.
+
+**Color scheme:** Dark theme (see `docs/ui-ux.md` A.1 Kitchen Display Colors).
+
+**Top bar:**
+- Restaurant name + Branch name
+- Station tabs: [Semua] [Bar] [Dapur] [Patisserie] — one tab per active KitchenStation + "Semua"
+- Active station tab: `bg-primary text-white rounded-md`
+- [Tutup Register] button (top right) — triggers EOD PENDING_CASH flow
+- [?] help icon
+
+**Main area — order cards:**
+- Responsive column grid: `grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4`
+- Sorted by priority within selected station (or globally for "Semua" tab)
+- New card entrance animation (see ui-ux.md E.3)
+
+**Order card anatomy (full specification):**
+```
+┌──────────────────────────────────────────────────────┐
+│  Meja 5  |  #042  |  🪑 Dine-in          12:34      │  ← header row
+│──────────────────────────────────────────────────────│
+│  2×  Nasi Goreng Spesial                [Dapur]      │
+│  1×  Teh Manis Panas                   [Bar]         │
+│  1×  Kepiting Saus Padang  ⚖️           [Dapur]       │
+│──────────────────────────────────────────────────────│
+│  Catatan: "Nasi goreng no spicy please"              │  ← shown only if non-empty
+├──────────────────────────────────────────────────────│
+│  ⏱ 08:32              [Disiapkan] [Siap] [↑] [↓]   │  ← footer
+└──────────────────────────────────────────────────────┘
+```
+
+Card styling:
+- Background: `bg-stone-900 border border-stone-700 rounded-xl`
+- Header: `bg-stone-800 rounded-t-xl px-4 py-3`
+- Order type icon: 🪑 Dine-in / 🥡 Takeaway / 🛵 Delivery
+- Station badge: colored pill using `KitchenStation.displayColor`
+- Elapsed timer:
+  - 0–9:59 min: `text-green-400`
+  - 10–19:59 min: `text-yellow-400` + subtle pulse animation
+  - ≥20 min: `text-red-400` + stronger pulse
+- Priority controls [↑] [↓]: `h-8 w-8` ghost buttons; drag-and-drop also supported
+- Action buttons: [Disiapkan] (CONFIRMED → PREPARING) / [Siap] (PREPARING → READY)
+  - Button color: `bg-primary text-white h-8 rounded-md text-sm`
+
+**"Semua" tab — station badge visibility:** Station badge shown on each OrderItem row. In individual station tabs, station badge is hidden (redundant).
+
+**Special item badges (per OrderItem):**
+- ⚖️ Needs weighing (BY_WEIGHT, no weight entered yet)
+- ⚠️ Stock-out flag (item confirmed with stockCount 0)
+- 🔥 High priority (kitchenPriority manually reordered to top)
+
+---
+
+### Screen 17 — Analytics Dashboard
+
+**Route:** `/merchant/analytics`
+**Permission:** `reports:read`
+
+**Top controls:** Date range selector (Last 7 days / Last 30 days / Last 3 months / Custom) + Branch selector (if multiBranch enabled: All / Individual branch).
+
+**Section 1: Revenue**
+
+Stat cards (row):
+| Card | Metric |
+|---|---|
+| Pendapatan Kotor | Sum of Order.grandTotal for confirmed orders in period |
+| PPN Dikumpulkan | Sum of Order.taxAmount |
+| Service Charge | Sum of Order.serviceChargeAmount |
+| Est. Biaya Gateway | Estimated payment fees (QRIS × 0.7%, etc.) |
+| Pendapatan Bersih (est.) | Gross − gateway fees − tax |
+
+Charts:
+1. **Revenue Trend** — Area chart; X: days; Y: IDR; Series: gross revenue
+2. **Revenue by Order Type** — Donut chart (Recharts); segments: Dine-in / Takeaway / Delivery
+3. **Revenue by Payment Method** — Horizontal bar chart; bars: QRIS / Tunai / GoPay / OVO / VA / Kartu
+
+**Section 2: Orders**
+
+Stat cards: AOV (average order value), Total Pesanan, Tingkat Pembatalan (%), Pesanan per Jam (average)
+
+Charts:
+4. **Orders by Hour** — Bar chart (heat map style); X: hour of day (0–23); Y: avg order count; shows peak hours
+5. **Orders by Day of Week** — Bar chart; X: Mon–Sun; Y: avg order count
+
+**Section 3: Menu Performance**
+
+Charts:
+6. **Top 10 Item by Pendapatan** — Horizontal bar chart; Y: item name; X: total revenue IDR
+7. **Top 10 Item by Pesanan** — Horizontal bar chart; Y: item name; X: order count
+8. **Slowest Moving Items** — Table: item name, last ordered date, total orders in period
+
+**Section 4: Table Analytics** (if `tables:manage` permission)
+
+Stat cards: Avg Table Turnover Rate (sessions per table per day), Avg Spend per Table (IDR), Busiest Table (name + count)
+
+**Section 5: Ratings** (if orders have ratings)
+
+Stat card: Rata-rata Rating (1–5 stars display)
+Chart: **Rating Distribution** — bar chart; X: 1–5 stars; Y: count
+Table: Recent comments (reviewer anonymous/name + rating + comment + order date)
+
+**Export button:** [Ekspor ke Excel] (top right) — downloads filtered data as .xlsx
+
+---
+
+### Screen 18 — Settings Screens
+
+**Route:** `/merchant/settings`
+**Permission:** Various (see below)
+
+**Navigation:** Vertical tab list on left (desktop) or top tabs (mobile).
+
+| Tab | Route | Permission | Fields |
+|---|---|---|---|
+| Umum | `/settings/general` | `settings:manage` | Restaurant name, cuisine type, logo upload, banner upload |
+| Kontak | `/settings/contact` | `settings:manage` | WhatsApp number, Instagram, TikTok, Google Maps URL |
+| Jam Buka | `/settings/hours` | `settings:manage` | Day-of-week editor (per branch); open/close time pickers; "Tutup Hari Ini" toggle per day |
+| Pajak & Biaya | `/settings/tax` | `settings:manage` | Tax rate (%), tax label, service charge rate (%), service charge label, taxOnServiceCharge toggle, pricesIncludeTax toggle, rounding rule select |
+| Pembayaran | `/settings/payment` | `settings:manage` | Payment mode (PAY_FIRST / PAY_AT_CASHIER), payment timeout (minutes), max pending orders, max order value (IDR), max active orders, cash EOD cleanup hour |
+| Notifikasi | `/settings/notifications` | `settings:manage` | Push notification toggles (new order, call waiter, low stock); email notification toggles (billing reminders, daily summary) |
+| Branding | `/settings/branding` | `branding:manage` | Primary color (color picker), secondary color, font family (select from curated list), border radius (sharp/rounded/pill), menu layout (GRID/LIST/BUNDLE/SPOTLIGHT), live preview of apps/menu |
+| Fitur AI | `/settings/ai` | `settings:manage` | Toggle switches: bestsellers, personalized, upsell, time-based |
+| Loyalty | `/settings/loyalty` | `loyalty:manage` | Program name, IDR per point, redemption rate, calculation basis (SUBTOTAL/TOTAL), activate/deactivate toggle |
+| Sesi Meja | `/settings/session` | `settings:manage` | Session timeout (minutes), enable dirty state toggle |
+| Tagihan | `/settings/billing` | `billing:read` | Read-only: current plan, renewal date, download invoice archive, upgrade button |
+| Ekspor Data | `/settings/export` | `settings:manage` | Export: Order history (CSV/Excel), Menu (CSV), Customer list (CSV), Invoice archive (ZIP) |
+
+**Each tab:** Save button at bottom right. Toast on save success/failure. Warning dialog if navigating away with unsaved changes.

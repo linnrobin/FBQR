@@ -10,10 +10,31 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-12
-Version        : 3.2
+Last updated   : 2026-03-13
+Version        : 3.3
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Deep QA audit pass (v3.2) — 15 issues (2 critical, 5 high, 6 medium, 2 low) fixed:
+Last completed : UI/UX specification pass (v3.3) — full design system + screen-specific specs added:
+                 NEW — docs/ui-ux.md: design system (color palette + all status badge Tailwind
+                   classes, typography scale, spacing/shadow/z-index, component patterns —
+                   stat cards, data tables, forms, badges, buttons, modals, toasts, skeletons,
+                   12 standard empty states with Indonesian copy, navigation structure for all
+                   4 interfaces, responsive breakpoint rules, Framer Motion animation specs,
+                   IDR/WIB copy conventions, accessibility baseline, performance targets).
+                 UPDATED — docs/platform-owner.md: added ## UI Specifications (FBQRSYS) —
+                   9 screens with exact table columns, form field order, chart types, badge
+                   colors, and empty states (Login, Dashboard, Merchant List, Merchant Detail,
+                   Create Merchant, Subscription Plans, Billing, Staff List, Audit Log).
+                 UPDATED — docs/merchant.md: added ## UI Specifications (Merchant POS) —
+                   18 screens (Login, Onboarding Wizard, Dashboard, Menu List, Menu Item Form,
+                   Category Management, Table Floor Map, QR Modal, Promotions, Staff, Roles,
+                   Orders List, Order Detail, Kitchen Display, Analytics Dashboard, Settings).
+                 UPDATED — docs/customer.md: added ## UI Specifications (Customer Menu App) —
+                   12 screens (Loading/QR Validation, Grid/List/Bundle/Spotlight layouts, Item
+                   Detail Sheet, Cart Sheet, Checkout, Payment Processing, Order Tracking,
+                   Error Screens, Takeaway/Queue Display).
+                 UPDATED — CLAUDE.md: ui-ux.md wired into reference tables (ownership table,
+                   step routing, write rules).
+Previously: Deep QA audit pass (v3.2) — 15 issues (2 critical, 5 high, 6 medium, 2 low) fixed:
                  CRITICAL #1 — data-models.md CustomerSession: full field table with expiresAt
                    TTL formula (expiresAt = NOW() + tableSessionTimeoutMinutes) and updatedAt.
                    expiresAt is required by the Session Cleanup Cron; missing it = runtime crash.
@@ -199,6 +220,7 @@ Do not try to finish one more thing. Stop, commit, update CURRENT STATE and docs
 | `docs/merchant.md` | Merchant RBAC, onboarding wizard, branding, menu management, kitchen routing, promotions, table management, analytics dashboard, delivery integration (merchant side) | Menu field specs, kitchen display format, role templates |
 | `docs/customer.md` | QR flow (all 9 sections), customer session, order lifecycle, payment flow, customer UI requirements, loyalty (customer side), AI recommendations | QR validation steps, payment→order mapping, customer UI rules |
 | `docs/architecture.md` | All ADRs, authentication model, tech stack decisions, competitive research, feature backlog, open questions | ADR content, auth table, backlog items |
+| `docs/ui-ux.md` | Global design system: color palette, status badge colors, typography, spacing, border radius, shadows, z-index, component patterns (cards, tables, forms, badges, buttons, modals, toasts, loading/empty states), navigation structure, responsive rules, animation rules, language/copy conventions, accessibility baseline | Specific table columns, form field order, chart types for individual screens (those belong in domain docs) |
 
 ### Step → Doc routing table
 
@@ -210,32 +232,33 @@ Read **all listed files** before writing code for a step.
 | **Step 2** | Prisma schema + migrations + seed | `data-models.md` ← primary; `architecture.md` (ADRs explaining why) |
 | **Step 3** | Auth: JWT, PIN auth, NextAuth | `data-models.md` (Merchant, Staff, Customer models); `architecture.md` (auth model, ADR-005) |
 | **Step 4** | Dynamic RBAC — role/permission engine | `merchant.md` (RBAC section); `platform-owner.md` (FBQRSYS permissions); `architecture.md` (ADR-005) |
-| **Step 5** | FBQRSYS — merchant management UI | `platform-owner.md` ← primary; `data-models.md` (Merchant model) |
-| **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs) |
-| **Step 7** | Merchant onboarding — trial/free tier | `merchant.md` (onboarding wizard, checklist) |
-| **Step 8** | Restaurant branding + CSS injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu) |
-| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec) |
-| **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015) |
-| **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec) |
-| **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, layouts) |
-| **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs) |
-| **Step 14** | Item detail modal: variants, add-ons | `customer.md`; `merchant.md` (variant/addon field specs) |
-| **Step 15** | Cart + pre-invoice + Midtrans + cash | `customer.md` ← primary; `data-models.md` (Payment model) |
-| **Step 16** | Order tracking + real-time + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types) |
-| **Step 17** | Takeaway/counter mode, queue display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter) |
+| **Step 5** | FBQRSYS — merchant management UI | `platform-owner.md` ← primary; `data-models.md` (Merchant model); `ui-ux.md` (design system + FBQRSYS screen specs in platform-owner.md § UI Specifications) |
+| **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs); `ui-ux.md` (billing screen specs in platform-owner.md § UI Specifications) |
+| **Step 7** | Merchant onboarding — trial/free tier | `merchant.md` (onboarding wizard, checklist); `ui-ux.md` (wizard screen spec in merchant.md § UI Specifications) |
+| **Step 8** | Restaurant branding + CSS injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu); `ui-ux.md` (color tokens, apps/menu theming) |
+| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec); `ui-ux.md` (menu list + item form specs in merchant.md § UI Specifications) |
+| **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015); `ui-ux.md` (floor map + QR modal specs in merchant.md § UI Specifications) |
+| **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec); `ui-ux.md` (promotions list + form specs in merchant.md § UI Specifications) |
+| **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, layouts); `ui-ux.md` ← design system (color tokens, apps/menu branding override, Grid layout screen spec in customer.md § UI Specifications) |
+| **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs); `ui-ux.md` (List/Bundle/Spotlight screen specs in customer.md § UI Specifications) |
+| **Step 14** | Item detail modal: variants, add-ons | `customer.md`; `merchant.md` (variant/addon field specs); `ui-ux.md` (item detail bottom sheet spec in customer.md § UI Specifications) |
+| **Step 15** | Cart + pre-invoice + Midtrans + cash | `customer.md` ← primary; `data-models.md` (Payment model); `ui-ux.md` (cart sheet + checkout + payment screen specs in customer.md § UI Specifications) |
+| **Step 16** | Order tracking + real-time + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types); `ui-ux.md` (order tracking screen spec in customer.md § UI Specifications) |
+| **Step 17** | Takeaway/counter mode, queue display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter); `ui-ux.md` (queue display screen spec in customer.md § UI Specifications) |
 | **Step 18** | Push notifications — Web Push API | `architecture.md` (push notification design); `merchant.md` (notification routing) |
 | **Step 19** | Invoice + MerchantBillingInvoice PDF | `platform-owner.md` (MerchantBillingInvoice); `merchant.md` (Invoice format) |
-| **Step 20** | merchant-kitchen: queue, priorities, stations | `merchant.md` ← primary (kitchen display, station routing, priority) |
-| **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, export) |
+| **Step 20** | merchant-kitchen: queue, priorities, stations | `merchant.md` ← primary (kitchen display, station routing, priority); `ui-ux.md` (kitchen display dark theme tokens + order card spec in merchant.md § UI Specifications) |
+| **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, export); `ui-ux.md` (analytics dashboard chart types + stat card specs in merchant.md § UI Specifications) |
 | **Step 22** | Delivery platform integration | `merchant.md` (delivery flows); `architecture.md` (ADR-012, webhook idempotency) |
 | **Step 23** | AI recommendation engine | `customer.md` (AI customer-facing); `merchant.md` (AI settings) |
-| **Step 24** | Audit log — middleware + viewer UI | `platform-owner.md` ← primary; `data-models.md` (AuditLog model) |
+| **Step 24** | Audit log — middleware + viewer UI | `platform-owner.md` ← primary; `data-models.md` (AuditLog model); `ui-ux.md` (audit log screen spec in platform-owner.md § UI Specifications) |
 | **Step 25** | Merchant loyalty + customer account | `merchant.md` (loyalty config); `customer.md` (customer account, loyalty balance) |
 | **Step 26** | Platform loyalty + gamification | `customer.md` (loyalty tiers); `platform-owner.md` (platform loyalty) |
 | **Step 27** | WhatsApp Business integration | `platform-owner.md` (MerchantIntegration model); `merchant.md` (WA notification flows) |
 | **Step 28** | Remaining backlog | `architecture.md` (backlog); read domain docs per specific item |
 | **Any step** | Schema cross-check | `data-models.md` — confirm model fields before writing Prisma queries |
 | **Any step** | Design question / ADR lookup | `architecture.md` — check if the question was already decided |
+| **Any UI step** | Design system reference | `ui-ux.md` — colors, typography, component patterns, navigation, responsive rules |
 
 ### Write rules — when to update docs/ files
 
@@ -251,6 +274,10 @@ Read **all listed files** before writing code for a step.
 | Made a new architecture decision (new package, pattern, constraint) | `docs/architecture.md` — add an ADR |
 | Resolved an open question | `docs/architecture.md` (move to Resolved); update CLAUDE.md CURRENT STATE |
 | Discovered a new doc gap | CLAUDE.md `Known doc gaps` in CURRENT STATE |
+| Changed global colors, typography, spacing, component patterns, navigation structure, or animation rules | `docs/ui-ux.md` |
+| Changed screen-specific UI (table columns, form field order, chart types) for FBQRSYS screens | `docs/platform-owner.md` § UI Specifications |
+| Changed screen-specific UI for merchant-pos or kitchen screens | `docs/merchant.md` § UI Specifications |
+| Changed screen-specific UI for customer menu screens | `docs/customer.md` § UI Specifications |
 
 ### Conflict resolution
 
