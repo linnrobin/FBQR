@@ -75,6 +75,10 @@ Every status badge across the system uses this exact Tailwind class combination.
 
 #### Payment Status Badges
 
+> **Schema note:** `Payment.status` and `Payment.paymentType` are two separate fields on the Payment model. The first six rows below are `Payment.status` values (transaction outcome). `BALANCE_CHARGE` and `BALANCE_REFUND` are `Payment.paymentType` values (financial intent) — they are displayed as type-indicator badges alongside the status badge, **not** as replacements for it. A BALANCE_CHARGE payment has both a `paymentType = BALANCE_CHARGE` badge and a `status` badge (e.g. SUCCESS, FAILED). Do not conflate the two fields.
+
+**`Payment.status` badges** (use for transaction outcome display):
+
 | Status | Background | Text | Border | Display Label |
 |---|---|---|---|---|
 | `PENDING` | `bg-yellow-100` | `text-yellow-800` | `border-yellow-300` | Menunggu |
@@ -83,6 +87,13 @@ Every status badge across the system uses this exact Tailwind class combination.
 | `FAILED` | `bg-red-100` | `text-red-700` | `border-red-300` | Gagal |
 | `EXPIRED` | `bg-stone-100` | `text-stone-500` | `border-stone-200` | Kedaluwarsa |
 | `REFUNDED` | `bg-purple-100` | `text-purple-700` | `border-purple-300` | Dikembalikan |
+
+**`Payment.paymentType` badges** (use alongside status badge for BY_WEIGHT orders only):
+
+| paymentType | Background | Text | Border | Display Label |
+|---|---|---|---|---|
+| `FULL` | *(no badge — default; only show badge for non-FULL types)* | | | — |
+| `DEPOSIT` | `bg-stone-100` | `text-stone-600` | `border-stone-300` | Uang Muka |
 | `BALANCE_CHARGE` | `bg-blue-100` | `text-blue-800` | `border-blue-300` | Tagih Sisa |
 | `BALANCE_REFUND` | `bg-purple-100` | `text-purple-700` | `border-purple-300` | Refund Sisa |
 

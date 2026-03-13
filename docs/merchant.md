@@ -356,7 +356,7 @@ Merchants configure from branding/menu settings page. Preview renders in real-ti
 | `pricePerUnit` | int? | Required when `priceType = BY_WEIGHT`. IDR per unit (e.g. 50000 per 100g) |
 | `unitLabel` | string? | Display unit for weight items (e.g. `"per 100g"`, `"per ekor"`, `"per kg"`) |
 | `depositAmount` | int? | Upfront charge at checkout for `BY_WEIGHT` items. Final price settled after weighing. |
-| `kitchenStationOverride` | string? | Per-item station override (overrides category-level assignment) |
+| `kitchenStationOverride` | string? FK → KitchenStation.id | Per-item station override (overrides category-level assignment). Nullable — null means use the category's station. Live FK (not a snapshot); if the station is deactivated after the menu item is created, the Order creation code falls back to the default station for new orders. |
 | `deletedAt` | datetime? | Soft delete — preserved in order history |
 
 ---
@@ -550,9 +550,9 @@ Merchants create named **Kitchen Stations** from `merchant-pos` settings. When a
 | `KitchenStation` | `name` | string | Free-form, e.g. "Bar", "Hot Kitchen", "Patisserie" |
 | `KitchenStation` | `displayColor` | string? | Hex color for UI badge |
 | `KitchenStation` | `isActive` | bool | Toggle station without deleting |
-| `MenuCategory` | `kitchenStationId` | string? | Null = route to default station |
-| `MenuItem` | `kitchenStationOverride` | string? | Per-item override |
-| `OrderItem` | `kitchenStationId` | string | **Snapshot at order time — not a live FK** |
+| `MenuCategory` | `kitchenStationId` | string? FK → KitchenStation.id | Null = route to default station. Live FK; deactivated station falls back to default for new orders. |
+| `MenuItem` | `kitchenStationOverride` | string? FK → KitchenStation.id | Per-item override. Null = use category station. Live FK. |
+| `OrderItem` | `kitchenStationId` | string (UUID, not a live FK) | **Snapshot at order time** — copied from the resolved station at order creation. Stored as a plain string so historical orders retain their routing even if the station is deleted. |
 
 ### Configuration (merchant-pos)
 

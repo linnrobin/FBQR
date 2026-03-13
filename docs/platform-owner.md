@@ -438,7 +438,9 @@ STEP 2 — For each order the cashier processes:
   ├── [Mark as Paid]:
   │     BEGIN TRANSACTION
   │       UPDATE Payment SET status = 'SUCCESS' WHERE orderId = o.id
-  │       UPDATE Order SET status = 'CONFIRMED' WHERE id = o.id AND status = 'PENDING'
+  │       UPDATE Order SET status = 'CONFIRMED', confirmedAt = NOW()
+  │         WHERE id = o.id AND status = 'PENDING'
+  │       -- confirmedAt is the start time for the kitchen elapsed timer
   │       INSERT OrderEvent(fromStatus: PENDING, toStatus: CONFIRMED, actorType: STAFF)
   │       INSERT AuditLog(action: UPDATE, entity: Order, actorType: STAFF)
   │     COMMIT

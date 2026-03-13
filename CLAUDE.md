@@ -11,30 +11,67 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.3
+Version        : 3.4
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : UI/UX specification pass (v3.3) — full design system + screen-specific specs added:
-                 NEW — docs/ui-ux.md: design system (color palette + all status badge Tailwind
-                   classes, typography scale, spacing/shadow/z-index, component patterns —
-                   stat cards, data tables, forms, badges, buttons, modals, toasts, skeletons,
-                   12 standard empty states with Indonesian copy, navigation structure for all
-                   4 interfaces, responsive breakpoint rules, Framer Motion animation specs,
-                   IDR/WIB copy conventions, accessibility baseline, performance targets).
-                 UPDATED — docs/platform-owner.md: added ## UI Specifications (FBQRSYS) —
-                   9 screens with exact table columns, form field order, chart types, badge
-                   colors, and empty states (Login, Dashboard, Merchant List, Merchant Detail,
-                   Create Merchant, Subscription Plans, Billing, Staff List, Audit Log).
-                 UPDATED — docs/merchant.md: added ## UI Specifications (Merchant POS) —
-                   18 screens (Login, Onboarding Wizard, Dashboard, Menu List, Menu Item Form,
-                   Category Management, Table Floor Map, QR Modal, Promotions, Staff, Roles,
-                   Orders List, Order Detail, Kitchen Display, Analytics Dashboard, Settings).
-                 UPDATED — docs/customer.md: added ## UI Specifications (Customer Menu App) —
-                   12 screens (Loading/QR Validation, Grid/List/Bundle/Spotlight layouts, Item
-                   Detail Sheet, Cart Sheet, Checkout, Payment Processing, Order Tracking,
-                   Error Screens, Takeaway/Queue Display).
-                 UPDATED — CLAUDE.md: ui-ux.md wired into reference tables (ownership table,
-                   step routing, write rules).
-Previously: Deep QA audit pass (v3.2) — 15 issues (2 critical, 5 high, 6 medium, 2 low) fixed:
+Last completed : Pre-coding QA audit pass (v3.4) — 18 issues (4 critical, 5 high, 7 medium, 2 low) fixed:
+                 CRITICAL #1 — data-models.md OrderItem.status: added COMPLETED to enum
+                   (PENDING|PREPARING|READY|COMPLETED); clarified ⚖️ and ⚠️ are display
+                   states from needsWeighing/stock-out flags, NOT additional enum values.
+                 CRITICAL #2 — data-models.md Order model: explicit note that paymentMode
+                   (PAY_FIRST|PAY_AT_CASHIER) is NOT an Order field — it lives on
+                   MerchantSettings and is read at order creation time.
+                 CRITICAL #3 — ui-ux.md Payment Status Badges: split into two sub-tables —
+                   Payment.status badges (transaction outcome) vs Payment.paymentType badges
+                   (financial intent for BY_WEIGHT). BALANCE_CHARGE and BALANCE_REFUND are
+                   paymentType values, not status values. Added DEPOSIT paymentType badge.
+                   Added schema clarification note before the table.
+                 CRITICAL #4 — data-models.md Payment: BALANCE_REFUND amount is ALWAYS
+                   positive (>= 0); refund direction is indicated by paymentType alone.
+                   Removed misleading "(amount: negative)" comment. Added SIGN CONVENTION
+                   block to prevent aggregation bugs.
+                 HIGH #5 — data-models.md + platform-owner.md: added confirmedAt = NOW()
+                   to ALL Order → CONFIRMED transitions (webhook handler idempotency UPDATE,
+                   Close Register Mark as Paid). Kitchen elapsed timer formula now explicit:
+                   elapsed = NOW() - confirmedAt; null confirmedAt → timer shows "–".
+                 HIGH #6 — data-models.md WaiterRequest.notifyRoleId: changed "(FK? nullable)"
+                   to explicit "(string? FK → MerchantRole.id; nullable)".
+                 HIGH #7 — CronRunLog: confirmed already defined in Phase 2 Scaffolding table
+                   (no new fix needed; audit agent had false positive on this one).
+                 HIGH #8 — data-models.md MerchantBillingInvoice: expanded tree entry from
+                   3-field stub to complete schema (id, merchantId, subscriptionId,
+                   invoiceNumber, periodStart, periodEnd, amount, tax, total, status, dueAt,
+                   paidAt, pdfUrl, currency, createdAt, UNIQUE INDEX (merchantId, periodStart)).
+                 HIGH #9 — data-models.md Order.idempotencyKey: added scope clarification
+                   (global uniqueness is safe due to UUID entropy) and expiry semantics
+                   (application checks Order.createdAt < NOW() - 24h before returning existing
+                   Order; if expired, creates new Order).
+                 MEDIUM #10 — data-models.md OrderItem.kitchenStationId: explicit type
+                   clarification (stored as plain UUID string, NOT a live FK; preserves
+                   historical routing after station deactivation/rename).
+                 MEDIUM #11 — data-models.md MerchantSettings: added 9 previously scattered
+                   fields to the Phase 1 Prisma Additional Fields table:
+                   paymentMode, paymentTimeoutMinutes, maxPendingOrders, maxOrderValueIDR,
+                   maxActiveOrders, orderingPaused, orderingPausedMessage,
+                   lateWebhookWindowMinutes, eodCashCleanupHour.
+                 MEDIUM #12 — data-models.md Payment.provider: confirmed already documented
+                   with CASH/QRIS/EWALLET/VA/CARD rules (no change needed).
+                 MEDIUM #13 — data-models.md Phase 2 Scaffolding: added MenuCategory
+                   availableFrom/availableTo field specs (String? "HH:MM" WIB, date-fns-tz,
+                   both fields must be set together, overnight ranges supported).
+                 MEDIUM #14 — data-models.md Payment tree: expanded to full schema (added id,
+                   orderId, amount, currency, createdAt, updatedAt). Embedded SIGN CONVENTION
+                   and BY_WEIGHT SAME-CHANNEL CONSTRAINT blocks directly in the Payment entry.
+                 MEDIUM #15 — data-models.md Payment: added BY_WEIGHT SAME-CHANNEL CONSTRAINT
+                   block (DEPOSIT, BALANCE_CHARGE, BALANCE_REFUND must share method+provider;
+                   CASH BALANCE_REFUND: no Midtrans API, physical change, audit row retained).
+                 MEDIUM #16 — data-models.md + merchant.md: kitchenStationOverride clarified
+                   as live FK → KitchenStation.id (nullable); kitchen schema table in
+                   merchant.md updated with explicit FK types for all three fields.
+                 LOW #17 — data-models.md Restaurant.reservationEmail: confirmed already in
+                   Phase 2 Scaffolding table at correct location (no change needed).
+                 LOW #18 — data-models.md MerchantIntegration: confirmed stub already in Phase
+                   2 Scaffolding; credentials field encryption detail deferred to Phase 2.
+Previously: UI/UX specification pass (v3.3) — full design system + screen-specific specs added.
                  CRITICAL #1 — data-models.md CustomerSession: full field table with expiresAt
                    TTL formula (expiresAt = NOW() + tableSessionTimeoutMinutes) and updatedAt.
                    expiresAt is required by the Session Cleanup Cron; missing it = runtime crash.
