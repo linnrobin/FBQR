@@ -395,6 +395,41 @@ STEP 1b — Update Table.status for newly expired sessions
     AND cs.updatedAt >= NOW() - INTERVAL '5 minutes'   -- only rows just expired in STEP 1
     AND t.status = 'OCCUPIED'
 
+STEP 1c — Cancel abandoned BY_WEIGHT orders and refund deposits (ADR-026)
+  -- If a customer ordered a BY_WEIGHT item, paid the deposit, and walked out,
+  -- the session expires normally (TTL is never extended). This step cleans up.
+  SELECT o.id, p.id AS paymentId, p.amount AS depositAmount, p.method, p.midtransTransactionId
+  FROM Order o
+  JOIN Payment p ON p.orderId = o.id AND p.paymentType = 'DEPOSIT' AND p.status = 'SUCCESS'
+  WHERE o.status IN ('CONFIRMED', 'PREPARING', 'READY')
+    AND o.customerSessionId IN (
+      SELECT id FROM CustomerSession
+      WHERE status = 'EXPIRED'
+        AND updatedAt >= NOW() - INTERVAL '5 minutes'   -- rows just expired in STEP 1
+    )
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Order SET status = 'CANCELLED' WHERE id = o.id
+      -- Trigger Midtrans refund for the deposit (unless CASH — no API needed)
+      IF p.method != 'CASH':
+        CALL midtrans_refund_api(p.midtransTransactionId, depositAmount)
+        INSERT Payment(orderId: o.id, paymentType: BALANCE_REFUND, amount: depositAmount,
+                       method: p.method, midtransTransactionId: refundTxId, status: SUCCESS)
+      ELSE:
+        -- CASH deposit: no Midtrans call; physical refund handled by staff;
+        -- audit row created with midtransTransactionId = null
+        INSERT Payment(orderId: o.id, paymentType: BALANCE_REFUND, amount: depositAmount,
+                       method: CASH, midtransTransactionId: null, status: SUCCESS)
+      INSERT OrderEvent(fromStatus: o.status, toStatus: CANCELLED, actorType: SYSTEM,
+                        cancellationReason: SYSTEM_EXPIRED, note: 'Session expired with un-weighed item')
+      INSERT AuditLog(action: CANCEL, entity: Order, actorType: SYSTEM)
+    COMMIT
+
+  Note: Table status is already handled by STEP 1b (OCCUPIED → DIRTY when enableDirtyState,
+        else AVAILABLE). BY_WEIGHT abandoned orders get the same DIRTY treatment as any
+        expired session — staff investigate before reseating.
+
 STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled synchronously at session close)
   UPDATE WaiterRequest
   SET resolvedAt = NOW()

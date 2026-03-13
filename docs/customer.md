@@ -17,6 +17,38 @@
 
 ---
 
+## Shareable Menu URL (Phase 1 — Step 12)
+
+Merchants can share their digital menu without a physical QR code. Useful for social media bios, WhatsApp Business catalogs, Google Maps menus, and pre-visit browsing.
+
+### URL Pattern
+
+```
+https://menu.fbqr.app/{restaurantId}/menu
+```
+
+No `tableId`, no token, no signature required. Publicly accessible.
+
+### Behaviour
+
+- **Browse-only mode**: Customer views the full menu (categories + items + branding) but **cannot place orders** — no cart, no checkout, no CustomerSession is created.
+- A non-dismissable banner at the bottom of the screen: *"Pindai QR di meja untuk memesan"* ("Scan the QR at your table to order").
+- Menu respects `BranchMenuOverride` — item availability shown for the restaurant's primary branch (first `Branch` by `createdAt`).
+- Respects `Restaurant.status`: if `SUSPENDED`, shows the standard "unavailable" error page.
+
+### Where Merchants Access This URL
+
+- merchant-pos → Settings → Restaurant → **"Salin Link Menu"** ("Copy Menu Link") button — copies URL to clipboard.
+- Also surfaced in the onboarding checklist as a suggested sharing step.
+
+### Security
+
+- No CustomerSession is created; no Order can be submitted from this route.
+- Rate-limited at 100 req/min per `restaurantId` at the edge middleware layer.
+- The URL is intentionally public — merchants opt into sharing it.
+
+---
+
 ## Complete QR Flow (9 Sections)
 
 ### 1. Customer Scans QR
@@ -1028,7 +1060,7 @@ All logic runs server-side. No external AI service required initially — pure S
 
 `GET /api/menu/{restaurantId}` is the highest-traffic read.
 
-- **Cache key:** `restaurantId:branchId:locale` — branchId included from day one for Phase 2 `BranchMenuOverride` compatibility
+- **Cache key:** `restaurantId:branchId:locale` — branchId required from day one because `BranchMenuOverride` (Phase 1, Step 9) makes menu responses branch-specific
 - **TTL:** 5 minutes
 - **What is cached:** Full menu JSON (categories + items + branding, with branch-specific availability applied)
 - **What is NOT cached:** Order status, table status, session state — always real-time

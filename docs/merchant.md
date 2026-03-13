@@ -532,6 +532,34 @@ merchant-pos shows a real-time floor map of table statuses via Supabase Realtime
 
 ---
 
+## Waiter-Assisted Order Mode (Phase 1 — Step 10)
+
+Staff can place an order on behalf of a customer directly from the merchant-pos floor map. This handles customers who are unable or unwilling to use the QR self-ordering flow (elderly guests, groups where one person orders for all, walk-in customers at the counter).
+
+### Staff Flow
+
+1. Staff opens merchant-pos floor map
+2. Staff taps any table (AVAILABLE or OCCUPIED) → table action sheet opens
+3. Staff taps **"Pesan untuk Meja Ini"** ("Place Order for This Table") — opens a POS ordering panel inside merchant-pos (same menu data, rendered within `apps/web`)
+4. Staff selects items, variants, add-ons, quantities, and optional customer note
+5. Staff taps **[Kirim ke Dapur]** ("Send to Kitchen"):
+   - `Order.orderType = DINE_IN`, `Order.placedByStaffId = staffId`
+   - If `paymentMode = PAY_AT_CASHIER`: order is immediately created as PENDING, awaits cashier confirmation before hitting kitchen
+   - If `paymentMode = PAY_FIRST`: cashier selects payment method (QRIS or cash) from POS; QRIS generates a Midtrans token for the cashier to show the customer; CASH sets status to PENDING_CASH and cashier marks paid to confirm
+6. Order appears on KDS exactly like a customer self-placed order — no visual difference to kitchen staff
+
+### Schema
+
+`Order.placedByStaffId` (string? FK → Staff.id, nullable) — populated for staff-placed orders, `null` for customer self-orders. Used in analytics ("orders placed by staff vs self-service") and audit log.
+
+### Permission Required
+
+`orders:manage` — Cashier, Supervisor, and Owner role templates include this. Waiter template does NOT (waiters assist customers to self-scan; they do not place orders).
+
+> **Not the same as Hidang mode:** Waiter-assisted mode places a standard one-off order. Hidang / Padang-style mode (deferred) involves open tabs, pre-served dishes, and a final tally — a fundamentally different UX.
+
+---
+
 ## Kitchen Station Routing
 
 Merchants create named **Kitchen Stations** from `merchant-pos` settings. When an order is placed, `OrderItem`s are automatically routed to the station that owns their category.
@@ -609,6 +637,43 @@ Every order card must show, in this visual hierarchy:
 **Delivery orders:** show driver ETA instead of table: "🛵 GrabFood — Driver arrives ~12:50"
 **Takeaway orders:** show queue number prominently: "🥡 Takeaway — #042"
 
+### BY_WEIGHT Weight Entry — Direct from KDS (Numpad Modal)
+
+Kitchen staff must be able to enter the actual weight **directly from the KDS card** without switching to the merchant-pos iPad. Tapping the ⚖️ badge on any OrderItem opens a full-screen numpad modal:
+
+```
+┌─────────────────────────────┐
+│   ⚖️  Kepiting Saus Padang  │
+│   Table 8 · Order #042      │
+├─────────────────────────────┤
+│                             │
+│         1  2  3             │
+│         4  5  6             │
+│         7  8  9             │
+│         .  0  ⌫             │
+│                             │
+│    [  350  g  ]             │
+│                             │
+│    [ Confirm Weight ]       │
+│    [ Cancel ]               │
+└─────────────────────────────┘
+```
+
+**On confirm:**
+1. Server computes `finalLineTotal = OrderItem.weightValue × MenuItem.pricePerUnit`
+2. `delta = finalLineTotal - OrderItem.depositAmount`
+3. If `delta > 0`: broadcast "Charge Remaining Balance" alert to the POS cashier's screen (Supabase Realtime on `orders:{branchId}` channel); cashier completes the BALANCE_CHARGE payment via Midtrans.
+4. If `delta < 0`: broadcast "Refund Overpay" alert; cashier processes BALANCE_REFUND.
+5. If `delta = 0`: order proceeds directly to kitchen without further payment action.
+6. OrderItem.needsWeighing is set to `false`; ⚖️ badge disappears from KDS.
+
+**Rationale:** Removing the "KDS → POS → find order → enter weight → save → charge" workflow eliminates 5 navigation steps per weighed item. The KDS is already in front of the kitchen staff. The cashier receives a targeted alert rather than having to monitor a queue. (See Gemini audit Fix #3.)
+
+**Field additions required (Phase 1 Prisma):**
+- `OrderItem.needsWeighing` (bool, default false) — set to `true` at order creation for BY_WEIGHT items
+- `OrderItem.weightValue` (decimal?, grams) — populated by the KDS numpad submission
+- `OrderItem.weightEnteredByStaffId` (string? FK → Staff.id) — audit trail for weight entry
+
 ---
 
 ## Kitchen Order Priority
@@ -619,6 +684,33 @@ Every order card must show, in this visual hierarchy:
 - Priority changes are real-time (Supabase Realtime broadcast)
 - Priority reordering is logged in `AuditLog`
 - In "All" tab, items are sorted by station then by priority — not globally sortable
+
+---
+
+## KDS Realtime Fallback (Silent Webhook Race Condition Guard)
+
+The Kitchen Display receives new orders via Supabase Realtime push (sub-second). However, a Vercel serverless function can time out or drop its network connection in the window between the DB commit and the Realtime broadcast. When this happens:
+
+1. Midtrans sees a 5xx / timeout and retries the webhook.
+2. The retry hits the idempotency guard (`affectedRows = 0` on the atomic UPDATE), returns HTTP 200, and **skips the Realtime broadcast** (since the DB already shows CONFIRMED).
+3. Result: the DB row is CONFIRMED, but the KDS never received the order. A confirmed order is effectively invisible to the kitchen until a page refresh.
+
+**Fix:** The KDS frontend (`apps/web/(kitchen)`) must implement a silent REST fallback poll:
+
+```
+Every 60 seconds (setInterval in the KDS component):
+  GET /api/kitchen/orders?branchId={branchId}&status=CONFIRMED,PREPARING
+  → Merge result into local KDS state
+  → If any orderId in response is NOT already in local state → add it silently (no alert sound)
+    and log to console: "[KDS-fallback] recovered missed order: {orderId}"
+  → This catches any orders that the Realtime push missed
+```
+
+**Implementation notes:**
+- This is a **background reconciliation** — do not show a loading spinner or trigger alert sounds on the poll. It must be invisible to staff unless a gap is detected.
+- The poll interval of 60 seconds is intentional: short enough to recover missed orders within 1 minute, long enough to not add significant API load.
+- The Realtime subscription is still the primary path and must remain active. The poll is the safety net only.
+- If the Realtime connection drops entirely (detected via `onClose` or heartbeat failure), increase poll frequency to every 10 seconds until reconnected, then drop back to 60 seconds.
 
 ---
 
@@ -659,6 +751,49 @@ Staff toggle in merchant-pos floor view:
 - Customer sees `orderingPausedMessage` (custom or default)
 - Existing orders in kitchen are **not affected**
 - merchant-pos header shows prominent banner: 🔴 **Ordering is paused**
+
+---
+
+## Kitchen Printer Integration (Phase 1 — Step 20)
+
+Kitchen tickets and customer receipts are printed via `node-thermal-printer` (ESC/POS protocol — USB, Network TCP/IP, or Bluetooth).
+
+### Print Triggers
+
+| Event | What is printed | Target printer |
+|---|---|---|
+| Order → `CONFIRMED` | **Kitchen ticket**: queue number, table name, order type badge, item list with variants/add-ons, customer note, timestamp | Kitchen/bar printer |
+| Payment confirmed (QRIS/EWALLET webhook) or cashier marks PAID | **Customer receipt**: merchant name + address, order summary, subtotal, tax, service charge, grand total, payment method, timestamp | Cashier/counter printer |
+
+Auto-print is on by default but can be toggled per event in `Settings → Printer`.
+
+### Kitchen Ticket Format
+
+```
+================================
+FBQR Kitchen Ticket
+================================
+#Q042  [DINE-IN]  Meja 5   12:34
+--------------------------------
+2x Nasi Goreng Spesial
+   + Telur Mata Sapi
+   + Sambel Extra
+1x Es Teh Manis
+   NOTE: tidak terlalu manis
+================================
+```
+
+### Printer Configuration (merchant-pos → Settings → Printer)
+
+| Setting | Type | Notes |
+|---|---|---|
+| `printerConfig` | JSON? | `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }` — `null` means no printer configured; printing silently skipped |
+| `autoPrintKitchenTicket` | bool | Default `true` — auto-print on order CONFIRMED |
+| `autoPrintReceipt` | bool | Default `true` — auto-print on payment confirmed |
+
+- Multiple printers are **not** supported in Phase 1 — one printer config per branch. Per-station printers are Phase 2.
+- If printing fails (printer offline, paper out), the order/payment is NOT rolled back. A toast is shown to the cashier: "Printer tidak terhubung — cetak manual dari Order Detail."
+- Receipt can always be reprinted from Order Detail screen (≥ permission `orders:view`).
 
 ---
 
@@ -743,7 +878,7 @@ Multi-branch is **not self-service** — enabled via FBQRSYS admin after EOI rev
 | `Branch` | `restaurantId` | FK to owning Restaurant |
 | `Branch` | `platformStoreId` | string? — delivery platform store identifier for dynamic webhook routing |
 
-> **Per-branch item availability override** (Phase 2): A `BranchMenuOverride` junction model (`branchId`, `menuItemId`, `isAvailable`) allows per-branch item toggles without duplicating the menu. Stub this table in Phase 1 Prisma. **Do NOT add separate menus per branch** — the menu is always shared at restaurant level (ADR-019).
+> **Per-branch item availability override** (Phase 1 — Step 9): A `BranchMenuOverride` junction model (`branchId`, `menuItemId`, `isAvailable`) allows per-branch item toggles without duplicating the menu. The schema and the toggle UI (per-item availability switch per branch, in the menu management screen) are both built in Step 9. **Do NOT add separate menus per branch** — the menu is always shared at restaurant level (ADR-019).
 
 ---
 

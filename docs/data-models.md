@@ -161,6 +161,9 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │  customerNote (string?, max 200 chars) — free-text special request entered by customer at checkout
   │                                           (e.g. "no MSG", "extra spicy", "allergy: shrimp")
   │                                           shown on kitchen display card and order tracking screen
+  │  placedByStaffId (string? FK → Staff.id, nullable) — null for customer self-orders;
+  │                                                        populated for waiter-assisted orders placed
+  │                                                        via merchant-pos; used in analytics and audit log
   │
   ├── OrderItem      ← unitPrice (int), variantPriceDelta (int), addonPriceTotal (int), lineTotal (int)
   │                    variantSnapshot (JSON), addonSnapshot (JSON) — metadata only
@@ -250,8 +253,13 @@ CustomerSession      ← Scoped to Restaurant + Table + QR token
   │  sessionCookie (string)    — unique; httpOnly cookie stored client-side; enables page-refresh
   │                               recovery without re-scanning QR
   │  expiresAt (datetime)      — set at creation: NOW() + MerchantSettings.tableSessionTimeoutMinutes
-  │                               (default 120 min). Extended while any OrderItem.needsWeighing = true
-  │                               so a BY_WEIGHT session never expires before staff enters the weight.
+  │                               (default 120 min). The TTL is NEVER extended — not even for
+  │                               active BY_WEIGHT orders. If a customer with a BY_WEIGHT deposit
+  │                               abandons the table, the session expires normally; the Session
+  │                               Cleanup Cron cancels the order, refunds the deposit via Midtrans,
+  │                               and sets Table → DIRTY. Extending the TTL for needsWeighing
+  │                               would permanently lock the table if the customer walks out
+  │                               (the "Infinite Table Deadlock" — see ADR-026).
   │                               Session Cleanup Cron queries `WHERE expiresAt < NOW()`.
   │                               THIS FIELD MUST EXIST IN PRISMA SCHEMA — the cron will fail at runtime
   │                               if it is absent.
@@ -370,7 +378,8 @@ WHERE id = $orderId AND status = 'PENDING'
 ```
 A plain read-then-write (`SELECT` status → `UPDATE` if PENDING) has a race condition under concurrent Midtrans retries: two workers can both read `PENDING` before either writes `CONFIRMED`. The atomic `WHERE status = 'PENDING'` clause is the correct guard. This prevents duplicate kitchen pushes even under concurrent webhook delivery.
 
-**Webhook handler transaction scope:** The full webhook handler must execute in a single DB transaction to prevent partial state:
+**Webhook handler transaction scope:** The full webhook handler must execute in a single DB transaction to prevent partial state. After the DB commit, the handler broadcasts to Supabase Realtime — but **this broadcast can silently fail** (Vercel function timeout, network drop between commit and broadcast). To guard against this, the Kitchen Display must ALSO poll a REST endpoint every 60 seconds as a silent fallback (see `docs/merchant.md` § KDS Realtime Fallback). The Realtime push is the fast path (sub-second); the REST poll is the safety net for any dropped packets.
+
 ```
 BEGIN TRANSACTION
   1. INSERT or verify Payment row (unique constraint on midtransTransactionId for idempotency)
@@ -482,7 +491,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantApiKey` | Public REST API | Schema defined in Public API section above |
 | `WebhookEndpoint` | Webhook subscriptions | Schema defined in Public API section above |
 | `WebhookDeliveryLog` | Webhook delivery audit | Schema defined in Public API section above |
-| `BranchMenuOverride` | Per-branch item availability | `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
+| `BranchMenuOverride` | *(Phase 1 — not deferred)* | Schema + UI toggle both built in Step 9. See `docs/merchant.md` § Multi-Branch. `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
 | `Reservation` | Table reservation system | `(id, branchId FK, tableId FK, guestName, guestPhone, partySize, scheduledAt, depositPaid bool, status: PENDING\|CONFIRMED\|CANCELLED\|SEATED\|NO_SHOW)` |
 | `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
@@ -498,6 +507,9 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Merchant` | `wizardCompletedAt` | datetime? | Onboarding analytics |
 | `Staff` | `seenCoachMarks` | string[] default `[]` | In-app coach marks dismissed |
 | `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY\|COMPLETED`) nullable | Per-item kitchen status. Phase 1: always null. Phase 2: kitchen staff can mark individual items done. `COMPLETED` means the item is done; the Order itself moves to `READY` only when all items are `COMPLETED`. **Note:** `⚖️ Needs weighing` and `⚠️ Stock-out` are display states derived from `OrderItem.needsWeighing` (bool) and a stock-out flag set during the webhook transaction — they are NOT enum values on this field. |
+| `OrderItem` | `needsWeighing` | Boolean default `false` | `true` for BY_WEIGHT items at order creation. Set to `false` when kitchen staff enter the weight via the KDS numpad modal (see `docs/merchant.md` § BY_WEIGHT Weight Entry). Used by the Session Cleanup Cron to detect abandoned BY_WEIGHT orders. Must exist in Phase 1 schema. |
+| `OrderItem` | `weightValue` | Decimal? | Actual weight in grams, entered by kitchen staff via KDS numpad. `null` until staff enter it. Used to compute `finalLineTotal = weightValue × MenuItem.pricePerUnit` and derive BALANCE_CHARGE or BALANCE_REFUND amount. |
+| `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
@@ -526,6 +538,10 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `pushNotifications` | JSON | Per-event Web Push toggle map. Schema: `{ "newOrder": true, "waiterCall": true, "lowStock": false, "billingReminder": true }`. Default: all true. Phase 1: always notify all; Phase 2: per-role routing reads this. |
 | `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
+| `MerchantSettings` | `byWeightEnabled` | Boolean | Default: `false`. Phase 1.5 gate — when `false`, BY_WEIGHT items are hidden from `apps/menu` and the order API rejects BY_WEIGHT OrderItems. Set to `true` by FBQRSYS when the Phase 1.5 KDS weight-entry UI is ready for this merchant. See ADR-026. |
+| `MerchantSettings` | `printerConfig` | JSON? | Default: `null` (no printer). Structure: `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }`. One printer config per branch (per-station printers Phase 2). Null = printing silently skipped. |
+| `MerchantSettings` | `autoPrintKitchenTicket` | Boolean | Default: `true`. When `true`, a kitchen ticket is auto-printed via `node-thermal-printer` when an order reaches `CONFIRMED` status. No-op if `printerConfig` is null. |
+| `MerchantSettings` | `autoPrintReceipt` | Boolean | Default: `true`. When `true`, a customer receipt is auto-printed when payment is confirmed (Midtrans webhook SUCCESS or cashier marks PAID). No-op if `printerConfig` is null. |
 
 ### Additional Fields Required in Phase 1 Prisma
 
@@ -570,7 +586,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 
 ### Why these specific items
 
-**`BranchMenuOverride`** — without this stub, adding per-branch availability in Phase 2 requires modifying `MenuItem` (adding nullable branchId FK) which would change how all Phase 1 menu queries work. A separate junction table is the clean, non-breaking addition.
+**`BranchMenuOverride`** — promoted to Phase 1 (Step 9). Schema and UI toggle are built together in Step 9 (menu management). A separate junction table is the correct pattern: avoids modifying `MenuItem` and keeps menu queries branch-aware without data duplication (ADR-019).
 
 **`Reservation`** — the foreign keys to `Table` and `Branch` must exist in the schema before Phase 1 data accumulates. Adding them later requires migrating existing rows. Creating the table now with no data is costless.
 
@@ -630,7 +646,7 @@ These are enforced server-side on API routes, not client-side.
 The menu endpoint (`GET /api/menu/{restaurantId}`) is the highest-traffic read in the system. Caching is mandatory at launch.
 
 - **Cache layer:** Vercel Edge Cache (built-in with Next.js `fetch` cache)
-- **Cache key:** `restaurantId:branchId:locale` — **branchId is included from day one** because Phase 2 `BranchMenuOverride` makes menu responses branch-specific. Using `restaurantId + locale` as the key would be a breaking cache invalidation change in Phase 2; including `branchId` now is a zero-cost Phase 1 decision.
+- **Cache key:** `restaurantId:branchId:locale` — **branchId is required from day one** because `BranchMenuOverride` (Phase 1, Step 9) makes menu responses branch-specific from launch.
 - **TTL:** 5 minutes
 - **Invalidation:** When a merchant saves any menu change (category, item, branding, or branch override), call `revalidatePath` to purge the cache immediately. Invalidation must be scoped to the affected branch when a BranchMenuOverride changes (not the whole restaurant).
 - **What is cached:** Full menu JSON (categories + items + branding, with branch-specific availability applied) — the entire payload for the customer app on first load
