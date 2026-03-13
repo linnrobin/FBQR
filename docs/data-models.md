@@ -161,6 +161,9 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │  customerNote (string?, max 200 chars) — free-text special request entered by customer at checkout
   │                                           (e.g. "no MSG", "extra spicy", "allergy: shrimp")
   │                                           shown on kitchen display card and order tracking screen
+  │  placedByStaffId (string? FK → Staff.id, nullable) — null for customer self-orders;
+  │                                                        populated for waiter-assisted orders placed
+  │                                                        via merchant-pos; used in analytics and audit log
   │
   ├── OrderItem      ← unitPrice (int), variantPriceDelta (int), addonPriceTotal (int), lineTotal (int)
   │                    variantSnapshot (JSON), addonSnapshot (JSON) — metadata only
@@ -536,6 +539,9 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
 | `MerchantSettings` | `byWeightEnabled` | Boolean | Default: `false`. Phase 1.5 gate — when `false`, BY_WEIGHT items are hidden from `apps/menu` and the order API rejects BY_WEIGHT OrderItems. Set to `true` by FBQRSYS when the Phase 1.5 KDS weight-entry UI is ready for this merchant. See ADR-026. |
+| `MerchantSettings` | `printerConfig` | JSON? | Default: `null` (no printer). Structure: `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }`. One printer config per branch (per-station printers Phase 2). Null = printing silently skipped. |
+| `MerchantSettings` | `autoPrintKitchenTicket` | Boolean | Default: `true`. When `true`, a kitchen ticket is auto-printed via `node-thermal-printer` when an order reaches `CONFIRMED` status. No-op if `printerConfig` is null. |
+| `MerchantSettings` | `autoPrintReceipt` | Boolean | Default: `true`. When `true`, a customer receipt is auto-printed when payment is confirmed (Midtrans webhook SUCCESS or cashier marks PAID). No-op if `printerConfig` is null. |
 
 ### Additional Fields Required in Phase 1 Prisma
 

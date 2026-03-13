@@ -793,7 +793,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Permanent free / Warung tier** | ✅ Designed | Warung | Documented in `docs/merchant.md` |
 | **Push/sound notifications** | ✅ Designed (Step 18) | All | Web Push API + in-app audio |
 | **Group ordering (collaborative cart)** | 📋 Backlog | All | Multiple phones, shared cart, per-person attribution |
-| **Printer integration** | ⚠️ Phase 2 | All | `node-thermal-printer`; kitchen ticket + cup label printing |
+| **Printer integration** (kitchen tickets + receipts) | ✅ Phase 1 (Step 20) | All | `node-thermal-printer`; kitchen ticket on order CONFIRMED; customer receipt on payment confirmed |
 | **Menu import / CSV migration** | ✅ Designed (Step 9) | Chain | CSV template + bulk entry UI |
 | **ROI analytics dashboard** | ✅ Designed (Step 21) | Chain | Documented in `docs/merchant.md` |
 | **Accounting export** | ✅ Designed (Step 21) | Chain | Excel/CSV; Accurate/Jurnal.id integration Phase 2 |
@@ -807,13 +807,13 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Thermal label printing for cup/item labels** | ⚠️ Phase 2 | Warung | ESC/POS label printer for boba kiosk; distinct from kitchen tickets |
 | **Booking deposit / down payment** | ⚠️ Phase 2 | Chain | Requires reservation system + partial Midtrans charge |
 | **Per-branch item availability override** | ✅ Phase 1 (Step 9) | Chain | `BranchMenuOverride` junction model + UI toggle built in Step 9 (menu management) |
-| **Waiter-assisted / staff order mode** | ⚠️ Phase 2 | Chain | Staff inputs order on behalf of customer; schema supports via PAY_AT_CASHIER |
+| **Waiter-assisted / staff order mode** | ✅ Phase 1 (Step 10) | Chain | Staff inputs order via POS on behalf of customer; no new schema — reuses PAY_AT_CASHIER + `Order.placedByStaffId` |
 | **Inventory / COGS tracking** | 📋 Out of scope | Chain | ERP-level; recommend Accurate Online / Jurnal.id integration |
 | **Privacy consent flow** | 📋 Phase 2 | All | Data collection opt-in; minimal principle; PDP Law compliance |
 | **Table reservation** | 📋 Phase 2 | Chain | `Reservation` model stubbed in Phase 1 Prisma |
 | **Staff shift management** | 📋 Phase 2 | Chain | Clock-in/out, shift reports |
 | **Multi-language menu items** | 📋 Phase 2 | Chain | Per-item name/description in multiple languages |
-| **Shareable menu URL** | 📋 Phase 2 | All | Digital menu link without scanning |
+| **Shareable menu URL** | ✅ Phase 1 (Step 12) | All | Browse-only route `/menu/{restaurantId}` — view menu without QR scan; no ordering capability |
 | **Branded QR code design** | 📋 Phase 2 | All | Styled QR with restaurant logo |
 
 ---

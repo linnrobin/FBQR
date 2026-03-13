@@ -532,6 +532,34 @@ merchant-pos shows a real-time floor map of table statuses via Supabase Realtime
 
 ---
 
+## Waiter-Assisted Order Mode (Phase 1 — Step 10)
+
+Staff can place an order on behalf of a customer directly from the merchant-pos floor map. This handles customers who are unable or unwilling to use the QR self-ordering flow (elderly guests, groups where one person orders for all, walk-in customers at the counter).
+
+### Staff Flow
+
+1. Staff opens merchant-pos floor map
+2. Staff taps any table (AVAILABLE or OCCUPIED) → table action sheet opens
+3. Staff taps **"Pesan untuk Meja Ini"** ("Place Order for This Table") — opens a POS ordering panel inside merchant-pos (same menu data, rendered within `apps/web`)
+4. Staff selects items, variants, add-ons, quantities, and optional customer note
+5. Staff taps **[Kirim ke Dapur]** ("Send to Kitchen"):
+   - `Order.orderType = DINE_IN`, `Order.placedByStaffId = staffId`
+   - If `paymentMode = PAY_AT_CASHIER`: order is immediately created as PENDING, awaits cashier confirmation before hitting kitchen
+   - If `paymentMode = PAY_FIRST`: cashier selects payment method (QRIS or cash) from POS; QRIS generates a Midtrans token for the cashier to show the customer; CASH sets status to PENDING_CASH and cashier marks paid to confirm
+6. Order appears on KDS exactly like a customer self-placed order — no visual difference to kitchen staff
+
+### Schema
+
+`Order.placedByStaffId` (string? FK → Staff.id, nullable) — populated for staff-placed orders, `null` for customer self-orders. Used in analytics ("orders placed by staff vs self-service") and audit log.
+
+### Permission Required
+
+`orders:manage` — Cashier, Supervisor, and Owner role templates include this. Waiter template does NOT (waiters assist customers to self-scan; they do not place orders).
+
+> **Not the same as Hidang mode:** Waiter-assisted mode places a standard one-off order. Hidang / Padang-style mode (deferred) involves open tabs, pre-served dishes, and a final tally — a fundamentally different UX.
+
+---
+
 ## Kitchen Station Routing
 
 Merchants create named **Kitchen Stations** from `merchant-pos` settings. When an order is placed, `OrderItem`s are automatically routed to the station that owns their category.
@@ -723,6 +751,49 @@ Staff toggle in merchant-pos floor view:
 - Customer sees `orderingPausedMessage` (custom or default)
 - Existing orders in kitchen are **not affected**
 - merchant-pos header shows prominent banner: 🔴 **Ordering is paused**
+
+---
+
+## Kitchen Printer Integration (Phase 1 — Step 20)
+
+Kitchen tickets and customer receipts are printed via `node-thermal-printer` (ESC/POS protocol — USB, Network TCP/IP, or Bluetooth).
+
+### Print Triggers
+
+| Event | What is printed | Target printer |
+|---|---|---|
+| Order → `CONFIRMED` | **Kitchen ticket**: queue number, table name, order type badge, item list with variants/add-ons, customer note, timestamp | Kitchen/bar printer |
+| Payment confirmed (QRIS/EWALLET webhook) or cashier marks PAID | **Customer receipt**: merchant name + address, order summary, subtotal, tax, service charge, grand total, payment method, timestamp | Cashier/counter printer |
+
+Auto-print is on by default but can be toggled per event in `Settings → Printer`.
+
+### Kitchen Ticket Format
+
+```
+================================
+FBQR Kitchen Ticket
+================================
+#Q042  [DINE-IN]  Meja 5   12:34
+--------------------------------
+2x Nasi Goreng Spesial
+   + Telur Mata Sapi
+   + Sambel Extra
+1x Es Teh Manis
+   NOTE: tidak terlalu manis
+================================
+```
+
+### Printer Configuration (merchant-pos → Settings → Printer)
+
+| Setting | Type | Notes |
+|---|---|---|
+| `printerConfig` | JSON? | `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }` — `null` means no printer configured; printing silently skipped |
+| `autoPrintKitchenTicket` | bool | Default `true` — auto-print on order CONFIRMED |
+| `autoPrintReceipt` | bool | Default `true` — auto-print on payment confirmed |
+
+- Multiple printers are **not** supported in Phase 1 — one printer config per branch. Per-station printers are Phase 2.
+- If printing fails (printer offline, paper out), the order/payment is NOT rolled back. A toast is shown to the cashier: "Printer tidak terhubung — cetak manual dari Order Detail."
+- Receipt can always be reprinted from Order Detail screen (≥ permission `orders:view`).
 
 ---
 
