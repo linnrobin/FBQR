@@ -250,8 +250,13 @@ CustomerSession      ← Scoped to Restaurant + Table + QR token
   │  sessionCookie (string)    — unique; httpOnly cookie stored client-side; enables page-refresh
   │                               recovery without re-scanning QR
   │  expiresAt (datetime)      — set at creation: NOW() + MerchantSettings.tableSessionTimeoutMinutes
-  │                               (default 120 min). Extended while any OrderItem.needsWeighing = true
-  │                               so a BY_WEIGHT session never expires before staff enters the weight.
+  │                               (default 120 min). The TTL is NEVER extended — not even for
+  │                               active BY_WEIGHT orders. If a customer with a BY_WEIGHT deposit
+  │                               abandons the table, the session expires normally; the Session
+  │                               Cleanup Cron cancels the order, refunds the deposit via Midtrans,
+  │                               and sets Table → DIRTY. Extending the TTL for needsWeighing
+  │                               would permanently lock the table if the customer walks out
+  │                               (the "Infinite Table Deadlock" — see ADR-026).
   │                               Session Cleanup Cron queries `WHERE expiresAt < NOW()`.
   │                               THIS FIELD MUST EXIST IN PRISMA SCHEMA — the cron will fail at runtime
   │                               if it is absent.
@@ -370,7 +375,8 @@ WHERE id = $orderId AND status = 'PENDING'
 ```
 A plain read-then-write (`SELECT` status → `UPDATE` if PENDING) has a race condition under concurrent Midtrans retries: two workers can both read `PENDING` before either writes `CONFIRMED`. The atomic `WHERE status = 'PENDING'` clause is the correct guard. This prevents duplicate kitchen pushes even under concurrent webhook delivery.
 
-**Webhook handler transaction scope:** The full webhook handler must execute in a single DB transaction to prevent partial state:
+**Webhook handler transaction scope:** The full webhook handler must execute in a single DB transaction to prevent partial state. After the DB commit, the handler broadcasts to Supabase Realtime — but **this broadcast can silently fail** (Vercel function timeout, network drop between commit and broadcast). To guard against this, the Kitchen Display must ALSO poll a REST endpoint every 60 seconds as a silent fallback (see `docs/merchant.md` § KDS Realtime Fallback). The Realtime push is the fast path (sub-second); the REST poll is the safety net for any dropped packets.
+
 ```
 BEGIN TRANSACTION
   1. INSERT or verify Payment row (unique constraint on midtransTransactionId for idempotency)
@@ -498,6 +504,9 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `Merchant` | `wizardCompletedAt` | datetime? | Onboarding analytics |
 | `Staff` | `seenCoachMarks` | string[] default `[]` | In-app coach marks dismissed |
 | `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY\|COMPLETED`) nullable | Per-item kitchen status. Phase 1: always null. Phase 2: kitchen staff can mark individual items done. `COMPLETED` means the item is done; the Order itself moves to `READY` only when all items are `COMPLETED`. **Note:** `⚖️ Needs weighing` and `⚠️ Stock-out` are display states derived from `OrderItem.needsWeighing` (bool) and a stock-out flag set during the webhook transaction — they are NOT enum values on this field. |
+| `OrderItem` | `needsWeighing` | Boolean default `false` | `true` for BY_WEIGHT items at order creation. Set to `false` when kitchen staff enter the weight via the KDS numpad modal (see `docs/merchant.md` § BY_WEIGHT Weight Entry). Used by the Session Cleanup Cron to detect abandoned BY_WEIGHT orders. Must exist in Phase 1 schema. |
+| `OrderItem` | `weightValue` | Decimal? | Actual weight in grams, entered by kitchen staff via KDS numpad. `null` until staff enter it. Used to compute `finalLineTotal = weightValue × MenuItem.pricePerUnit` and derive BALANCE_CHARGE or BALANCE_REFUND amount. |
+| `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
@@ -526,6 +535,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `pushNotifications` | JSON | Per-event Web Push toggle map. Schema: `{ "newOrder": true, "waiterCall": true, "lowStock": false, "billingReminder": true }`. Default: all true. Phase 1: always notify all; Phase 2: per-role routing reads this. |
 | `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
+| `MerchantSettings` | `byWeightEnabled` | Boolean | Default: `false`. Phase 1.5 gate — when `false`, BY_WEIGHT items are hidden from `apps/menu` and the order API rejects BY_WEIGHT OrderItems. Set to `true` by FBQRSYS when the Phase 1.5 KDS weight-entry UI is ready for this merchant. See ADR-026. |
 
 ### Additional Fields Required in Phase 1 Prisma
 

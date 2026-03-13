@@ -609,6 +609,43 @@ Every order card must show, in this visual hierarchy:
 **Delivery orders:** show driver ETA instead of table: "🛵 GrabFood — Driver arrives ~12:50"
 **Takeaway orders:** show queue number prominently: "🥡 Takeaway — #042"
 
+### BY_WEIGHT Weight Entry — Direct from KDS (Numpad Modal)
+
+Kitchen staff must be able to enter the actual weight **directly from the KDS card** without switching to the merchant-pos iPad. Tapping the ⚖️ badge on any OrderItem opens a full-screen numpad modal:
+
+```
+┌─────────────────────────────┐
+│   ⚖️  Kepiting Saus Padang  │
+│   Table 8 · Order #042      │
+├─────────────────────────────┤
+│                             │
+│         1  2  3             │
+│         4  5  6             │
+│         7  8  9             │
+│         .  0  ⌫             │
+│                             │
+│    [  350  g  ]             │
+│                             │
+│    [ Confirm Weight ]       │
+│    [ Cancel ]               │
+└─────────────────────────────┘
+```
+
+**On confirm:**
+1. Server computes `finalLineTotal = OrderItem.weightValue × MenuItem.pricePerUnit`
+2. `delta = finalLineTotal - OrderItem.depositAmount`
+3. If `delta > 0`: broadcast "Charge Remaining Balance" alert to the POS cashier's screen (Supabase Realtime on `orders:{branchId}` channel); cashier completes the BALANCE_CHARGE payment via Midtrans.
+4. If `delta < 0`: broadcast "Refund Overpay" alert; cashier processes BALANCE_REFUND.
+5. If `delta = 0`: order proceeds directly to kitchen without further payment action.
+6. OrderItem.needsWeighing is set to `false`; ⚖️ badge disappears from KDS.
+
+**Rationale:** Removing the "KDS → POS → find order → enter weight → save → charge" workflow eliminates 5 navigation steps per weighed item. The KDS is already in front of the kitchen staff. The cashier receives a targeted alert rather than having to monitor a queue. (See Gemini audit Fix #3.)
+
+**Field additions required (Phase 1 Prisma):**
+- `OrderItem.needsWeighing` (bool, default false) — set to `true` at order creation for BY_WEIGHT items
+- `OrderItem.weightValue` (decimal?, grams) — populated by the KDS numpad submission
+- `OrderItem.weightEnteredByStaffId` (string? FK → Staff.id) — audit trail for weight entry
+
 ---
 
 ## Kitchen Order Priority
@@ -619,6 +656,33 @@ Every order card must show, in this visual hierarchy:
 - Priority changes are real-time (Supabase Realtime broadcast)
 - Priority reordering is logged in `AuditLog`
 - In "All" tab, items are sorted by station then by priority — not globally sortable
+
+---
+
+## KDS Realtime Fallback (Silent Webhook Race Condition Guard)
+
+The Kitchen Display receives new orders via Supabase Realtime push (sub-second). However, a Vercel serverless function can time out or drop its network connection in the window between the DB commit and the Realtime broadcast. When this happens:
+
+1. Midtrans sees a 5xx / timeout and retries the webhook.
+2. The retry hits the idempotency guard (`affectedRows = 0` on the atomic UPDATE), returns HTTP 200, and **skips the Realtime broadcast** (since the DB already shows CONFIRMED).
+3. Result: the DB row is CONFIRMED, but the KDS never received the order. A confirmed order is effectively invisible to the kitchen until a page refresh.
+
+**Fix:** The KDS frontend (`apps/web/(kitchen)`) must implement a silent REST fallback poll:
+
+```
+Every 60 seconds (setInterval in the KDS component):
+  GET /api/kitchen/orders?branchId={branchId}&status=CONFIRMED,PREPARING
+  → Merge result into local KDS state
+  → If any orderId in response is NOT already in local state → add it silently (no alert sound)
+    and log to console: "[KDS-fallback] recovered missed order: {orderId}"
+  → This catches any orders that the Realtime push missed
+```
+
+**Implementation notes:**
+- This is a **background reconciliation** — do not show a loading spinner or trigger alert sounds on the poll. It must be invisible to staff unless a gap is detected.
+- The poll interval of 60 seconds is intentional: short enough to recover missed orders within 1 minute, long enough to not add significant API load.
+- The Realtime subscription is still the primary path and must remain active. The poll is the safety net only.
+- If the Realtime connection drops entirely (detected via `onClose` or heartbeat failure), increase poll frequency to every 10 seconds until reconnected, then drop back to 60 seconds.
 
 ---
 

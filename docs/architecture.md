@@ -586,6 +586,32 @@ export async function updateMenuItem(formData: unknown) {
 
 ---
 
+### ADR-026: BY_WEIGHT Frontend UI is Phase 1.5 — Schema in Phase 1, UI in Phase 1.5
+
+**Context:** BY_WEIGHT pricing with Midtrans multi-stage payments (DEPOSIT → BALANCE_CHARGE / BALANCE_REFUND), the KDS weight-entry numpad, and the customer-side deposit-then-settle flow introduce significant state-machine complexity. This complexity is real and valuable for seafood restaurants, warung ikan, and live-weight meat counters — but it is not needed to launch the core product. A seafood restaurant can launch Day 1 using Fixed Price items with size variants ("Kepiting Medium Rp 150k", "Kepiting Large Rp 200k", "Kepiting XL Rp 200k+") and upgrade to BY_WEIGHT once the platform is stable.
+
+**Decision:** Split the BY_WEIGHT feature across two sub-phases:
+
+| What | When | Why |
+|---|---|---|
+| Prisma schema fields (`priceType`, `pricePerUnit`, `unitLabel`, `depositAmount`, `OrderItem.needsWeighing`, `weightValue`, `weightEnteredByStaffId`) | Phase 1 (Step 2) | Adding these columns to a populated DB later is painful. Stub now while tables are empty. |
+| API endpoints for weight entry, BALANCE_CHARGE, BALANCE_REFUND | Phase 1 (Step 15) | Midtrans payment integration step — implement the full payment flow once. Do not partially implement it. |
+| Customer-facing deposit UI in `apps/menu` | **Phase 1.5** (after Phase 1 launch) | Customer sees a fixed price at checkout. BY_WEIGHT items not shown to customers until Phase 1.5 merchant flag enabled. |
+| KDS weight-entry numpad modal | **Phase 1.5** | Kitchen display enhancement. Kitchen staff continue using the POS for weight entry in Phase 1. |
+| Merchant-pos "item priceType toggle" UI | **Phase 1.5** | Menu item form shows `priceType` dropdown but it is disabled for BY_WEIGHT until the Phase 1.5 flag is live. |
+
+**Phase 1.5 gate:** `MerchantSettings.byWeightEnabled` (bool, default `false`). When `false`:
+- `apps/menu` hides all BY_WEIGHT items from the customer menu (they are invisible, not just unavailable).
+- The Order creation API rejects any OrderItem with `priceType = BY_WEIGHT` unless `byWeightEnabled = true`.
+- FBQRSYS enables this flag per merchant when Phase 1.5 is ready.
+- Merchants who urgently need BY_WEIGHT in Phase 1 can request early-access via FBQRSYS.
+
+**Rationale:** This prevents the BY_WEIGHT complexity from blocking or destabilizing the Phase 1 launch for the 90% of merchants that only need Fixed Price. Seafood restaurants can self-onboard with Fixed Price and migrate items to BY_WEIGHT in Phase 1.5 without any data migration — the schema fields already exist.
+
+**Status:** Decided. Add `byWeightEnabled` to `MerchantSettings` Phase 1 schema (nullable → default false). Implement in Phase 1.5 after Phase 1 launch validation.
+
+---
+
 ### ADR-025: Late Webhook Revival — Payment Arrives After Order Timeout
 
 **Context:** A customer pays via Midtrans, the payment is processed, but the Midtrans webhook to FBQR is delayed (e.g. network error, Midtrans retry delay). FBQR's Order Expiry Cron transitions the order `PENDING → EXPIRED` before the webhook arrives. Later — potentially 5 to 60 minutes later — the webhook arrives with a valid `SUCCESS` status.

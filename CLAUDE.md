@@ -11,9 +11,28 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.4
+Version        : 3.5
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Pre-coding QA audit pass (v3.4) — 18 issues (4 critical, 5 high, 7 medium, 2 low) fixed:
+Last completed : Multi-Disciplinary Engineering Team audit pass (v3.5) — GO verdict;
+                 4 red flags resolved:
+                 RED FLAG #1 (HIGH) — Infinite Table Deadlock: removed BY_WEIGHT TTL
+                   extension from CustomerSession.expiresAt. Sessions always expire
+                   on schedule. Session Cleanup Cron STEP 1c added: cancels abandoned
+                   BY_WEIGHT orders, refunds deposits via Midtrans, sets Table → DIRTY.
+                 RED FLAG #2 (HIGH) — Silent Webhook Race Condition: documented KDS REST
+                   fallback poll (every 60s) in merchant.md § KDS Realtime Fallback and
+                   data-models.md webhook handler spec. Realtime push = fast path;
+                   REST poll = safety net for dropped packets after DB commit.
+                 RED FLAG #3 (MEDIUM) — BY_WEIGHT Click Fatigue: added full spec for
+                   weight-entry numpad modal directly on the KDS card (tap ⚖️ badge).
+                   Staff enter weight from KDS; POS receives targeted "Charge Remaining
+                   Balance" alert. Three new Phase 1 Prisma fields added to OrderItem:
+                   needsWeighing (bool), weightValue (decimal?), weightEnteredByStaffId.
+                 RED FLAG #4 (MEDIUM) — Feature Creep Risk: BY_WEIGHT frontend UI tagged
+                   Phase 1.5. Schema fields stay Phase 1. Customer-facing deposit UI,
+                   KDS numpad, and merchant-pos priceType toggle deferred to Phase 1.5.
+                   MerchantSettings.byWeightEnabled gate added. ADR-026 written.
+Previously: Pre-coding QA audit pass (v3.4) — 18 issues (4 critical, 5 high, 7 medium, 2 low) fixed:
                  CRITICAL #1 — data-models.md OrderItem.status: added COMPLETED to enum
                    (PENDING|PREPARING|READY|COMPLETED); clarified ⚖️ and ⚠️ are display
                    states from needsWeighing/stock-out flags, NOT additional enum values.
