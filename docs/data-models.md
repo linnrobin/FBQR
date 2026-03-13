@@ -80,6 +80,13 @@ SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
                        tableLimitCount (int?) — max tables allowed; null = unlimited
                        menuItemLimitCount (int?) — max menu items allowed; null = unlimited
                        branchLimitCount (int?) — max branches allowed; null = unlimited
+                       layoutAllowed (string[]?) — list of allowed menu layout types; null = all layouts
+                         Example: ["GRID", "LIST"] means Starter plan can only use Grid and List layouts.
+                         When a merchant on a restricted plan tries to set a disallowed layout, the API
+                         returns HTTP 403 PLAN_LIMIT_REACHED. The menu app falls back to GRID if the
+                         current layout is not in the allowed list (plan downgrade safety net).
+                         Enforcement: checked at RestaurantBranding save (Step 8) and at
+                         MenuCategory.menuLayoutOverride save (Step 9).
                        NOTE: enforcement is at the API layer — see platform-owner.md § Plan Limit Enforcement
 PlatformSettings     ← Singleton (id=1). Platform-level config: support contacts, branding,
                        billing defaults, feature flags. Never hardcode these values — read from DB.
@@ -335,8 +342,8 @@ Only these transitions are permitted. Any other transition must be rejected by t
 | `CONFIRMED` | `PREPARING` | Kitchen staff |
 | `CONFIRMED` | `CANCELLED` | Merchant owner / supervisor (triggers refund) |
 | `PREPARING` | `READY` | Kitchen staff |
-| `PREPARING` | `CANCELLED` | Merchant owner / supervisor (triggers refund) |
-| `READY` | `COMPLETED` | Staff or system (after configurable hold period) |
+| `PREPARING` | `CANCELLED` | Merchant owner / supervisor (triggers refund). **Stock restoration:** same as `CONFIRMED → CANCELLED` — increment `MenuItem.stockCount` for each OrderItem that had stock decremented at confirmation time. Same atomic transaction pattern. |
+| `READY` | `COMPLETED` | Kitchen staff taps **[Mark Complete]** button on KDS card, OR system auto-transitions after `MerchantSettings.autoCompleteReadyMinutes` minutes (null = never auto-complete — manual only). `maxActiveOrders` cap is released on `COMPLETED`. |
 | `EXPIRED` | `CONFIRMED` | System only (late webhook revival — within window, all checks pass) |
 | `EXPIRED` | `CANCELLED` | System only (late webhook refund — beyond window, or revival checks fail) |
 
@@ -515,6 +522,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
 | `MerchantRequest` | In-app EOI for multi-branch | `(id, merchantId FK, type: MULTI_BRANCH, requestedBranches int, message, status: PENDING\|APPROVED\|REJECTED, reviewedByAdminId?, reviewedAt?, createdAt)` |
 | `CronRunLog` | Cron job monitoring — silent failure detection | `(id, jobName, startedAt, completedAt?, status: SUCCESS\|FAILED\|PARTIAL, affectedRows?, errorMessage?)` — one row per cron invocation; used by `/api/health` to detect missed runs |
+| `PatunganSession` | Split payment / Patungan UI (Phase 1 Step 15) | `(id UUID PK, orderId String FK → Order unique, shareCode String unique 6-char, splitMode Enum EQUAL\|MANUAL, totalParts Int, paidParts Int default 0, amountPerPart Int?, status Enum PENDING\|COMPLETED\|CANCELLED, expiresAt DateTime, createdBySessionId String FK → CustomerSession, createdAt DateTime, updatedAt DateTime)`. Table must exist in Phase 1 Prisma (Step 2) so that `Payment.splitGroupId` can FK into it. UI and API activate in Step 15. |
 
 ### Fields to add to existing tables in Phase 1 Prisma (nullable, no Phase 1 UI)
 
@@ -530,6 +538,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `OrderItem` | `weightUnit` | String? | Unit label matching `MenuItem.unitLabel` (e.g. `"kg"`, `"g"`). Stored for display on KDS and receipt; `null` for non-BY_WEIGHT items. |
 | `OrderItem` | `finalLineTotal` | Int? | Calculated line total after weighing: `round(weightValue × MenuItem.pricePerUnit)`. `null` until weight is entered. Used to compute BALANCE_CHARGE or BALANCE_REFUND delta vs the DEPOSIT amount. |
 | `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
+| `Payment` | `splitGroupId` | String? FK → PatunganSession.id | Null for non-Patungan payments. Set when a payment belongs to a Patungan split session. Multiple Payment rows with the same `splitGroupId` collectively cover one Order's `grandTotal`. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
@@ -560,6 +569,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
 | `MerchantSettings` | `byWeightEnabled` | Boolean | Default: `false`. Phase 1.5 gate — when `false`, BY_WEIGHT items are hidden from `apps/menu` and the order API rejects BY_WEIGHT OrderItems. Set to `true` by FBQRSYS when the Phase 1.5 KDS weight-entry UI is ready for this merchant. See ADR-026. |
 | `MerchantSettings` | `preparingAlertMinutes` | Int | Default: `45`. Minutes before a PREPARING order triggers the stale-order alert badge in merchant-pos Orders List and KDS. Set to `0` to disable. See ADR-027. |
+| `MerchantSettings` | `autoCompleteReadyMinutes` | Int? | Default: `null` (manual only). When set, a cron (or the Order Expiry Cron) auto-transitions `READY → COMPLETED` after this many minutes. `null` means kitchen staff must tap [Mark Complete] on the KDS. Recommended: `null` for dine-in restaurants (staff verify food delivery); set `30` for takeaway counters where customers self-collect. |
 | `MerchantSettings` | `printerConfig` | JSON? | Default: `null` (no printer). Structure: `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }`. One printer config per branch (per-station printers Phase 2). Null = printing silently skipped. |
 | `MerchantSettings` | `autoPrintKitchenTicket` | Boolean | Default: `true`. When `true`, a kitchen ticket is auto-printed via `node-thermal-printer` when an order reaches `CONFIRMED` status. No-op if `printerConfig` is null. |
 | `MerchantSettings` | `autoPrintReceipt` | Boolean | Default: `true`. When `true`, a customer receipt is auto-printed when payment is confirmed (Midtrans webhook SUCCESS or cashier marks PAID). No-op if `printerConfig` is null. |
@@ -585,6 +595,8 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `referralCode` | String? | auto-generated unique | Shareable referral code shown in merchant settings. When another merchant registers using this code, both get 1 month free on activation. Unique index required. |
 | `referredByMerchantId` | String? FK → Merchant (self) | null | ID of the merchant who referred this one. Set at registration if referral code was provided. |
 | `cancellationReason` | String? | null | Populated from the mandatory cancellation exit survey when merchant cancels subscription. Enum-like values: `TOO_EXPENSIVE`, `NOT_ENOUGH_FEATURES`, `FOUND_ALTERNATIVE`, `RESTAURANT_CLOSED`, `TECHNICAL_ISSUES`, `JUST_TESTING`. Gold data for product decisions. |
+| `winBackOptOut` | Boolean | false | Set to `true` when merchant opts out of win-back email sequence (replies UNSUBSCRIBE). Mandatory Day 30 data-deletion notice still sent regardless. |
+| `winBackEmailsSentCount` | Int | 0 | Count of win-back sequence emails sent to this merchant. Used by billing cron to track sequence progress and prevent duplicate sends. Max 4 (Day 1, 7, 14, 30). |
 
 #### Customer model — additional fields
 

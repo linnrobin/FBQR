@@ -269,6 +269,25 @@ Merchant owners (with `billing:read`) see in settings:
 
 Branding is fetched once per customer session and applied via CSS custom properties (`--color-primary`, etc.). Changes take effect immediately without a rebuild.
 
+### Branding Color Picker — WCAG Contrast Validation (Step 8)
+
+**Merchant-chosen colors must be validated for WCAG 2.1 AA contrast before saving.** A merchant could accidentally choose a background color and button color with near-zero contrast, making the menu unreadable for customers.
+
+**Required validation (implemented in Step 8 branding settings form):**
+
+| Color pair | Minimum contrast ratio | Standard |
+|---|---|---|
+| `primaryColor` text on `--color-surface` (white) background | ≥ 4.5:1 | WCAG 2.1 AA — body text |
+| White text (`#FFFFFF`) on `primaryColor` button | ≥ 4.5:1 | WCAG 2.1 AA — button label |
+| `secondaryColor` text on white background | ≥ 4.5:1 | WCAG 2.1 AA — body text |
+
+**Implementation spec:**
+- Use the `wcag-contrast` npm package (or the `tinycolor2` package's `readability()` function) to compute WCAG contrast ratios.
+- Validate **before** the API save call, in the browser (client-side) for immediate feedback. Also validate on the API route as the authoritative check.
+- If contrast < 4.5:1: show a non-blocking warning inline next to the color picker: *"Kontras warna kurang — pelanggan mungkin kesulitan membaca. Pilih warna yang lebih gelap/terang."*
+- **Do not block save** — warn only. Merchant may have an intentional design rationale (e.g. a light-on-light scheme that works with their logo). The warning must be visible but not a hard error.
+- Show a live preview of the menu header (restaurant name + button) using the picked colors so merchants can see the result before saving.
+
 ---
 
 ## Dynamic Menu Layouts
@@ -637,6 +656,16 @@ Every order card must show, in this visual hierarchy:
 | Special badges | Per OrderItem | ⚖️ Needs weighing, ⚠️ Stock-out flag, 🔥 high priority |
 | Customer note | `Order.customerNote` | Free-text; shown only if non-empty |
 | Elapsed timer | Live, from `Order.confirmedAt` | Turns yellow at 10 min, red at 20 min (thresholds configurable) |
+
+**KDS card action buttons by status:**
+
+| Order Status | Primary Action | Secondary |
+|---|---|---|
+| `CONFIRMED` | **[Start Preparing]** → `PREPARING` | — |
+| `PREPARING` | **[Mark Ready]** → `READY` | — |
+| `READY` | **[Mark Complete]** → `COMPLETED` | — |
+
+The [Mark Complete] button is the only documented trigger for `READY → COMPLETED` (manual path). Auto-complete is controlled by `MerchantSettings.autoCompleteReadyMinutes` (null = no auto). A READY card stays highlighted until staff tap [Mark Complete] — this prevents orders from silently accumulating and inflating the `maxActiveOrders` count.
 
 **Delivery orders:** show driver ETA instead of table: "🛵 GrabFood — Driver arrives ~12:50"
 **Takeaway orders:** show queue number prominently: "🥡 Takeaway — #042"

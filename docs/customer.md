@@ -118,7 +118,41 @@ If either assertion fails → return `400 Bad Request` (do not redirect to `/r/{
 - Upsell prompt shown if `aiUpsell` enabled ("Tambah minuman?" at appropriate moment)
 - Cart is **client-side state only** — no server round-trip before the customer places an order
 
-### 4. Checkout
+### 4. Privacy Consent (First Visit Only — Pre-Launch Mandatory)
+
+Before showing the cart or allowing the customer to proceed to checkout on their **first order submission**, FBQR must collect explicit consent for data processing as required by UU PDP (UU No. 27/2022).
+
+**When triggered:** Once per device (stored in `localStorage`). Not shown again on subsequent sessions from the same browser.
+
+**Consent screen (bottom sheet, non-dismissable until action taken):**
+
+```
+┌──────────────────────────────────────┐
+│  Sebelum memesan                     │
+│                                      │
+│  FBQR menyimpan pesanan dan data     │
+│  perangkat Anda untuk memproses      │
+│  transaksi ini.                      │
+│                                      │
+│  Data disimpan di server Singapura.  │
+│  Tidak dijual ke pihak ketiga.       │
+│                                      │
+│  Baca Kebijakan Privasi kami →       │
+│  (link to fbqr.app/privacy)          │
+│                                      │
+│  [ Saya Setuju — Lanjutkan ]         │
+│  [ Batalkan ]                        │
+└──────────────────────────────────────┘
+```
+
+- **[Saya Setuju — Lanjutkan]**: Sets `localStorage.setItem('fbqr_consent', '1')` + timestamp. Proceeds to checkout. If `Customer` account is logged in, sets `Customer.privacyConsentAt = NOW()` via API.
+- **[Batalkan]**: Closes the sheet. Customer returns to the menu. Cart is preserved. They can browse and add items but cannot submit an order without consenting.
+- The Privacy Policy link (`fbqr.app/privacy`) opens in a new tab; sheet remains visible on return.
+- This screen must be implemented in Step 15 before any payment flow is accessible.
+
+**Note:** Anonymous customers (no account) only get the localStorage consent flag. Logged-in customers also get `Customer.privacyConsentAt` persisted in the DB. This satisfies UU PDP Article 22 (explicit consent before processing).
+
+### 5. Checkout
 
 - Customer reviews cart → pre-invoice shown (itemized + tax + service charge + total)
 - Optional: customer logs in / creates account to earn loyalty points
@@ -128,7 +162,7 @@ If either assertion fails → return `400 Bad Request` (do not redirect to `/r/{
 - **Non-QRIS:** redirect to Midtrans hosted payment page
 - **PAY_AT_CASHIER mode:** customer submits order → alert sent to cashier → cashier confirms → kitchen receives order
 
-### 5. Post-Payment (Customer View)
+### 6. Post-Payment (Customer View)
 
 ```
 Payment confirmed (Midtrans webhook)
@@ -153,7 +187,7 @@ Customer can [Add More Items] → new items go to same table session, create a n
 
 **Note on READY notification:** Phase 1 — accept the gap that browser tab may be closed. Display banner at checkout: "Pelayan akan mengantarkan pesanan Anda. Tidak perlu menunggu di layar ini." Phase 2: WhatsApp notification.
 
-### 6. Call Waiter Feature
+### 7. Call Waiter Feature
 
 Three distinct request types as separate buttons:
 
@@ -240,13 +274,15 @@ CustomerSession
 
 On QR scan, a `fbqr_session_id` cookie is set (`httpOnly`, scoped to `menu.fbqr.app`). On subsequent page loads (including refresh), the server checks for this cookie.
 
-**Critical — the session resume query MUST include the table guard:**
+**Critical — the session resume query MUST use `sessionCookie`, not `id`:**
 ```sql
 SELECT * FROM CustomerSession
-WHERE id = $cookieValue
-  AND tableId = $scannedTableId   -- REQUIRED: prevents cross-table session leakage
+WHERE sessionCookie = $cookieValue   -- NOT id — cookie stores the opaque sessionCookie value
+  AND tableId = $scannedTableId      -- REQUIRED: prevents cross-table session leakage
   AND status = 'ACTIVE'
 ```
+
+**Security note:** The cookie must store `CustomerSession.sessionCookie` (a separate high-entropy opaque string), never `CustomerSession.id` (the UUID primary key). Using `id` means a DB breach directly yields valid session credentials. The `sessionCookie` field exists precisely to decouple the internal PK from the cookie credential. If `WHERE id = $cookieValue` appears in any implementation, it is a session hijacking vulnerability.
 
 Without the `tableId` guard, a customer moving from Table 5 to Table 8 would resume the Table 5 session — orders would be routed to the wrong table.
 
@@ -353,14 +389,30 @@ Customer may [Call Waiter] → WaiterRequest created → notified on merchant-po
 - The retry hits the idempotency guard → returns HTTP 200 without re-attempting PDF generation
 - Result: order confirmed, kitchen working, but **no invoice PDF ever generated** — customer sees broken download link
 
+**⚠️ Vercel runtime warning:** On **standard Node.js serverless** runtime, bare `Promise` fire-and-forget is NOT safe — Vercel terminates the function process immediately after the HTTP response. Any `setTimeout` or un-awaited `fetch` is silently dropped. Two safe options:
+
+**Option A (recommended) — Vercel Edge Runtime on the webhook handler:**
+```ts
+// app/api/webhook/midtrans/route.ts
+export const runtime = 'edge'
+// Edge runtime supports waitUntil() via context.waitUntil()
+export async function POST(req: Request, { waitUntil }: { waitUntil: (p: Promise<any>) => void }) {
+  // ... run main transaction ...
+  waitUntil(fetch('/api/invoice/generate', { method: 'POST', body: JSON.stringify({ orderId }) }))
+  return new Response('OK', { status: 200 })
+}
+```
+
+**Option B — Supabase Edge Function triggered by DB webhook on `Payment.status → SUCCESS`**
+
 **Required implementation pattern (Step 15 and Step 19):**
 
 ```
 Midtrans webhook handler:
   1. Run the main transaction (update Order → CONFIRMED, Payment → SUCCESS, broadcast Realtime)
   2. Return HTTP 200 to Midtrans immediately
-  3. After response: call internal /api/invoice/generate?orderId={id} — fire-and-forget
-     (or enqueue via a background job if available — e.g., Vercel Edge Functions, Supabase Edge Functions)
+  3. Enqueue invoice generation via waitUntil() (Edge Runtime) or Supabase Edge Function trigger
+     NEVER use bare Promise fire-and-forget on standard Node.js runtime — it will be dropped.
 
 Invoice generation endpoint (/api/invoice/generate):
   1. Fetch Order + OrderItems + Customer + Restaurant branding
@@ -602,6 +654,186 @@ Cashier confirms → Order: CONFIRMED → kitchen receives it
     OR
 Cashier rejects → Order: CANCELLED → customer sees: "Your order was cancelled by the cashier."
 ```
+
+---
+
+## Patungan — Split Payment (Phase 1 — Step 15)
+
+Patungan ("chipping in" in Indonesian) lets a group of friends split a single Order's `grandTotal` across multiple Midtrans payments. Each person pays their own share from their own device and e-wallet. No external group-payment app required.
+
+> **Scope:** Patungan is a **PAY_FIRST-only** feature. `PAY_AT_CASHIER` mode does not support Patungan — the cashier already collects payment in person and can handle splits physically.
+
+### Who Can Initiate Patungan
+
+Any customer in the active session can initiate Patungan from the checkout screen, before payment is submitted. The initiating device becomes the **Patungan host**.
+
+### UX Flow
+
+#### Step 1 — Cart & Checkout Screen
+
+On the pre-invoice screen, below the grand total, the host taps:
+
+```
+[ Bayar Patungan 👥 ]   (secondary CTA below the primary "Bayar Sekarang" button)
+```
+
+This button is shown only when `paymentMode = PAY_FIRST`. Hidden in `PAY_AT_CASHIER` mode.
+
+#### Step 2 — Split Setup Modal
+
+A bottom sheet slides up with split options:
+
+```
+┌──────────────────────────────────────┐
+│  Bayar Patungan                      │
+│  Total: Rp 245.000                   │
+│                                      │
+│  Berapa orang yang ikut patungan?    │
+│  [  −  ]  [ 2 ]  [  +  ]            │
+│  (min 2, max 10)                     │
+│                                      │
+│  Cara bagi:                          │
+│  ● Rata (Rp 122.500 / orang)         │
+│  ○ Manual (setiap orang isi sendiri) │
+│                                      │
+│  [ Buat Link Patungan ]              │
+└──────────────────────────────────────┘
+```
+
+**Two split modes:**
+
+| Mode | Behaviour |
+|---|---|
+| **Rata (Equal)** | `grandTotal ÷ personCount`, rounded up to nearest 100 IDR per person; any rounding remainder assigned to the last payer (the host). |
+| **Manual (Custom)** | Each participant enters their own share on their device. API validates that the sum of all submitted payments equals `grandTotal` exactly before confirming the Order. |
+
+#### Step 3 — Patungan Session Created
+
+Host taps **[Buat Link Patungan]**. FBQR API creates a `PatunganSession` (see schema below) and returns:
+
+- A shareable URL: `https://menu.fbqr.app/{restaurantId}/{tableId}/patungan/{patunganId}?share=1`
+- A 6-digit alphanumeric join code (e.g. `XK4M9R`)
+
+Host's device shows:
+
+```
+┌──────────────────────────────────────┐
+│  Patungan Dibuat! 🎉                 │
+│                                      │
+│  Bagikan ke teman:                   │
+│  [Salin Link] [Bagikan via WhatsApp] │
+│                                      │
+│  Atau tunjukkan kode ini:            │
+│  ┌────────────────┐                  │
+│  │   X K 4 M 9 R  │  (large, bold)  │
+│  └────────────────┘                  │
+│                                      │
+│  Menunggu pembayaran...              │
+│  ████████░░  1/2 lunas               │
+│                                      │
+│  [Bayar Bagian Saya]                 │
+└──────────────────────────────────────┘
+```
+
+The host sees a live progress bar (Supabase Realtime) updating as participants pay.
+
+#### Step 4 — Participant Joins
+
+Participant opens the shared URL or visits `https://menu.fbqr.app/patungan` and enters the 6-digit code. They land on a **Patungan participant screen**:
+
+```
+┌──────────────────────────────────────┐
+│  Patungan di [Restaurant Name]       │
+│  Meja 5 — 2 orang                    │
+│                                      │
+│  Total tagihan: Rp 245.000           │
+│  Bagian kamu:   Rp 122.500           │  ← Equal mode: pre-filled
+│                 [__________]         │  ← Manual mode: editable field
+│                                      │
+│  [ Bayar Sekarang ]                  │
+│  (via Midtrans QRIS / e-wallet)      │
+└──────────────────────────────────────┘
+```
+
+Participant taps **[Bayar Sekarang]** → redirected to Midtrans Snap for their individual share amount.
+
+#### Step 5 — Payments Collected
+
+Each participant's successful Midtrans webhook creates one `Payment` row linked to the same `Order.id` with `paymentType = FULL` and `splitGroupId = patunganId`.
+
+- The `Order` stays in `PENDING` until **all** `PatunganSession.totalParts` payments reach `SUCCESS`.
+- When the last payment completes: `Order → CONFIRMED`, kitchen notified, invoice generated (all in the same webhook handler transaction).
+- If any payment expires before the session completes: that participant's slot opens back up — they must re-pay their share. Other successful payments are NOT refunded automatically (they wait for completion).
+
+#### Step 6 — Host Progress Screen
+
+Host sees live updates:
+
+```
+Pembayaran Patungan
+Total: Rp 245.000
+
+✅ Kamu              Rp 122.500  Lunas
+⏳ Teman kamu        Rp 122.500  Menunggu pembayaran...
+
+[Ingatkan Teman]   [Batalkan Patungan]
+```
+
+**[Ingatkan Teman]** — copies the join URL to clipboard (no automatic push/WhatsApp in Phase 1).
+
+**[Batalkan Patungan]** — host-only. Cancels the `PatunganSession`. All `SUCCESS` payments are refunded via Midtrans API. `Order` → `CANCELLED`. Uses `orders:manage`-equivalent host authority — no staff login required.
+
+### PatunganSession Schema
+
+```
+PatunganSession
+├── id              (string UUID PK)
+├── orderId         (string FK → Order.id; unique — one patungan per order)
+├── shareCode       (string — 6-char alphanumeric; unique index; case-insensitive lookup)
+├── splitMode       (enum: EQUAL | MANUAL)
+├── totalParts      (int — number of participants, 2–10)
+├── paidParts       (int — count of SUCCESS payments; updated atomically per webhook)
+├── amountPerPart   (int? — set for EQUAL mode; null for MANUAL)
+├── status          (enum: PENDING | COMPLETED | CANCELLED)
+├── expiresAt       (DateTime — PatunganSession expires when Order expires;
+│                    set to Order.expiresAt at creation time)
+├── createdBySessionId (string FK → CustomerSession.id — host's session)
+├── createdAt       (DateTime)
+└── updatedAt       (DateTime)
+```
+
+`Payment.splitGroupId` field: `String? FK → PatunganSession.id`. Null for non-Patungan payments.
+
+### API Endpoints (Step 15)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/patungan` | CustomerSession cookie | Create PatunganSession; validate Order is PENDING + paymentMode=PAY_FIRST |
+| `GET` | `/api/patungan/[patunganId]` | None (shareable link) | Get session status, split details, paidParts count |
+| `GET` | `/api/patungan/code/[shareCode]` | None | Look up patunganId from 6-char code |
+| `POST` | `/api/patungan/[patunganId]/pay` | None (participant) | Create Midtrans Snap token for participant's share; returns `redirectUrl` |
+| `DELETE` | `/api/patungan/[patunganId]` | CustomerSession cookie (host only) | Cancel PatunganSession + refund all SUCCESS payments |
+
+### Constraints and Edge Cases
+
+| Constraint | Rule |
+|---|---|
+| `PAY_AT_CASHIER` mode | Patungan button hidden; API returns HTTP 400 if attempted |
+| Order already CONFIRMED | Cannot create PatunganSession; HTTP 409 |
+| Equal split remainder | Round each share DOWN to nearest 1 IDR; add remainder to host's share (always last to appear in UI to avoid confusion) |
+| Manual mode overpayment | API rejects any `POST /pay` that would push `SUM(pending + paid)` above `grandTotal`; HTTP 422 |
+| Manual mode underpayment | Order never confirms; PatunganSession expires with Order |
+| Participant count | Min 2, max 10. Enforced at creation time and at join time |
+| `maxOrderValueIDR` guard | Applies to the full Order grandTotal; each individual Patungan payment is exempt from this guard (their share may be below the limit) |
+| Session expiry | `PatunganSession.expiresAt = Order.expiresAt`; cleanup cron cancels both together |
+| Refund on cancellation | Midtrans API call per SUCCESS Payment; failures queued for manual resolution (Phase 2 dead-letter queue) |
+| BY_WEIGHT orders | Patungan is blocked if any `OrderItem.needsWeighing = true` — final price unknown at order time; HTTP 400 "Tidak dapat membagi tagihan untuk pesanan timbang" |
+
+### Data Models to Add to Phase 1 Prisma (Step 2)
+
+`PatunganSession` table and `Payment.splitGroupId` field must be created in Step 2 even though the Patungan UI ships in Step 15. See `docs/data-models.md` § Phase 2 Schema Scaffolding for field list.
+
+> **Note for Step 2:** Add `splitGroupId String? @db.Uuid` to the `Payment` model and create the `PatunganSession` table. Both ship with zero UI in Phase 1 and are activated in Step 15.
 
 ---
 
@@ -1189,6 +1421,37 @@ transition: { repeat: Infinity, duration: 2 }
 ```
 
 Rule: animation must never slow down a task. Motion is for orientation and delight — not decoration.
+
+### Language Switcher (Step 12 — Before First Deploy)
+
+`apps/menu` must ship with a language switcher. Bahasa Indonesia is the default; English is the secondary locale. The switcher must be placed and implemented as follows:
+
+**Placement:** Top-right corner of the menu header bar, next to the restaurant name/logo area. Displayed as a text toggle: **`ID | EN`** (two-letter codes). No flag icons — flags are politically ambiguous and unnecessarily large for a utility control.
+
+```
+┌────────────────────────────────────────┐
+│  [Restaurant Logo]  Restaurant Name    │  [ID | EN]  │
+└────────────────────────────────────────┘
+```
+
+**Interaction:**
+- Tap `EN` → switches all UI chrome to English; menu item names/descriptions remain in whatever language the merchant entered them.
+- Selection persisted in `localStorage` (`fbqr_locale`). Respects browser locale on first visit (`navigator.language.startsWith('id') ? 'id' : 'en'`).
+- Language switch does NOT reload the page — `next-intl`'s `useLocale()` hook re-renders UI strings in-place.
+
+**What is translated vs. not translated:**
+| Translated (UI chrome) | NOT translated |
+|---|---|
+| All button labels (`Pesan`, `Tambah ke Keranjang`, etc.) | Menu item names — merchant-entered |
+| Status messages, error messages | Menu item descriptions — merchant-entered |
+| Section headings, placeholders | Category names — merchant-entered |
+| Privacy consent screen | Restaurant name, address |
+| Call Waiter button labels | — |
+
+**Implementation (Step 12):**
+- All UI strings must use `next-intl`'s `t()` function — never hardcode Indonesian text in JSX.
+- String files: `apps/menu/messages/id.json` (source of truth) and `apps/menu/messages/en.json`.
+- The cache key for the menu API includes `locale` (see Menu Caching) — but this is for future per-locale menu content only. In Phase 1, the menu JSON is the same regardless of locale (only UI chrome changes).
 
 ### Accessibility
 

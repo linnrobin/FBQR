@@ -155,6 +155,8 @@ Renewal date → payment attempted (auto-charge via saved method, or manual invo
 | QueueCounter pruning (delete rows older than 30 days) | Daily `00:02 WIB` | Hobby (free) |
 | Session cleanup (expire stale CustomerSessions + fix ghost-occupied tables) | Daily `01:00 WIB` | Hobby (free) |
 | EOD PENDING_CASH cleanup (safety-net batch cancel) | Nightly `eodCashCleanupHour WIB` (default 03:00) | Hobby (free) |
+| BY_WEIGHT uncollected balance charge alert | Daily `06:00 WIB` | Hobby (free) |
+| PII deletion (UU PDP 30-day erasure SLA) | Daily `02:00 WIB` | Hobby (free) |
 
 > **Action:** Upgrade to Vercel Pro before implementing Step 15 (payment integration). Budget ~$20/mo.
 > The order-expiry cron is not optional — without it, PENDING orders from abandoned payment sessions accumulate indefinitely, block table sessions, and inflate stock hold counts.
@@ -180,10 +182,12 @@ export async function GET(req: Request) {
     { "path": "/api/cron/queue-counter-prune",  "schedule": "2 17 * * *"  },
     { "path": "/api/cron/session-cleanup",      "schedule": "0 18 * * *"  },
     { "path": "/api/cron/eod-cash-cleanup",     "schedule": "0 20 * * *"  },
-    { "path": "/api/cron/balance-charge-alert", "schedule": "0 23 * * *"  }
+    { "path": "/api/cron/balance-charge-alert", "schedule": "0 23 * * *"  },
+    { "path": "/api/cron/pii-deletion",         "schedule": "0 19 * * *"  }
   ]
 }
 // 0 23 UTC = 06:00 WIB (UTC+7)
+// 0 19 UTC = 02:00 WIB (UTC+7)
 ```
 > Vercel Cron runs in UTC. `00:01 WIB` = `17:01 UTC` (WIB = UTC+7).
 
@@ -290,7 +294,8 @@ STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
   SELECT o.id, o.customerSessionId
   FROM Order o
   JOIN Payment p ON p.orderId = o.id
-  JOIN MerchantSettings ms ON ms.restaurantId = o.restaurantId
+  JOIN Branch b ON b.id = o.branchId                -- Order has branchId, NOT restaurantId
+  JOIN MerchantSettings ms ON ms.restaurantId = b.restaurantId
   WHERE o.status = 'PENDING'
     AND p.method != 'CASH'                          -- never expire cash orders
     AND o.createdAt < NOW() - (ms.paymentTimeoutMinutes * INTERVAL '1 minute')
@@ -456,9 +461,10 @@ Runs daily (e.g. 06:00 WIB — after the overnight session cleanup, before morni
 Daily at 06:00 WIB:
 
 SELECT oi.id, oi.orderId, oi.weightValue, oi.finalLineTotal,
-       o.restaurantId, o.branchId, o.createdAt
+       o.branchId, b.restaurantId, o.createdAt
 FROM OrderItem oi
 JOIN Order o ON o.id = oi.orderId
+JOIN Branch b ON b.id = o.branchId    -- Order has branchId; restaurantId comes from Branch
 WHERE oi.weightValue IS NOT NULL       -- weight was entered
   AND oi.needsWeighing = false         -- system marked as complete
   AND oi.finalLineTotal IS NOT NULL    -- final price known
@@ -482,6 +488,80 @@ STEP 2 — Log run to CronRunLog
 ```
 
 > **No auto-refund or auto-cancel:** This cron only alerts — it does not automatically resolve the discrepancy. The merchant must decide whether to pursue the customer or write it off. This matches restaurant reality: the customer may have paid cash directly to a waiter.
+
+---
+
+### PII Deletion Cron Specification (UU PDP Compliance — Pre-Launch Mandatory)
+
+**Legal basis:** UU No. 27/2022 (UU PDP) Article 35 grants data subjects the right to request erasure. FBQR must honor deletion requests within 30 days.
+
+**Trigger:** `Customer.deletionRequestedAt` is set (non-null) when a customer submits a deletion request via the customer account settings page or via email to support@fbqr.app (handled manually by staff in Phase 1).
+
+```
+Daily at 02:00 WIB (cron: 0 19 * * * UTC):
+
+STEP 1 — Find customers past the 30-day SLA window
+  SELECT id, email, name
+  FROM Customer
+  WHERE deletionRequestedAt IS NOT NULL
+    AND deletionRequestedAt <= NOW() - INTERVAL '30 days'
+    AND status != 'DELETED'
+
+STEP 2 — For each customer: anonymize PII in-place (soft deletion)
+  BEGIN TRANSACTION
+    UPDATE Customer SET
+      email = 'deleted-' || id || '@deleted.fbqr.app',  -- unroutable placeholder
+      name = 'Deleted User',
+      phone = NULL,
+      avatarUrl = NULL,
+      loyaltyBalance = 0,
+      status = 'DELETED',
+      deletedAt = NOW()
+    WHERE id = $customerId
+    -- Do NOT delete the Customer row — Order and Payment FK integrity must be preserved.
+    -- Do NOT wipe Order rows — 7-year commercial data retention obligation under Indonesian law.
+    -- Do NOT wipe order items or payment amounts — needed for merchant reconciliation.
+
+    -- Anonymize CustomerSession records for this customer (if logged in during past sessions)
+    UPDATE CustomerSession SET
+      customerId = NULL  -- detach from customer; session becomes anonymous
+    WHERE customerId = $customerId
+
+    INSERT AuditLog(
+      action: 'DELETE',
+      entity: 'Customer',
+      entityId: $customerId,
+      actorType: 'SYSTEM',
+      actorName: 'System',
+      details: { reason: 'PII_DELETION_REQUEST', requestedAt: $deletionRequestedAt }
+    )
+  COMMIT
+
+STEP 3 — Send deletion confirmation email (before anonymizing email)
+  -- Email is sent BEFORE UPDATE so we still have the original address.
+  -- If email send fails, still proceed with deletion — log failure to CronRunLog.
+  sendEmail(to: customer.email, template: 'deletion-confirmation')
+
+STEP 4 — Log run to CronRunLog
+```
+
+**What is retained (required by law):**
+- `Order` rows (minus customer name/contact derivable from Customer table — Orders contain snapshotted item data only, no PII)
+- `Payment` rows (financial records — Indonesian commercial law 7-year retention)
+- `AuditLog` rows (immutable security audit trail)
+- `MerchantBillingInvoice` rows (tax records)
+
+**What is deleted/anonymized:**
+- `Customer.email`, `Customer.name`, `Customer.phone`, `Customer.avatarUrl` — overwritten with placeholders
+- `CustomerSession.customerId` — set to NULL (sessions become anonymous)
+
+**`vercel.json` addition:**
+```json
+{ "path": "/api/cron/pii-deletion", "schedule": "0 19 * * *" }
+```
+(19:00 UTC = 02:00 WIB)
+
+**Phase 1 shortcut for deletion requests:** Staff receive deletion requests by email to support@fbqr.app and manually set `Customer.deletionRequestedAt = NOW()` via FBQRSYS admin interface. Phase 2: self-service deletion button in customer account settings.
 
 ---
 
@@ -1080,6 +1160,39 @@ When a merchant cancels (clicks "Cancel Subscription"), show a mandatory one-que
 > - Just testing, will return
 
 Store in `Merchant.cancellationReason` (string enum). This data is gold for product decisions.
+
+### Win-Back Email Sequence (Post-Cancellation)
+
+When a merchant's subscription status moves to `CANCELLED` (grace period expired, final lock applied), trigger an automated win-back sequence via Resend. This is a **growth-critical** retention mechanism — reactivating a churned merchant costs far less than acquiring a new one.
+
+**Trigger:** `Merchant.status = CANCELLED` AND `Merchant.cancellationReason IS NOT NULL` (only merchants who completed the exit survey get the sequence — ensures relevance).
+
+**Sequence (sent from `noreply@fbqr.app`, CC to assigned FBQRSYS admin if `assignedToAdminId` is set):**
+
+| Day | Subject | Content | Condition |
+|---|---|---|---|
+| Day 1 | "Maaf melihat Anda pergi, [Name]" | Thank merchant for their time; remind them data is preserved for 30 days; share a "Rehire anytime" link to reactivate. Include a 1-click reactivation URL. | All churned merchants |
+| Day 7 | "Ada yang bisa kami perbaiki?" | Personal note offering a free 1:1 call with the FBQR team (book via Calendly link). Reference `cancellationReason` to personalize: if `TOO_EXPENSIVE` → offer a 1-month discount code; if `NOT_ENOUGH_FEATURES` → mention the roadmap; if `TECHNICAL_ISSUES` → offer direct engineering support. | Only if not reactivated |
+| Day 14 | "Kami merilis fitur baru" | Highlight 2–3 recent feature releases. "These came from merchant feedback just like yours." No hard sell. | Only if not reactivated |
+| Day 30 | "Data Anda akan segera dihapus" | Final notice: "Your restaurant data (menus, orders, QR codes) will be deleted in 7 days unless you reactivate. Reactivate now to keep everything." Include reactivation link with pre-filled plan. | Only if not reactivated; required for PDP data retention notice |
+
+**Day 30 email is mandatory** — it serves as the data deletion notice required by UU PDP before erasure runs.
+
+**Reactivation URL pattern:** `https://app.fbqr.app/reactivate?token={signed_merchant_token}` — HMAC-signed 30-day token that pre-fills the billing form with the merchant's last plan tier and stored payment method.
+
+**Suppression rules:**
+- If `Merchant.cancellationReason = 'RESTAURANT_CLOSED'` → suppress Day 7 and Day 14 emails (no point nudging a closed restaurant). Day 1 and Day 30 still send.
+- If merchant reactivates at any point → cancel all remaining emails in the sequence immediately.
+- Merchants can opt out of the sequence by replying "UNSUBSCRIBE" — set `Merchant.winBackOptOut = true` (new field, bool default false). Only the Day 30 data-deletion notice is still sent regardless of opt-out (it is a legal obligation, not marketing).
+
+**Schema addition:**
+
+| Model | Field | Type | Default | Notes |
+|---|---|---|---|---|
+| `Merchant` | `winBackOptOut` | Boolean | false | Set to `true` when merchant replies UNSUBSCRIBE to win-back emails. Still receives the mandatory Day 30 data-deletion notice. |
+| `Merchant` | `winBackEmailsSentCount` | Int | 0 | Tracks how many emails in the sequence have been sent. Prevents re-sending if billing cron runs multiple times. |
+
+**Implementation:** Add win-back sequence logic to the billing cron's daily pass. On each daily run, check `CANCELLED` merchants whose `cancellationReason IS NOT NULL` and `winBackEmailsSentCount < 4` and compute which email is due based on `MerchantSubscription.cancelledAt` (or `Merchant.updatedAt` at cancellation time).
 
 ---
 
