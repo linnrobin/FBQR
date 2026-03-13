@@ -375,7 +375,7 @@ Customer pays deposit via Midtrans (or cash)
     │
 Order → CONFIRMED → pushed to kitchen with ⚖️ "Needs weighing" flag on OrderItem
     │
-Kitchen/cashier weighs item → enters actual weight in merchant-pos
+Kitchen staff taps ⚖️ badge on KDS card → KDS numpad modal opens → staff enters weight
 System calculates: finalPrice = pricePerUnit × weight
 lineTotal updated: finalPrice − depositAmount = remaining charge
     │
