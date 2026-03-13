@@ -14,8 +14,8 @@ Every state-changing action is recorded in the `AuditLog` table.
 |---|---|
 | `actorId` | string? — ID of the user/staff performing the action; **null for SYSTEM events** (cron jobs, auto-resolve, auto-refund) |
 | `actorType` | enum: `STAFF` \| `ADMIN` \| `CUSTOMER` \| `SYSTEM` — distinguishes human vs automated actions |
-| `actorRole` | string? — Role at time of action; null for SYSTEM events |
-| `actorName` | string? — Display name (denormalized for historical accuracy); null for SYSTEM events |
+| `actorRole` | string? — Role at time of action; `null` for SYSTEM events |
+| `actorName` | string? — Display name (denormalized for historical accuracy); **`"System"` for SYSTEM events** (never null for SYSTEM — use the literal string "System" so log viewers always show a readable actor name) |
 | `action` | Verb: `CREATE`, `UPDATE`, `DELETE`, `LOGIN`, `LOGOUT`, `APPROVE`, etc. |
 | `entity` | Table/model affected: `MenuItem`, `Order`, `Staff`, `Promotion`, etc. |
 | `entityId` | ID of the affected record |
@@ -60,6 +60,9 @@ SystemAdmin          ← FBQRSYS admin accounts (owner + staff with dynamic role
                        id (string UUID PK)
                        email (string, unique)
                        passwordHash (string)     — bcrypt; min 60 chars
+                       mustChangePassword (bool default true) — set true on seed and on admin-created
+                                                 accounts; cleared to false after successful password change;
+                                                 auth middleware blocks all pages until flag is false
                        createdAt (datetime)
                        createdByAdminId (string? FK → SystemAdmin) — who created this admin;
                                                  null for the seed-bootstrapped Platform Owner
@@ -74,6 +77,10 @@ SystemRoleAssignment ← Links SystemAdmin → SystemRole
                        systemRoleId  (string FK → SystemRole)
                        createdAt (datetime)
 SubscriptionPlan     ← Plan tiers (name, price, billing cycle, feature limits)
+                       tableLimitCount (int?) — max tables allowed; null = unlimited
+                       menuItemLimitCount (int?) — max menu items allowed; null = unlimited
+                       branchLimitCount (int?) — max branches allowed; null = unlimited
+                       NOTE: enforcement is at the API layer — see platform-owner.md § Plan Limit Enforcement
 PlatformSettings     ← Singleton (id=1). Platform-level config: support contacts, branding,
                        billing defaults, feature flags. Never hardcode these values — read from DB.
                        Full field list in docs/platform-owner.md § PlatformSettings.
@@ -234,6 +241,17 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
                           INSERT time. For BALANCE_REFUND via CASH: no Midtrans API call;
                           cashier returns physical change; BALANCE_REFUND Payment row is still
                           created for audit (method = CASH, midtransTransactionId = null).
+                        BY_WEIGHT PAYMENT METHOD UNAVAILABLE FALLBACK: If the original payment
+                          channel (e.g. a specific e-wallet) becomes temporarily unavailable at
+                          BALANCE_CHARGE time, no automatic fallback occurs — the system does NOT
+                          silently switch channels. Instead: the cashier-facing POS shows an error
+                          "Metode pembayaran tidak tersedia — minta pelanggan untuk melunasi via
+                          tunai" and offers a CASH override button. If cashier selects CASH override:
+                          (1) BALANCE_CHARGE Payment row is created with method=CASH (breaking the
+                          same-channel constraint by explicit staff action, requiring orders:manage
+                          permission); (2) an AuditLog entry is written with
+                          action=CHANNEL_OVERRIDE, actorType=STAFF; (3) customer is notified.
+                          This is an escape hatch — not the normal flow.
                         status: PENDING | PENDING_CASH | SUCCESS | FAILED | EXPIRED | REFUNDED
                         midtransTransactionId (string?) — unique; idempotency guard on webhook
                         createdAt (datetime)
@@ -539,6 +557,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `emailNotifications` | JSON | Per-event email toggle map. Schema: `{ "dailySummary": true, "billingInvoice": true, "lowStock": false }`. Default: `billingInvoice: true`, others: false. |
 | `MerchantSettings` | `allowPromotionStacking` | Boolean | Whether multiple promotions can apply to a single order. Default: `false` (only the best-value promotion applies). When `true`, all applicable promotions stack. |
 | `MerchantSettings` | `byWeightEnabled` | Boolean | Default: `false`. Phase 1.5 gate — when `false`, BY_WEIGHT items are hidden from `apps/menu` and the order API rejects BY_WEIGHT OrderItems. Set to `true` by FBQRSYS when the Phase 1.5 KDS weight-entry UI is ready for this merchant. See ADR-026. |
+| `MerchantSettings` | `preparingAlertMinutes` | Int | Default: `45`. Minutes before a PREPARING order triggers the stale-order alert badge in merchant-pos Orders List and KDS. Set to `0` to disable. See ADR-027. |
 | `MerchantSettings` | `printerConfig` | JSON? | Default: `null` (no printer). Structure: `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }`. One printer config per branch (per-station printers Phase 2). Null = printing silently skipped. |
 | `MerchantSettings` | `autoPrintKitchenTicket` | Boolean | Default: `true`. When `true`, a kitchen ticket is auto-printed via `node-thermal-printer` when an order reaches `CONFIRMED` status. No-op if `printerConfig` is null. |
 | `MerchantSettings` | `autoPrintReceipt` | Boolean | Default: `true`. When `true`, a customer receipt is auto-printed when payment is confirmed (Midtrans webhook SUCCESS or cashier marks PAID). No-op if `printerConfig` is null. |
@@ -663,7 +682,9 @@ The seed script (`packages/database/prisma/seed.ts`) must create the following o
    FBQRSYS_ADMIN_EMAIL=admin@fbqr.app
    FBQRSYS_ADMIN_PASSWORD=<set before first deploy>
    ```
-   Creates a `SystemAdmin` record with a `SystemRole` holding all FBQRSYS permissions (equivalent to "Platform Owner" template). **This password must be changed on first production login.** The seed is idempotent — re-running when the admin already exists is a no-op (upsert by email).
+   Creates a `SystemAdmin` record with a `SystemRole` holding all FBQRSYS permissions (equivalent to "Platform Owner" template). The seed is idempotent — re-running when the admin already exists is a no-op (upsert by email).
+
+   **`mustChangePassword` flag:** The seed sets `SystemAdmin.mustChangePassword = true` on the initial admin record. On every FBQRSYS login, the auth middleware checks this flag. If `true`, the user is redirected to `/fbqrsys/change-password` before any other page loads — they cannot dismiss or navigate away until the password is changed. After a successful password change, the flag is set to `false`. This also applies to any `SystemAdmin` created by FBQRSYS (staff creation flow sends a "set your password" link that, once used, clears the flag).
 
 2. **Demo merchant** (development only, skipped in `NODE_ENV=production`):
    - One `Merchant` + `Restaurant` + `Branch` + sample menu categories/items

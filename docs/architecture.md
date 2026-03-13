@@ -636,6 +636,35 @@ export async function updateMenuItem(formData: unknown) {
 
 ---
 
+### ADR-027: No Auto-Transition Out of PREPARING — Alert-Based Design
+
+**Context:** An order reaches `PREPARING` when the kitchen acknowledges it. There is no guarantee that kitchen staff will ever tap "Ready" — they could forget, the display could crash, or the restaurant could close mid-service. Without a timeout, PREPARING orders stay stuck indefinitely, corrupting the `maxActiveOrders` cap and distorting analytics.
+
+**Options considered:**
+1. Auto-advance `PREPARING → READY → COMPLETED` after N minutes — dangerous: marks orders complete without confirmation; hides real kitchen problems
+2. Auto-cancel `PREPARING → CANCELLED` after N minutes — loses food already prepared; potential refund dispute
+3. Alert merchant-pos when PREPARING duration exceeds threshold; require manual action
+
+**Decision:** Option 3. No automatic state transition out of `PREPARING`. Instead, merchant-pos surfaces a **stale order alert** when an order has been in `PREPARING` for longer than `MerchantSettings.preparingAlertMinutes` (default: 45 minutes).
+
+**Stale order alert behavior:**
+- merchant-pos Orders List: shows a yellow ⏱ badge on any PREPARING order older than `preparingAlertMinutes`
+- merchant-kitchen KDS: card border turns amber after threshold; does NOT auto-dismiss or move the card
+- Alert is informational only — staff must manually advance to READY or contact the kitchen
+- No push notification is sent (too noisy for busy kitchens)
+
+**New MerchantSettings field:**
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `preparingAlertMinutes` | Int | `45` | Minutes before a PREPARING order triggers the stale order alert badge in merchant-pos and KDS. Set to 0 to disable. |
+
+**Rationale:** Kitchens have wildly different throughput (5-min burgers vs 45-min seafood towers). An auto-transition would be wrong for half of all use cases. A visible alert respects kitchen staff's authority over their own queue while preventing silent stagnation.
+
+**Status:** Decided. Add `preparingAlertMinutes` to MerchantSettings in Step 2 (Prisma schema). Implement alert badge in Step 17 (merchant-kitchen KDS) and Step 14 (Orders List).
+
+---
+
 ## CI/CD Pipeline
 
 > **For AI agents:** Set this up in Step 1 alongside the monorepo scaffold. Every commit to any branch should be validated automatically.

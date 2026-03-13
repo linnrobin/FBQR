@@ -762,6 +762,25 @@ FBQR POSTs a signed JSON payload to registered endpoints when these events occur
 - FBQR logo/watermark on the customer menu (marketing for FBQR)
 - "Upgrade" prompt visible when they hit a limit (not a hard block — a gentle nudge)
 
+### Plan Limit Enforcement
+
+Plan feature limits (`tableLimitCount`, `menuItemLimitCount`, `branchLimitCount`) are stored on `SubscriptionPlan` and enforced by the API — not in the UI alone.
+
+**Enforcement rules:**
+
+| Resource | When checked | How checked |
+|---|---|---|
+| Tables | On `POST /api/tables` (create table) | `COUNT(Table WHERE branchId IN merchant's branches AND deletedAt IS NULL) >= plan.tableLimitCount` |
+| Menu items | On `POST /api/menu-items` (create item) | `COUNT(MenuItem WHERE restaurantId = merchant's restaurantId AND deletedAt IS NULL) >= plan.menuItemLimitCount` |
+| Branches | On FBQRSYS admin assigning a new branch (EOI approval) | `COUNT(Branch WHERE restaurantId = merchant's restaurantId AND deletedAt IS NULL) >= plan.branchLimitCount` |
+
+**On limit reached:**
+- API returns HTTP 403 with `{ error: "PLAN_LIMIT_REACHED", resource: "tables"|"menuItems"|"branches", limit: N, upgradeUrl: "/settings/billing" }`
+- merchant-pos shows an inline notice: *"Batas [tabel/menu] paket [Free/Starter] tercapai. [Upgrade sekarang →]"*
+- The upgrade CTA is a soft nudge — no functionality is removed retrospectively (existing tables/items remain active)
+
+**Null limit = unlimited:** When `tableLimitCount`, `menuItemLimitCount`, or `branchLimitCount` is `null` on the plan, no enforcement runs. Pro and Enterprise tiers should use `null`.
+
 ---
 
 ## Indonesian Regulatory Compliance
