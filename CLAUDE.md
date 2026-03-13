@@ -11,9 +11,25 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.7
+Version        : 3.8
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Phase 1 scope expansion pass (v3.7) — 3 more features promoted from Phase 2:
+Last completed : DeepSeek audit red-flag resolution pass (v3.8) — 5 gaps fixed:
+                 1. PREPARING timeout: ADR-027 added — no auto-transition; stale order alert
+                    badge after MerchantSettings.preparingAlertMinutes (default 45 min).
+                 2. Free tier enforcement: SubscriptionPlan gets tableLimitCount,
+                    menuItemLimitCount, branchLimitCount (null = unlimited). API returns HTTP 403
+                    PLAN_LIMIT_REACHED on create. Spec in platform-owner.md § Plan Limit Enforcement.
+                 3. actorName for SYSTEM events: Changed from null to literal "System" string.
+                 4. BY_WEIGHT channel unavailable: CASH override escape hatch documented —
+                    staff override with orders:manage permission + AuditLog CHANNEL_OVERRIDE entry.
+                 5. SystemAdmin mustChangePassword: New field on SystemAdmin; seed sets true;
+                    FBQRSYS auth middleware blocks all pages until password is changed.
+                 Deferred as non-gaps: Midtrans dead-letter queue (Phase 2); EOD 12h window
+                   (already configurable); idempotencyKey collision (documented); QueueCounter
+                   WIB (already fully specified in platform-owner.md).
+                 Updated: architecture.md (ADR-027), data-models.md (5 field changes),
+                   platform-owner.md (Plan Limit Enforcement section), CLAUDE.md.
+Previously: Phase 1 scope expansion pass (v3.7) — 3 more features promoted from Phase 2:
                  1. Printer integration (kitchen tickets + receipts) → Phase 1 Step 20
                     New MerchantSettings fields: printerConfig, autoPrintKitchenTicket,
                     autoPrintReceipt. New merchant.md § Kitchen Printer Integration.
