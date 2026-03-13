@@ -527,6 +527,8 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `OrderItem` | `status` | enum? (`PENDING\|PREPARING\|READY\|COMPLETED`) nullable | Per-item kitchen status. Phase 1: always null. Phase 2: kitchen staff can mark individual items done. `COMPLETED` means the item is done; the Order itself moves to `READY` only when all items are `COMPLETED`. **Note:** `⚖️ Needs weighing` and `⚠️ Stock-out` are display states derived from `OrderItem.needsWeighing` (bool) and a stock-out flag set during the webhook transaction — they are NOT enum values on this field. |
 | `OrderItem` | `needsWeighing` | Boolean default `false` | `true` for BY_WEIGHT items at order creation. Set to `false` when kitchen staff enter the weight via the KDS numpad modal (see `docs/merchant.md` § BY_WEIGHT Weight Entry). Used by the Session Cleanup Cron to detect abandoned BY_WEIGHT orders. Must exist in Phase 1 schema. |
 | `OrderItem` | `weightValue` | Decimal? | Actual weight in grams, entered by kitchen staff via KDS numpad. `null` until staff enter it. Used to compute `finalLineTotal = weightValue × MenuItem.pricePerUnit` and derive BALANCE_CHARGE or BALANCE_REFUND amount. |
+| `OrderItem` | `weightUnit` | String? | Unit label matching `MenuItem.unitLabel` (e.g. `"kg"`, `"g"`). Stored for display on KDS and receipt; `null` for non-BY_WEIGHT items. |
+| `OrderItem` | `finalLineTotal` | Int? | Calculated line total after weighing: `round(weightValue × MenuItem.pricePerUnit)`. `null` until weight is entered. Used to compute BALANCE_CHARGE or BALANCE_REFUND delta vs the DEPOSIT amount. |
 | `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
@@ -561,6 +563,11 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `printerConfig` | JSON? | Default: `null` (no printer). Structure: `{ type: "USB"|"NETWORK"|"BLUETOOTH", address: string, paperWidth: 58|80 }`. One printer config per branch (per-station printers Phase 2). Null = printing silently skipped. |
 | `MerchantSettings` | `autoPrintKitchenTicket` | Boolean | Default: `true`. When `true`, a kitchen ticket is auto-printed via `node-thermal-printer` when an order reaches `CONFIRMED` status. No-op if `printerConfig` is null. |
 | `MerchantSettings` | `autoPrintReceipt` | Boolean | Default: `true`. When `true`, a customer receipt is auto-printed when payment is confirmed (Midtrans webhook SUCCESS or cashier marks PAID). No-op if `printerConfig` is null. |
+| `MerchantSettings` | `roundingRule` | Enum | `NONE` (default) \| `ROUND_50` \| `ROUND_100`. Cash merchants should use `ROUND_100`. Raw subtotal/tax/total values are stored as-is; only the final charged amount shown to customer is rounded. Never round stored DB values. |
+| `MerchantSettings` | `aiShowBestsellers` | Boolean | Default: `true`. When `true`, `apps/menu` highlights bestselling items (ranked by order frequency, last 30 days) with a "Terlaris" badge. |
+| `MerchantSettings` | `aiPersonalized` | Boolean | Default: `false`. When `true`, `apps/menu` shows collaborative-filtering suggestions based on cart content and anonymous order history. Phase 1: model is simple (most co-ordered items); Phase 2: ML model. |
+| `MerchantSettings` | `aiUpsell` | Boolean | Default: `true`. When `true`, a "Tambah minuman?" or similar upsell prompt appears at checkout. |
+| `MerchantSettings` | `aiTimeBased` | Boolean | Default: `true`. When `true`, `apps/menu` surfaces breakfast/lunch/dinner items based on current WIB time of day. |
 
 ### Additional Fields Required in Phase 1 Prisma
 

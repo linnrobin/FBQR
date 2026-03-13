@@ -91,6 +91,13 @@ Server validates:
 
 The menu app validates on load: `sig` must match and `exp` must be in the future. Invalid/expired requests redirect back to `/r/{tableToken}` — legitimate customers are never permanently locked out.
 
+**⚠️ Path parameter validation (security rule):** The HMAC signature covers only `tableToken:expiryTimestamp` — the `{restaurantId}` and `{tableId}` path parameters are NOT signed. After looking up `Table` by `tableToken`, the app **MUST** assert:
+```
+assert params.tableId === table.id
+assert params.restaurantId === table.branch.restaurantId
+```
+If either assertion fails → return `400 Bad Request` (do not redirect to `/r/{tableToken}`). **Never use `params.tableId` or `params.restaurantId` as the source of truth for session creation or order routing** — always derive table and restaurant identity from the DB record returned by `Table.findByToken(tableToken)`. See ADR-015.
+
 ### 2. Menu Experience
 
 - Restaurant branding (colors, logo, font) applied via CSS variables on first load — within 50ms (no flash of unstyled menu)
@@ -319,7 +326,8 @@ Payment via Midtrans QRIS (or other method if configured)
     │
     ▼
 [FBQR API]
-Midtrans webhook → Order status → CONFIRMED → Invoice PDF generated
+Midtrans webhook → Order status → CONFIRMED → enqueue async Invoice PDF generation job
+(PDF generation MUST be async — see Invoice PDF Generation note below)
 
 [KITCHEN]
 Supabase Realtime push → order appears on merchant-kitchen display
@@ -332,6 +340,36 @@ Live status updates on order tracking screen → PREPARING → READY notificatio
 Customer may [Add More Items] → new Order → same flow
 Customer may [Call Waiter] → WaiterRequest created → notified on merchant-pos
 ```
+
+---
+
+## Invoice PDF Generation — Async Requirement
+
+**PDF generation MUST be triggered asynchronously after the Midtrans webhook handler returns HTTP 200.**
+
+**Why:** `@react-pdf/renderer` rendering + Supabase Storage upload = 2–5 seconds. On Vercel Hobby, the serverless function has a 10-second hard timeout. A complex order (many items, branding assets) could push the total webhook handler time (cold start + DB transaction + PDF gen + Storage upload) beyond 10 seconds. When Vercel kills the function mid-execution:
+- The DB transaction has already committed (CONFIRMED order, kitchen alerted) ✅
+- Midtrans receives a 5xx and retries the webhook
+- The retry hits the idempotency guard → returns HTTP 200 without re-attempting PDF generation
+- Result: order confirmed, kitchen working, but **no invoice PDF ever generated** — customer sees broken download link
+
+**Required implementation pattern (Step 15 and Step 19):**
+
+```
+Midtrans webhook handler:
+  1. Run the main transaction (update Order → CONFIRMED, Payment → SUCCESS, broadcast Realtime)
+  2. Return HTTP 200 to Midtrans immediately
+  3. After response: call internal /api/invoice/generate?orderId={id} — fire-and-forget
+     (or enqueue via a background job if available — e.g., Vercel Edge Functions, Supabase Edge Functions)
+
+Invoice generation endpoint (/api/invoice/generate):
+  1. Fetch Order + OrderItems + Customer + Restaurant branding
+  2. Render PDF with @react-pdf/renderer
+  3. Upload to Supabase Storage → store URL on Order.invoicePdfUrl
+  4. Send "Your receipt is ready" email to customer (if email provided)
+```
+
+The invoice download link in the order tracking screen should show "Generating..." with a polling fallback until `Order.invoicePdfUrl` is set. Timeout for display: 30 seconds, then "Invoice unavailable — contact restaurant."
 
 ---
 
@@ -536,7 +574,7 @@ Set `custom_expiry` in the Snap token creation to match `MerchantSettings.paymen
 | `orderId` | string | FK → Order |
 | `method` | enum | `QRIS \| EWALLET \| VA \| CARD \| CASH` |
 | `provider` | enum? | `GOPAY \| OVO \| DANA \| SHOPEEPAY \| BCA \| MANDIRI \| BNI \| OTHER \| null` |
-| `paymentType` | enum | `FULL \| DEPOSIT \| BALANCE_CHARGE \| BALANCE_REFUND` — `FULL` standard order; `DEPOSIT` upfront BY_WEIGHT charge; `BALANCE_CHARGE` second charge (balance > 0); `BALANCE_REFUND` refund row when deposit exceeded final price (amount: negative) |
+| `paymentType` | enum | `FULL \| DEPOSIT \| BALANCE_CHARGE \| BALANCE_REFUND` — `FULL` standard order; `DEPOSIT` upfront BY_WEIGHT charge; `BALANCE_CHARGE` second charge (balance > 0); `BALANCE_REFUND` refund row when deposit exceeded final price (**amount is always POSITIVE** — refund direction indicated by `paymentType` alone; see data-models.md SIGN CONVENTION) |
 | `status` | enum | `PENDING \| PENDING_CASH \| SUCCESS \| FAILED \| EXPIRED \| REFUNDED` |
 | `amount` | int | IDR charged |
 | `midtransTransactionId` | string? | Unique; idempotency guard on webhook |

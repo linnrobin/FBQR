@@ -307,6 +307,19 @@ If the cookie matches a session on a **different** table (e.g. customer moves fr
 
 **Fallback:** Invalid/expired `sig` on the menu app redirects back to `/r/{tableToken}` — legitimate customers are never permanently locked out.
 
+**⚠️ SECURITY RULE — URL path parameters must never be trusted for session creation:**
+
+The HMAC signature covers only `tableToken + ":" + expiryTimestamp`. The `{restaurantId}` and `{tableId}` path parameters in the menu URL are **NOT** part of the signed payload. An attacker could craft a URL with a valid `sig` for one table's token but with a different `tableId` in the path.
+
+**Implementation requirement:** After looking up `Table` by `tableToken`, the menu app MUST assert:
+```
+assert params.tableId === table.id
+assert params.restaurantId === table.branch.restaurantId
+```
+If either assertion fails → reject with `400 Bad Request` (do NOT redirect to `/r/{tableToken}`, as that would silently fix a manipulated URL). Log the mismatch.
+
+**Never use `params.tableId` or `params.restaurantId` as the source of truth for session creation or order routing.** Always derive table and restaurant identity from the token's DB record.
+
 **Status:** Decided.
 
 ---
