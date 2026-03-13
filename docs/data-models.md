@@ -488,7 +488,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantApiKey` | Public REST API | Schema defined in Public API section above |
 | `WebhookEndpoint` | Webhook subscriptions | Schema defined in Public API section above |
 | `WebhookDeliveryLog` | Webhook delivery audit | Schema defined in Public API section above |
-| `BranchMenuOverride` | Per-branch item availability | `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
+| `BranchMenuOverride` | *(Phase 1 — not deferred)* | Schema + UI toggle both built in Step 9. See `docs/merchant.md` § Multi-Branch. `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
 | `Reservation` | Table reservation system | `(id, branchId FK, tableId FK, guestName, guestPhone, partySize, scheduledAt, depositPaid bool, status: PENDING\|CONFIRMED\|CANCELLED\|SEATED\|NO_SHOW)` |
 | `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
@@ -580,7 +580,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 
 ### Why these specific items
 
-**`BranchMenuOverride`** — without this stub, adding per-branch availability in Phase 2 requires modifying `MenuItem` (adding nullable branchId FK) which would change how all Phase 1 menu queries work. A separate junction table is the clean, non-breaking addition.
+**`BranchMenuOverride`** — promoted to Phase 1 (Step 9). Schema and UI toggle are built together in Step 9 (menu management). A separate junction table is the correct pattern: avoids modifying `MenuItem` and keeps menu queries branch-aware without data duplication (ADR-019).
 
 **`Reservation`** — the foreign keys to `Table` and `Branch` must exist in the schema before Phase 1 data accumulates. Adding them later requires migrating existing rows. Creating the table now with no data is costless.
 
@@ -640,7 +640,7 @@ These are enforced server-side on API routes, not client-side.
 The menu endpoint (`GET /api/menu/{restaurantId}`) is the highest-traffic read in the system. Caching is mandatory at launch.
 
 - **Cache layer:** Vercel Edge Cache (built-in with Next.js `fetch` cache)
-- **Cache key:** `restaurantId:branchId:locale` — **branchId is included from day one** because Phase 2 `BranchMenuOverride` makes menu responses branch-specific. Using `restaurantId + locale` as the key would be a breaking cache invalidation change in Phase 2; including `branchId` now is a zero-cost Phase 1 decision.
+- **Cache key:** `restaurantId:branchId:locale` — **branchId is required from day one** because `BranchMenuOverride` (Phase 1, Step 9) makes menu responses branch-specific from launch.
 - **TTL:** 5 minutes
 - **Invalidation:** When a merchant saves any menu change (category, item, branding, or branch override), call `revalidatePath` to purge the cache immediately. Invalidation must be scoped to the affected branch when a BranchMenuOverride changes (not the whole restaurant).
 - **What is cached:** Full menu JSON (categories + items + branding, with branch-specific availability applied) — the entire payload for the customer app on first load

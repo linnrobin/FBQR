@@ -11,9 +11,16 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.5
+Version        : 3.6
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Multi-Disciplinary Engineering Team audit pass (v3.5) — GO verdict;
+Last completed : Persona deal-breaker promotion pass (v3.6) — 3 Phase 2 features moved to Phase 1:
+                 1. Per-branch item availability (BranchMenuOverride UI) → Phase 1 Step 9
+                 2. Split bill / Patungan multi-payment UI → Phase 1 Step 15
+                 3. Offline mode PWA (merchant-pos + kitchen) → Phase 1 Steps 9 & 20
+                 Updated: architecture.md backlog table, merchant.md, data-models.md
+                   (Phase 2 Scaffolding note), customer.md (cache key note), CLAUDE.md
+                   Phase Tracker + Step routing table.
+Previously: Multi-Disciplinary Engineering Team audit pass (v3.5) — GO verdict;
                  4 red flags resolved:
                  RED FLAG #1 (HIGH) — Infinite Table Deadlock: removed BY_WEIGHT TTL
                    extension from CustomerSession.expiresAt. Sessions always expire
@@ -167,7 +174,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 3 — Merchant POS
 - [ ] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 - [ ] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
-- [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import (`apps/web/(merchant)`)
+- [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [ ] **Step 10** — merchant-pos: table management, QR generation, floor map (`apps/web/(merchant)`)
 - [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
 
@@ -175,14 +182,14 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in (`apps/menu`)
 - [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`)
 - [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`)
-- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option (`apps/menu`)
+- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`)
 - [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`)
 
 ### Phase 5 — Kitchen & Operations
 - [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
 - [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
 - [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
-- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display (`apps/web/(kitchen)`)
+- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display** (`apps/web/(kitchen)`)
 
 ### Phase 6 — Analytics & Intelligence
 - [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`)
@@ -292,18 +299,18 @@ Read **all listed files** before writing code for a step.
 | **Step 6** | Merchant subscription & billing | `platform-owner.md` ← primary (billing section, cron specs); `ui-ux.md` (billing screen specs in platform-owner.md § UI Specifications) |
 | **Step 7** | Merchant onboarding — trial/free tier | `merchant.md` (onboarding wizard, checklist); `ui-ux.md` (wizard screen spec in merchant.md § UI Specifications) |
 | **Step 8** | Restaurant branding + CSS injection | `merchant.md` (branding section); `customer.md` (how branding renders in apps/menu); `ui-ux.md` (color tokens, apps/menu theming) |
-| **Step 9** | Menu & category management, CSV import | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec); `ui-ux.md` (menu list + item form specs in merchant.md § UI Specifications) |
+| **Step 9** | Menu & category management, CSV import, BranchMenuOverride UI, PWA offline (merchant-pos) | `merchant.md` ← primary (menu fields, variants, add-ons, CSV spec, BranchMenuOverride toggle); `ui-ux.md` (menu list + item form specs in merchant.md § UI Specifications); `data-models.md` (BranchMenuOverride schema) |
 | **Step 10** | Table management, QR generation, floor map | `merchant.md` (table status, QR spec); `customer.md` (QR flow, ADR-015); `ui-ux.md` (floor map + QR modal specs in merchant.md § UI Specifications) |
 | **Step 11** | Promotions + discount codes | `merchant.md` (Promotion model spec); `ui-ux.md` (promotions list + form specs in merchant.md § UI Specifications) |
 | **Step 12** | QR validation + branded menu + Grid layout | `customer.md` ← primary; `merchant.md` (branding, layouts); `ui-ux.md` ← design system (color tokens, apps/menu branding override, Grid layout screen spec in customer.md § UI Specifications) |
 | **Step 13** | List, Bundle, Spotlight layouts | `customer.md` ← primary; `merchant.md` (layout specs); `ui-ux.md` (List/Bundle/Spotlight screen specs in customer.md § UI Specifications) |
 | **Step 14** | Item detail modal: variants, add-ons | `customer.md`; `merchant.md` (variant/addon field specs); `ui-ux.md` (item detail bottom sheet spec in customer.md § UI Specifications) |
-| **Step 15** | Cart + pre-invoice + Midtrans + cash | `customer.md` ← primary; `data-models.md` (Payment model); `ui-ux.md` (cart sheet + checkout + payment screen specs in customer.md § UI Specifications) |
+| **Step 15** | Cart + pre-invoice + Midtrans + cash + split payment (Patungan) | `customer.md` ← primary; `data-models.md` (Payment model, Payment[] multi-payment); `ui-ux.md` (cart sheet + checkout + payment screen specs in customer.md § UI Specifications) |
 | **Step 16** | Order tracking + real-time + Call Waiter | `customer.md` ← primary; `merchant.md` (WaiterRequest types); `ui-ux.md` (order tracking screen spec in customer.md § UI Specifications) |
 | **Step 17** | Takeaway/counter mode, queue display | `customer.md` (takeaway customer view); `merchant.md` (counter flow, QueueCounter); `ui-ux.md` (queue display screen spec in customer.md § UI Specifications) |
 | **Step 18** | Push notifications — Web Push API | `architecture.md` (push notification design); `merchant.md` (notification routing) |
 | **Step 19** | Invoice + MerchantBillingInvoice PDF | `platform-owner.md` (MerchantBillingInvoice); `merchant.md` (Invoice format) |
-| **Step 20** | merchant-kitchen: queue, priorities, stations | `merchant.md` ← primary (kitchen display, station routing, priority); `ui-ux.md` (kitchen display dark theme tokens + order card spec in merchant.md § UI Specifications) |
+| **Step 20** | merchant-kitchen: queue, priorities, stations, PWA offline (kitchen display) | `merchant.md` ← primary (kitchen display, station routing, priority); `ui-ux.md` (kitchen display dark theme tokens + order card spec in merchant.md § UI Specifications); `architecture.md` (offline mode PWA spec) |
 | **Step 21** | ROI analytics dashboard + accounting export | `merchant.md` ← primary (dashboard specs, export); `ui-ux.md` (analytics dashboard chart types + stat card specs in merchant.md § UI Specifications) |
 | **Step 22** | Delivery platform integration | `merchant.md` (delivery flows); `architecture.md` (ADR-012, webhook idempotency) |
 | **Step 23** | AI recommendation engine | `customer.md` (AI customer-facing); `merchant.md` (AI settings) |

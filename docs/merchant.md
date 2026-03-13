@@ -807,7 +807,7 @@ Multi-branch is **not self-service** — enabled via FBQRSYS admin after EOI rev
 | `Branch` | `restaurantId` | FK to owning Restaurant |
 | `Branch` | `platformStoreId` | string? — delivery platform store identifier for dynamic webhook routing |
 
-> **Per-branch item availability override** (Phase 2): A `BranchMenuOverride` junction model (`branchId`, `menuItemId`, `isAvailable`) allows per-branch item toggles without duplicating the menu. Stub this table in Phase 1 Prisma. **Do NOT add separate menus per branch** — the menu is always shared at restaurant level (ADR-019).
+> **Per-branch item availability override** (Phase 1 — Step 9): A `BranchMenuOverride` junction model (`branchId`, `menuItemId`, `isAvailable`) allows per-branch item toggles without duplicating the menu. The schema and the toggle UI (per-item availability switch per branch, in the menu management screen) are both built in Step 9. **Do NOT add separate menus per branch** — the menu is always shared at restaurant level (ADR-019).
 
 ---
 

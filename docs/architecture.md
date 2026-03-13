@@ -800,13 +800,13 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **WhatsApp Business integration** | ⚠️ Phase 2 (Step 27) | All | Order notifications, invoice sharing via WA |
 | **Refund / cancellation flow** | ⚠️ Phase 1 (Step 15) | All | Midtrans refund API; reflected in reports |
 | **Analytics event tracking** | 📋 Phase 2 | Chain | `AnalyticsEvent` model stubbed in Phase 1 Prisma |
-| **Split bill / multiple payments** | 📋 Phase 2 | All | Schema supports it: `Payment[]` on `Order` |
-| **Offline mode (merchant-pos / kitchen)** | ⚠️ Phase 2 | All | PWA service worker; sync on reconnect |
+| **Split bill / multiple payments** | ✅ Phase 1 (Step 15) | All | Schema supports it: `Payment[]` on `Order`; Patungan split-payment UI built in Step 15 |
+| **Offline mode (merchant-pos / kitchen)** | ✅ Phase 1 (Steps 9, 20) | All | PWA service worker + offline fallback page; merchant-pos (Step 9), kitchen display (Step 20); sync on reconnect |
 | **Indonesian tax compliance (NPWP / Faktur Pajak)** | 📋 Phase 2 | Chain | `taxId` (NPWP) on `Merchant`; corporate invoice support |
 | **Hidang / hybrid ordering mode** | ⚠️ Phase 2 | Seafood | Padang-style — schema supports via PAY_AT_CASHIER; UI deferred |
 | **Thermal label printing for cup/item labels** | ⚠️ Phase 2 | Warung | ESC/POS label printer for boba kiosk; distinct from kitchen tickets |
 | **Booking deposit / down payment** | ⚠️ Phase 2 | Chain | Requires reservation system + partial Midtrans charge |
-| **Per-branch item availability override** | ⚠️ Phase 2 | Chain | `BranchMenuOverride` junction model stubbed in Phase 1 Prisma |
+| **Per-branch item availability override** | ✅ Phase 1 (Step 9) | Chain | `BranchMenuOverride` junction model + UI toggle built in Step 9 (menu management) |
 | **Waiter-assisted / staff order mode** | ⚠️ Phase 2 | Chain | Staff inputs order on behalf of customer; schema supports via PAY_AT_CASHIER |
 | **Inventory / COGS tracking** | 📋 Out of scope | Chain | ERP-level; recommend Accurate Online / Jurnal.id integration |
 | **Privacy consent flow** | 📋 Phase 2 | All | Data collection opt-in; minimal principle; PDP Law compliance |

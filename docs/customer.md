@@ -1028,7 +1028,7 @@ All logic runs server-side. No external AI service required initially — pure S
 
 `GET /api/menu/{restaurantId}` is the highest-traffic read.
 
-- **Cache key:** `restaurantId:branchId:locale` — branchId included from day one for Phase 2 `BranchMenuOverride` compatibility
+- **Cache key:** `restaurantId:branchId:locale` — branchId required from day one because `BranchMenuOverride` (Phase 1, Step 9) makes menu responses branch-specific
 - **TTL:** 5 minutes
 - **What is cached:** Full menu JSON (categories + items + branding, with branch-specific availability applied)
 - **What is NOT cached:** Order status, table status, session state — always real-time
