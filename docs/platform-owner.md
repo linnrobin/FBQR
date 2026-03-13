@@ -234,7 +234,10 @@ STEP 2 — Attempt auto-renewal for subscriptions due today
           UPDATE MerchantSubscription SET failedAttempts = failedAttempts + 1
           INSERT MerchantBillingInvoice(status: OVERDUE, ...)
           Send "Payment failed" email to merchant
-          IF failedAttempts >= gracePeriodDays:
+          IF failedAttempts >= COALESCE(MerchantSubscription.gracePeriodDays, PlatformSettings.gracePeriodDays):
+          -- Precedence: MerchantSubscription.gracePeriodDays (merchant-specific override, default 3)
+          -- falls back to PlatformSettings.gracePeriodDays (platform default, default 7) when null.
+          -- Always read MerchantSubscription.gracePeriodDays first.
             UPDATE Merchant SET status = 'SUSPENDED', suspendedAt = NOW(),
               suspendedReason = 'AUTO_BILLING_FAILURE'
             AuditLog(action: SUSPEND, entity: Merchant, actorType: SYSTEM)
@@ -442,6 +445,43 @@ STEP 2 — Resolve leaked WaiterRequests (fallback only — normally handled syn
 
 STEP 3 — Log run to CronRunLog
 ```
+
+### BY_WEIGHT Uncollected Balance Charge Alert Cron
+
+Runs daily (e.g. 06:00 WIB — after the overnight session cleanup, before morning service). Detects orders where the kitchen entered a weight but the cashier never collected the balance charge — a silent revenue loss scenario where the "Charge Remaining Balance" Realtime alert was missed.
+
+```
+Daily at 06:00 WIB:
+
+SELECT oi.id, oi.orderId, oi.weightValue, oi.finalLineTotal,
+       o.restaurantId, o.branchId, o.createdAt
+FROM OrderItem oi
+JOIN Order o ON o.id = oi.orderId
+WHERE oi.weightValue IS NOT NULL       -- weight was entered
+  AND oi.needsWeighing = false         -- system marked as complete
+  AND oi.finalLineTotal IS NOT NULL    -- final price known
+  AND o.status IN ('READY', 'COMPLETED')  -- order progressed past kitchen
+  AND NOT EXISTS (
+    SELECT 1 FROM Payment p
+    WHERE p.orderId = o.id
+      AND p.paymentType IN ('BALANCE_CHARGE', 'BALANCE_REFUND')
+      AND p.status = 'SUCCESS'
+  )
+  AND o.createdAt > NOW() - INTERVAL '7 days'  -- don't resurface very old edge cases
+
+FOR EACH result:
+  → Send in-app alert to Merchant Owner + Cashier roles for that branch:
+    "Tagihan sisa belum dikumpulkan: Order #{queueNumber}, Rp {finalLineTotal − depositAmount}.
+     Hubungi pelanggan jika diperlukan."
+  → AuditLog(action: ALERT, entity: Order, actorType: SYSTEM, actorName: "System",
+              details: { type: "UNCOLLECTED_BALANCE_CHARGE", orderItemId: oi.id })
+
+STEP 2 — Log run to CronRunLog
+```
+
+> **No auto-refund or auto-cancel:** This cron only alerts — it does not automatically resolve the discrepancy. The merchant must decide whether to pursue the customer or write it off. This matches restaurant reality: the customer may have paid cash directly to a waiter.
+
+---
 
 ### EOD PENDING_CASH Cleanup Cron Specification
 

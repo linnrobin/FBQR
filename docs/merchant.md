@@ -403,12 +403,14 @@ Invoice updated with final amounts
 ```
 Kitchen display shows ⚖️ "Needs weighing" badge on relevant OrderItems
     │
-Staff weighs item → opens OrderItem in merchant-pos → enters weight value
+Kitchen staff taps ⚖️ badge on KDS card → KDS numpad modal opens → staff enters weight value
+(NOT merchant-pos: weight entry is on the KDS directly — see § BY_WEIGHT Weight Entry below)
     │
     ├── Remaining balance > 0 → [Charge Customer Rp XXX] button
     │     → second Payment row (paymentType: BALANCE_CHARGE)
     │     → same payment channel as original order
-    │     → Session TTL extended while any OrderItem has needsWeighing = true
+    │     (Session TTL is NEVER extended — ADR-026. If session expires with un-weighed items,
+    │      Session Cleanup Cron cancels order, refunds deposit, sets Table → DIRTY.)
     │
     ├── Remaining balance = 0 → no action needed (deposit exactly covered final price)
     │
@@ -419,7 +421,9 @@ Staff weighs item → opens OrderItem in merchant-pos → enters weight value
                    (refund_amount = depositAmount − finalLineTotal)
                CASH: NO Midtrans call — prompt cashier: "Kembalikan Rp {delta} ke pelanggan
                    secara tunai" (return physical change to customer)
-          → BALANCE_REFUND Payment row created in all cases (amount: negative delta) for audit trail
+          → BALANCE_REFUND Payment row created in all cases (amount: POSITIVE delta —
+               refund direction is indicated by paymentType = BALANCE_REFUND alone;
+               never store a negative value — see data-models.md SIGN CONVENTION)
                For CASH: Payment.method = CASH, Payment.midtransTransactionId = null
           → Original Payment.status → REFUNDED (partial)
           → AuditLog(action: UPDATE, entity: Payment, actorType: STAFF)

@@ -11,9 +11,32 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.8
+Version        : 3.9
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : DeepSeek audit red-flag resolution pass (v3.8) — 5 gaps fixed:
+Last completed : Full-Spectrum Architecture Audit resolution pass (v3.9) — 8 red flags resolved:
+                 RF-1: Stale TTL extension removed from merchant.md BY_WEIGHT Staff Flow;
+                       replaced with canonical ADR-026 wording (TTL never extended).
+                 RF-2: Stale negative BALANCE_REFUND amount fixed in merchant.md + customer.md.
+                       Amount always POSITIVE; direction indicated by paymentType = BALANCE_REFUND.
+                 RF-3: OrderItem.finalLineTotal (int?) + OrderItem.weightUnit (string?) added to
+                       data-models.md Phase 2 Scaffolding table.
+                 RF-4: MerchantSettings missing fields added to data-models.md: roundingRule,
+                       aiShowBestsellers, aiPersonalized, aiUpsell, aiTimeBased.
+                 RF-5: QR path param validation rule added to ADR-015 + customer.md QR flow.
+                       assert params.tableId === DB.table.id; 400 on mismatch; never trust URL params.
+                 RF-6: gracePeriodDays precedence documented in platform-owner.md billing cron:
+                       COALESCE(MerchantSubscription.gracePeriodDays, PlatformSettings.gracePeriodDays).
+                 RF-7: BY_WEIGHT Uncollected Balance Charge Alert Cron spec added to platform-owner.md.
+                       Daily scan; alert-only (no auto-cancel); targets READY/COMPLETED orders with
+                       weight entered but no SUCCESS BALANCE_CHARGE/REFUND Payment.
+                 RF-8: Invoice PDF generation async requirement spec added to customer.md.
+                       Return HTTP 200 first; PDF gen is fire-and-forget; polling fallback in UI.
+                 RF-10: Old POS weight-entry instruction removed from merchant.md BY_WEIGHT Staff Flow.
+                        Canonical KDS numpad modal flow is the only documented path.
+                 Deferred (non-doc gaps): DB RLS (Phase 2); PII field encryption (Phase 2);
+                   apps/menu PWA (future step); English locale (Phase 2); quick sold-out
+                   from KDS (UX note for Step 20); Patungan split UI spec (add before Step 15).
+Previously: DeepSeek audit red-flag resolution pass (v3.8) — 5 gaps fixed:
                  1. PREPARING timeout: ADR-027 added — no auto-transition; stale order alert
                     badge after MerchantSettings.preparingAlertMinutes (default 45 min).
                  2. Free tier enforcement: SubscriptionPlan gets tableLimitCount,
