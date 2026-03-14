@@ -1,0 +1,14 @@
+{
+  "name": "@repo/config",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./eslint": "./eslint.js",
+    "./typescript": "./tsconfig.base.json",
+    "./tailwind": "./tailwind.config.ts",
+    "./role-templates": "./src/roleTemplates.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

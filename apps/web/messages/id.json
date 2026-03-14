@@ -1,0 +1,15 @@
+{
+  "common": {
+    "loading": "Memuat...",
+    "error": "Terjadi kesalahan",
+    "retry": "Coba Lagi",
+    "save": "Simpan",
+    "cancel": "Batal",
+    "delete": "Hapus",
+    "edit": "Ubah",
+    "add": "Tambah",
+    "search": "Cari...",
+    "noData": "Tidak ada data",
+    "confirm": "Konfirmasi"
+  }
+}

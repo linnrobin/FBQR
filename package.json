@@ -1,0 +1,37 @@
+{
+  "name": "fbqr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "QR-code ordering SaaS for Indonesian restaurants",
+  "author": "Robin <robinsalim@yahoo.com>",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "turbo dev --filter=web",
+    "dev:menu": "turbo dev --filter=menu",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:e2e": "turbo test:e2e",
+    "db:generate": "turbo db:generate --filter=database",
+    "db:migrate": "turbo db:migrate --filter=database",
+    "db:deploy": "turbo db:deploy --filter=database",
+    "db:seed": "turbo db:seed --filter=database",
+    "db:studio": "turbo db:studio --filter=database",
+    "clean": "turbo clean && find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "prettier": "^3.4.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

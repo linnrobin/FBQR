@@ -1,0 +1,27 @@
+{
+  "menu": {
+    "scanPrompt": "Pindai QR di meja untuk memesan",
+    "addToCart": "Tambah ke Keranjang",
+    "viewCart": "Lihat Keranjang",
+    "placeOrder": "Pesan Sekarang",
+    "payNow": "Bayar Sekarang",
+    "payPatungan": "Bayar Patungan 👥",
+    "callWaiter": "Panggil Pelayan",
+    "needHelp": "Butuh Bantuan",
+    "requestBill": "Minta Struk / Bill",
+    "orderReceived": "Pesanan diterima! 🎉",
+    "orderReady": "Pesanan siap! Silakan ambil.",
+    "outOfStock": "Habis",
+    "loading": "Memuat menu...",
+    "consentTitle": "Sebelum memesan",
+    "consentBody": "FBQR menyimpan pesanan dan data perangkat Anda untuk memproses transaksi ini. Data disimpan di server Singapura. Tidak dijual ke pihak ketiga.",
+    "consentPrivacyLink": "Baca Kebijakan Privasi kami →",
+    "consentAccept": "Saya Setuju — Lanjutkan",
+    "consentDecline": "Batalkan"
+  },
+  "common": {
+    "loading": "Memuat...",
+    "error": "Terjadi kesalahan. Coba lagi, atau hubungi staff restoran.",
+    "retry": "Coba Lagi"
+  }
+}

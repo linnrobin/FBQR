@@ -1,0 +1,27 @@
+{
+  "menu": {
+    "scanPrompt": "Scan the QR at your table to order",
+    "addToCart": "Add to Cart",
+    "viewCart": "View Cart",
+    "placeOrder": "Place Order",
+    "payNow": "Pay Now",
+    "payPatungan": "Split the Bill 👥",
+    "callWaiter": "Call Waiter",
+    "needHelp": "Need Assistance",
+    "requestBill": "Request Bill",
+    "orderReceived": "Order received! 🎉",
+    "orderReady": "Your order is ready!",
+    "outOfStock": "Sold out",
+    "loading": "Loading menu...",
+    "consentTitle": "Before ordering",
+    "consentBody": "FBQR stores your order and device data to process this transaction. Data is stored on servers in Singapore. Not sold to third parties.",
+    "consentPrivacyLink": "Read our Privacy Policy →",
+    "consentAccept": "I Agree — Continue",
+    "consentDecline": "Cancel"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Something went wrong. Try again, or ask restaurant staff.",
+    "retry": "Try Again"
+  }
+}

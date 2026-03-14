@@ -225,7 +225,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
+Next step      : Step 2 — Prisma schema + migrations + seed data (`packages/database`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
@@ -259,7 +259,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] CLAUDE.md refactored to command center only — all specs delegated to docs/
 
 ### Phase 1 — Foundation
-- [ ] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
+- [x] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
 - [ ] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)

@@ -1,0 +1,19 @@
+// FBQR Prisma Schema — Step 2 will populate this with all models.
+// See docs/data-models.md for the full spec.
+// This stub exists so packages/database compiles and the PrismaClient export works.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled connection via PgBouncer — used at runtime by all serverless API routes
+  url       = env("DATABASE_URL")
+  // Direct connection — used ONLY by Prisma migrations (DDL cannot run over PgBouncer transaction mode)
+  directUrl = env("DATABASE_DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Models are added in Step 2 — see docs/data-models.md for all field specs.
+// ─────────────────────────────────────────────────────────────────────────────
