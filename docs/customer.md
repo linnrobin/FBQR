@@ -391,17 +391,30 @@ Customer may [Call Waiter] → WaiterRequest created → notified on merchant-po
 
 **⚠️ Vercel runtime warning:** On **standard Node.js serverless** runtime, bare `Promise` fire-and-forget is NOT safe — Vercel terminates the function process immediately after the HTTP response. Any `setTimeout` or un-awaited `fetch` is silently dropped. Two safe options:
 
-**Option A (recommended) — Vercel Edge Runtime on the webhook handler:**
+**Option A (recommended) — Next.js 15 `after()` on the webhook handler:**
+
+Next.js 15 introduced `after()` in `next/server` specifically for post-response work. It uses `waitUntil()` internally on Edge Runtime and `AsyncLocalStorage` + deferred execution on standard Node.js runtime. **Do NOT use `context.waitUntil()` as a second argument to the route handler** — App Router handlers receive `{ params }` as the second argument, not `{ waitUntil }`. That API does not exist in Next.js and will silently fail to call `waitUntil`.
+
 ```ts
 // app/api/webhook/midtrans/route.ts
-export const runtime = 'edge'
-// Edge runtime supports waitUntil() via context.waitUntil()
-export async function POST(req: Request, { waitUntil }: { waitUntil: (p: Promise<any>) => void }) {
-  // ... run main transaction ...
-  waitUntil(fetch('/api/invoice/generate', { method: 'POST', body: JSON.stringify({ orderId }) }))
+import { after } from 'next/server'
+import type { NextRequest } from 'next/server'
+
+export async function POST(req: NextRequest) {
+  // ... verify signature, run main DB transaction ...
+  // Register post-response work — runs after HTTP 200 is sent to Midtrans
+  after(async () => {
+    await fetch('/api/invoice/generate', {
+      method: 'POST',
+      body: JSON.stringify({ orderId }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
   return new Response('OK', { status: 200 })
 }
 ```
+
+`after()` is stable in Next.js 15 and works on both standard (`nodejs`) and edge runtimes. Use the default Node.js runtime (no `export const runtime = 'edge'`) for the webhook handler — it needs full Prisma ORM access, and the native Prisma client does not work on the Edge Runtime with PgBouncer in transaction mode.
 
 **Option B — Supabase Edge Function triggered by DB webhook on `Payment.status → SUCCESS`**
 
@@ -411,8 +424,8 @@ export async function POST(req: Request, { waitUntil }: { waitUntil: (p: Promise
 Midtrans webhook handler:
   1. Run the main transaction (update Order → CONFIRMED, Payment → SUCCESS, broadcast Realtime)
   2. Return HTTP 200 to Midtrans immediately
-  3. Enqueue invoice generation via waitUntil() (Edge Runtime) or Supabase Edge Function trigger
-     NEVER use bare Promise fire-and-forget on standard Node.js runtime — it will be dropped.
+  3. Enqueue invoice generation via after() from 'next/server' (Option A) or Supabase Edge Function (Option B)
+     NEVER use bare Promise fire-and-forget — it will be dropped on standard Node.js runtime.
 
 Invoice generation endpoint (/api/invoice/generate):
   1. Fetch Order + OrderItems + Customer + Restaurant branding

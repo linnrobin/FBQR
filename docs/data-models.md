@@ -408,19 +408,43 @@ A plain read-then-write (`SELECT` status → `UPDATE` if PENDING) has a race con
 ```
 BEGIN TRANSACTION
   1. INSERT or verify Payment row (unique constraint on midtransTransactionId for idempotency)
-  2. UPDATE Order SET status = 'CONFIRMED', confirmedAt = NOW()
+
+  2. IF Payment.splitGroupId IS NOT NULL:
+       -- Patungan (split-payment) path
+       UPDATE PatunganSession
+         SET paidParts = paidParts + 1
+         WHERE id = Payment.splitGroupId
+       SELECT paidParts, totalParts FROM PatunganSession WHERE id = Payment.splitGroupId
+
+       IF paidParts < totalParts:
+         -- Not all participants have paid yet — do NOT confirm Order
+         INSERT AuditLog(action: UPDATE, entity: PatunganSession, details: { paidParts, totalParts })
+         COMMIT
+         → Broadcast partial progress via Supabase Realtime on channel patungan:{patunganId}
+         → Return HTTP 200 immediately (do not proceed to steps 3–6)
+
+       -- ELSE (paidParts = totalParts): all shares collected — fall through to step 3
+
+     ELSE:
+       -- Standard single-payer path — proceed to step 3
+
+  3. UPDATE Order SET status = 'CONFIRMED', confirmedAt = NOW()
         WHERE id = $orderId AND status = 'PENDING'
      → if affectedRows = 0: webhook is duplicate; ROLLBACK; return HTTP 200
      → confirmedAt is used as the start time for the kitchen elapsed timer
        (merchant-kitchen shows elapsed = NOW() - confirmedAt; null confirmedAt → timer shows "–")
-  3. For each OrderItem with stockCount set:
+
+  4. For each OrderItem with stockCount set:
      UPDATE MenuItem SET stockCount = stockCount - qty WHERE id = $itemId AND stockCount >= qty
      → if any affectedRows = 0: mark OrderItem with ⚠️ stock-out flag (handled by cashier)
-  4. INSERT OrderEvent(fromStatus: PENDING, toStatus: CONFIRMED, ...)
-  5. INSERT AuditLog entry
+
+  5. INSERT OrderEvent(fromStatus: PENDING, toStatus: CONFIRMED, ...)
+  6. INSERT AuditLog entry
 COMMIT
 ```
 If any step fails, the entire transaction rolls back — no partial state (confirmed order with unpaid payment, or decremented stock without confirmed order).
+
+**Patungan idempotency:** The `paidParts` increment in step 2 is guarded by the same `midtransTransactionId` unique constraint in step 1 — a duplicate webhook is rejected before incrementing. A duplicate that slips through (concurrent webhook delivery) would increment `paidParts` twice; the standard `WHERE status = 'PENDING'` guard in step 3 prevents the Order from being double-confirmed. The `paidParts` over-count would resolve on the next cron run that checks `PatunganSession.paidParts` against `Payment COUNT(status = 'SUCCESS')` — add this to the daily monitoring queries in Step 6.
 
 **Late webhook rule:** If a `SUCCESS` webhook arrives for an `EXPIRED` order, consult `MerchantSettings.lateWebhookWindowMinutes` (default: 60):
 - If order expired **less than** the window ago → run revival checks (all must pass):
@@ -539,6 +563,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `OrderItem` | `finalLineTotal` | Int? | Calculated line total after weighing: `round(weightValue × MenuItem.pricePerUnit)`. `null` until weight is entered. Used to compute BALANCE_CHARGE or BALANCE_REFUND delta vs the DEPOSIT amount. |
 | `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
 | `Payment` | `splitGroupId` | String? FK → PatunganSession.id | Null for non-Patungan payments. Set when a payment belongs to a Patungan split session. Multiple Payment rows with the same `splitGroupId` collectively cover one Order's `grandTotal`. |
+| `Order` | `readyAt` | DateTime? | Timestamp when Order.status transitioned to `READY`. Set atomically in any READY transition (KDS [Mark Ready] button, or any future auto-READY path). Used by the Order Expiry Cron STEP 1b to compute the `autoCompleteReadyMinutes` hold period accurately. Falls back to `Order.updatedAt` in the cron if null (pre-migration rows). `updatedAt` alone is unreliable for hold-period start because other writes reset it. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
 | `Order` | `depositAmount` | int? | Deposit amount charged upfront |
 | `Branch` | `platformStoreId` | string? | Delivery platform routing (already in spec) |
@@ -604,6 +629,8 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 |---|---|---|---|
 | `privacyConsentAt` | DateTime? | null | Timestamp of consent at customer registration. PDP Law compliance. |
 | `deletionRequestedAt` | DateTime? | null | Set when customer requests data deletion (right to erasure under PDP Law). Triggers a 30-day cleanup job. Customer PII must be deleted within 30 days of this date. |
+| `status` | Enum: `ACTIVE \| DELETED` | `ACTIVE` | Soft-delete gate. Set to `DELETED` atomically by the PII Deletion Cron when anonymization completes. API routes should reject authenticated actions from `DELETED` customers. Never hard-delete the Customer row — `Order` and `Payment` FKs depend on it. |
+| `deletedAt` | DateTime? | null | Timestamp when PII anonymization completed. Set atomically with `status = 'DELETED'` by the PII Deletion Cron. Null for all active customers. Used in audit queries. |
 
 #### MerchantSubscription model — additional fields (required for billing cron, Step 6)
 
@@ -614,6 +641,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `failedAttempts` | Int | 0 | Count of consecutive payment failures on renewal. When `failedAttempts >= gracePeriodDays`, the billing cron auto-suspends the merchant. Resets to 0 on successful renewal. |
 | `lastRenewalAt` | DateTime? | null | Timestamp of the last successful renewal. Used in revenue reporting and churn detection. |
 | `gracePeriodDays` | Int | 3 | Number of consecutive daily payment failures before auto-suspension. Configurable per merchant (Enterprise accounts may get longer grace periods). |
+| `cancelledAt` | DateTime? | null | Timestamp when `Merchant.status` transitioned to `CANCELLED` (grace period expired and auto-lock applied by billing cron). Used by the win-back email sequence cron to compute when Day 1 / Day 7 / Day 14 / Day 30 emails are due. Do not use `Merchant.updatedAt` — it changes on any write to the Merchant row. Set atomically by the billing cron at the moment of status transition. |
 
 #### MerchantBillingInvoice model — additional fields (required for billing cron, Step 6)
 
