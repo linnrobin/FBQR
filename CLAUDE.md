@@ -11,31 +11,61 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-13
-Version        : 3.9
+Version        : 3.10
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Full-Spectrum Architecture Audit resolution pass (v3.9) — 8 red flags resolved:
-                 RF-1: Stale TTL extension removed from merchant.md BY_WEIGHT Staff Flow;
-                       replaced with canonical ADR-026 wording (TTL never extended).
-                 RF-2: Stale negative BALANCE_REFUND amount fixed in merchant.md + customer.md.
-                       Amount always POSITIVE; direction indicated by paymentType = BALANCE_REFUND.
-                 RF-3: OrderItem.finalLineTotal (int?) + OrderItem.weightUnit (string?) added to
-                       data-models.md Phase 2 Scaffolding table.
-                 RF-4: MerchantSettings missing fields added to data-models.md: roundingRule,
-                       aiShowBestsellers, aiPersonalized, aiUpsell, aiTimeBased.
-                 RF-5: QR path param validation rule added to ADR-015 + customer.md QR flow.
-                       assert params.tableId === DB.table.id; 400 on mismatch; never trust URL params.
-                 RF-6: gracePeriodDays precedence documented in platform-owner.md billing cron:
-                       COALESCE(MerchantSubscription.gracePeriodDays, PlatformSettings.gracePeriodDays).
-                 RF-7: BY_WEIGHT Uncollected Balance Charge Alert Cron spec added to platform-owner.md.
-                       Daily scan; alert-only (no auto-cancel); targets READY/COMPLETED orders with
-                       weight entered but no SUCCESS BALANCE_CHARGE/REFUND Payment.
-                 RF-8: Invoice PDF generation async requirement spec added to customer.md.
-                       Return HTTP 200 first; PDF gen is fire-and-forget; polling fallback in UI.
-                 RF-10: Old POS weight-entry instruction removed from merchant.md BY_WEIGHT Staff Flow.
-                        Canonical KDS numpad modal flow is the only documented path.
+Last completed : Full-Spectrum Architecture Audit resolution pass (v3.10) — remaining pre-Step-1
+                 and pre-launch red flags resolved:
+                 RF-A: autoCompleteReadyMinutes field added to MerchantSettings; [Mark Complete]
+                       KDS button documented; READY→COMPLETED state machine row fully specced.
+                 RF-B: Order Expiry Cron and BY_WEIGHT Alert Cron SQL fixed — Order has branchId
+                       not restaurantId; both crons now JOIN Branch b ON b.id = o.branchId.
+                 RF-C: CustomerSession resume query fixed — WHERE sessionCookie = $cookieValue
+                       (not WHERE id = $cookieValue); security warning added to ADR-011 and
+                       customer.md. PK/credential decoupling enforced.
+                 RF-D: Invoice PDF async spec completed — Edge Runtime waitUntil() pattern
+                       documented; bare fire-and-forget explicitly prohibited on standard runtime.
+                 RF-E: Patungan split-payment UX spec fully written in customer.md.
+                       Includes: host/participant flows, PatunganSession schema, API endpoints,
+                       split modes (EQUAL/MANUAL), edge cases, BY_WEIGHT block rule.
+                       PatunganSession added to data-models.md Phase 2 Scaffolding.
+                       Payment.splitGroupId field added.
+                 RF-F: Privacy consent screen spec added to customer.md (§ 4. Privacy Consent).
+                       Bottom sheet on first order attempt; localStorage consent flag;
+                       Customer.privacyConsentAt persisted for logged-in customers.
+                 RF-G: PII deletion cron spec added to platform-owner.md.
+                       Daily at 02:00 WIB; anonymizes Customer PII in-place (soft delete);
+                       retains Order/Payment rows per 7-year commercial law. vercel.json updated
+                       with 8th cron entry (/api/cron/pii-deletion).
+                 RF-H: ADR-028 added to architecture.md — Supabase project region: Singapore
+                       (ap-southeast-1). Data residency implication documented. Vercel region
+                       VERCEL_REGION=sin1 specified. Privacy Policy disclosure requirement noted.
+                 RF-I: layoutAllowed (string[]?) field added to SubscriptionPlan in data-models.md.
+                       Enforcement at branding save (Step 8) and category override save (Step 9).
+                       Fallback to GRID on plan downgrade.
+                 RF-J: WCAG color contrast validation spec added to merchant.md § Restaurant
+                       Branding. wcag-contrast npm package; 4.5:1 minimum; warn-only (not block);
+                       live preview of menu header with chosen colors.
+                 RF-K: PREPARING→CANCELLED stock restoration documented in data-models.md
+                       state machine transition table (same atomic pattern as CONFIRMED→CANCELLED).
+                 RF-L: Language switcher placement spec added to customer.md § Language Switcher.
+                       Position: top-right menu header; ID|EN text toggle; localStorage persist;
+                       translated vs not-translated inventory documented.
+                 RF-M: Win-back email sequence spec added to platform-owner.md.
+                       4-email sequence (Day 1, 7, 14, 30); cancellationReason-aware personalization;
+                       Day 30 email mandatory (UU PDP data deletion notice); suppression rules;
+                       winBackOptOut + winBackEmailsSentCount fields added to data-models.md.
                  Deferred (non-doc gaps): DB RLS (Phase 2); PII field encryption (Phase 2);
-                   apps/menu PWA (future step); English locale (Phase 2); quick sold-out
-                   from KDS (UX note for Step 20); Patungan split UI spec (add before Step 15).
+                   apps/menu PWA (future step); quick sold-out from KDS (UX note for Step 20).
+Previously: Full-Spectrum Architecture Audit resolution pass (v3.9) — 8 red flags resolved:
+                 RF-1: Stale TTL extension removed from merchant.md BY_WEIGHT Staff Flow.
+                 RF-2: BALANCE_REFUND amount fixed (always positive in merchant.md + customer.md).
+                 RF-3: OrderItem.finalLineTotal (int?) + weightUnit (string?) added to data-models.md.
+                 RF-4: MerchantSettings missing fields added: roundingRule, aiShowBestsellers, etc.
+                 RF-5: QR path param validation rule added to ADR-015 + customer.md.
+                 RF-6: gracePeriodDays precedence documented (COALESCE pattern).
+                 RF-7: BY_WEIGHT Uncollected Balance Charge Alert Cron spec added.
+                 RF-8: Invoice PDF generation async requirement spec added to customer.md.
+                 RF-10: Stale POS weight-entry instruction removed from merchant.md.
 Previously: DeepSeek audit red-flag resolution pass (v3.8) — 5 gaps fixed:
                  1. PREPARING timeout: ADR-027 added — no auto-transition; stale order alert
                     badge after MerchantSettings.preparingAlertMinutes (default 45 min).
@@ -189,7 +219,12 @@ Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  Hidang mode full flow — deferred to Phase 2;
                  customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
                  BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
-                   refund API integration detail deferred to Step 15
+                   refund API integration detail deferred to Step 15;
+                 DB Row-Level Security (RLS) — deferred to Phase 2;
+                 PII field encryption at rest — deferred to Phase 2;
+                 apps/menu PWA offline mode — deferred to future step;
+                 quick sold-out from KDS — UX note for Step 20;
+                 EFAKTUR API for Faktur Pajak — deferred to Phase 2
 ```
 
 ---

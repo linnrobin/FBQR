@@ -236,14 +236,16 @@ FBQR/                              # Monorepo root
 
 **Decision:** On QR scan, a `fbqr_session_id` cookie is set on the customer's browser (`httpOnly`, scoped to `menu.fbqr.app`). On subsequent page loads (including refresh), the server checks for this cookie before creating a new session.
 
-**Critical implementation rule — the session resume query MUST include the table guard:**
+**Critical implementation rule — the session resume query MUST use `sessionCookie`, not `id`:**
 ```sql
 SELECT * FROM CustomerSession
-WHERE id = $cookieValue
-  AND tableId = $scannedTableId   -- REQUIRED: prevents cross-table session leakage
+WHERE sessionCookie = $cookieValue   -- NOT id — see security note below
+  AND tableId = $scannedTableId      -- REQUIRED: prevents cross-table session leakage
   AND status = 'ACTIVE'
 ```
-If the cookie matches a session on a **different** table (e.g. customer moves from Table 5 to Table 8), the server treats the request as a new session for Table 8. Without this guard, a customer's order would be routed to the wrong table.
+**⚠️ Security:** The `fbqr_session_id` cookie MUST store `CustomerSession.sessionCookie` (an opaque high-entropy string), never `CustomerSession.id` (the UUID primary key). Using `WHERE id = $cookieValue` means any DB breach immediately yields valid session credentials. The `sessionCookie` field exists as a deliberate credential/PK decoupling. An agent who copies `id = $cookieValue` ships a session hijacking vulnerability.
+
+If the cookie matches a session on a **different** table (e.g. customer moves from Table 5 to Table 8), the server treats the request as a new session for Table 8. Without the `tableId` guard, a customer's order would be routed to the wrong table.
 
 **Post-expiry read access:** When a `CustomerSession` moves to `EXPIRED`, the `fbqr_session_id` cookie continues to grant **read-only access** to that session's `Order` rows. Write operations (place new order, call waiter) are rejected with "Your session has ended."
 
@@ -675,6 +677,33 @@ export async function updateMenuItem(formData: unknown) {
 **Rationale:** Kitchens have wildly different throughput (5-min burgers vs 45-min seafood towers). An auto-transition would be wrong for half of all use cases. A visible alert respects kitchen staff's authority over their own queue while preventing silent stagnation.
 
 **Status:** Decided. Add `preparingAlertMinutes` to MerchantSettings in Step 2 (Prisma schema). Implement alert badge in Step 17 (merchant-kitchen KDS) and Step 14 (Orders List).
+
+---
+
+### ADR-028: Supabase Project Region — Singapore (ap-southeast-1)
+
+**Context:** Supabase requires you to choose a project region at creation time. This decision is permanent (migration between regions requires creating a new project). FBQR's primary market is Indonesia. Supabase's nearest available region to Indonesia is **Singapore (ap-southeast-1)**.
+
+**Decision:** Create the Supabase project in **Singapore (ap-southeast-1)**.
+
+**Rationale:**
+- Singapore is the closest available Supabase region to Indonesia (~20ms average RTT from Jakarta to Singapore vs ~160ms to Tokyo or ~250ms to Frankfurt).
+- Supabase does not yet have an Indonesia region (Jakarta); when available, evaluate migration.
+- Singapore is the most common choice for Southeast Asian SaaS — well-established compliance framework, MAS regulatory oversight familiar to Indonesian enterprises.
+
+**Data residency implication:**
+- Customer PII and merchant data will physically reside in Singapore (AWS ap-southeast-1).
+- UU PDP (UU No. 27/2022) requires that cross-border data transfers occur only to countries with adequate data protection. Singapore has its own PDPA (Personal Data Protection Act) and is generally accepted by Indonesian regulators as an adequate jurisdiction.
+- **Privacy Policy must disclose** that data is stored in Singapore on AWS infrastructure via Supabase. Add this to `fbqr.app/privacy` before launch.
+
+**Vercel region:** Set `VERCEL_REGION=sin1` (Singapore) for both `apps/web` and `apps/menu` Vercel deployments. This minimizes the latency between Vercel edge functions and the Supabase PostgreSQL instance (both in Singapore). Without this setting, Vercel may route requests to Washington D.C. (iad1 — the default), adding ~250ms of unnecessary round-trip latency to every server-side database query.
+
+**Implementation (Step 1):**
+- When creating the Supabase project, select **Singapore** from the region dropdown.
+- Add `VERCEL_REGION=sin1` to both Vercel project environment variables.
+- Document the region in `.env.example` as a comment: `# Supabase project region: ap-southeast-1 (Singapore) — chosen for proximity to Indonesia`.
+
+**Status:** Decided. Must be configured in Step 1 before any other Supabase work.
 
 ---
 
