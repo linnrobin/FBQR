@@ -283,14 +283,14 @@ STEP 4 — Send 3-day-before reminders (subset of STEP 1 for closer window)
 
 ### Order Expiry Cron Specification
 
-Runs on a short interval to transition PENDING orders past their payment timeout to EXPIRED.
+Runs on a short interval. Handles two tasks: (1) transitioning timed-out PENDING orders to EXPIRED, and (2) auto-completing READY orders past the `autoCompleteReadyMinutes` hold period.
 
 > **Vercel plan note:** Vercel Hobby supports only daily/hourly crons. **Vercel Pro** supports 1-minute intervals. Recommended: run every **1 minute** on Pro. If constrained to Hobby, a 5-minute interval is acceptable because the default `paymentTimeoutMinutes` is 15 minutes — worst-case expiry lag is 5 minutes, which is tolerable. **Upgrade to Vercel Pro before Step 15 (payment integration).** Budget ~$20/mo.
 
 ```
 Every 5 minutes (UTC — no timezone conversion; runs globally at UTC intervals):
 
-STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
+STEP 1a — Expire timed-out PENDING orders (PAY_FIRST only)
   SELECT o.id, o.customerSessionId
   FROM Order o
   JOIN Payment p ON p.orderId = o.id
@@ -305,16 +305,38 @@ STEP 1 — Expire timed-out PENDING orders (PAY_FIRST only)
       UPDATE Order SET status = 'EXPIRED' WHERE id = o.id AND status = 'PENDING'
       -- if affectedRows = 0: already processed (race condition guard)
       UPDATE Payment SET status = 'EXPIRED' WHERE orderId = o.id AND status = 'PENDING'
-      INSERT OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM)
-      INSERT AuditLog(action: UPDATE, entity: Order, actorType: SYSTEM)
+      INSERT OrderEvent(fromStatus: PENDING, toStatus: EXPIRED, actorType: SYSTEM, actorName: 'System')
+      INSERT AuditLog(action: UPDATE, entity: Order, actorType: SYSTEM, actorName: 'System')
+    COMMIT
+
+STEP 1b — Auto-complete READY orders past the hold period
+  -- Only applies when MerchantSettings.autoCompleteReadyMinutes IS NOT NULL
+  -- readyAt (set when Order.status → READY) is used as the hold-period start time.
+  -- Falls back to Order.updatedAt if readyAt is null (for legacy rows before the field existed).
+  SELECT o.id, o.branchId
+  FROM Order o
+  JOIN Branch b ON b.id = o.branchId
+  JOIN MerchantSettings ms ON ms.restaurantId = b.restaurantId
+  WHERE o.status = 'READY'
+    AND ms.autoCompleteReadyMinutes IS NOT NULL
+    AND COALESCE(o.readyAt, o.updatedAt) < NOW() - (ms.autoCompleteReadyMinutes * INTERVAL '1 minute')
+
+  FOR EACH result:
+    BEGIN TRANSACTION
+      UPDATE Order SET status = 'COMPLETED' WHERE id = o.id AND status = 'READY'
+      -- if affectedRows = 0: already completed (race condition guard)
+      INSERT OrderEvent(fromStatus: READY, toStatus: COMPLETED, actorType: SYSTEM, actorName: 'System')
+      INSERT AuditLog(action: UPDATE, entity: Order, actorType: SYSTEM, actorName: 'System',
+                      details: { reason: 'AUTO_COMPLETE', autoCompleteReadyMinutes: ms.autoCompleteReadyMinutes })
     COMMIT
 
 STEP 2 — Log run to CronRunLog
   INSERT CronRunLog(jobName: 'order-expiry', startedAt, completedAt, status, affectedRows)
 ```
 
-**Idempotency:** `WHERE status = 'PENDING'` atomic update means double-runs are safe.
+**Idempotency:** `WHERE status = 'PENDING'` and `WHERE status = 'READY'` atomic updates mean double-runs are safe.
 **Default `paymentTimeoutMinutes`:** 15 minutes. Also passed as `custom_expiry` to Midtrans at order creation so Midtrans expires the payment session at the same time — keeps FBQR and Midtrans in sync.
+**`readyAt` field:** Add `readyAt (DateTime?)` to the Order model in Phase 1 Prisma (Step 2). Set atomically when `Order.status → READY` in any transition (webhook, cashier, KDS). This gives an accurate hold-period start time; `updatedAt` is unreliable because other writes can reset it. See data-models.md for the field spec.
 
 ### autoResetAvailability Cron Specification
 

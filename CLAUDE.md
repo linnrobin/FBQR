@@ -10,10 +10,24 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-13
-Version        : 3.10
+Last updated   : 2026-03-14
+Version        : 3.11
 Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : Full-Spectrum Architecture Audit resolution pass (v3.10) — remaining pre-Step-1
+Last completed : v3.10 secondary audit resolution pass (v3.11) — 5 gaps introduced by v3.10 fixes:
+                 GAP-1 (HIGH): Customer.status (ACTIVE|DELETED) + Customer.deletedAt fields added
+                   to data-models.md. PII Deletion Cron used these fields but they weren't in schema.
+                 GAP-2 (HIGH): Webhook handler transaction spec forked for Patungan — PENDING Order
+                   only confirms when paidParts = totalParts; intermediate payments broadcast partial
+                   progress via Realtime without confirming. Patungan idempotency note added.
+                 GAP-3 (MEDIUM): autoCompleteReadyMinutes cron executor added — Order Expiry Cron
+                   gains STEP 1b (READY→COMPLETED after hold period). Order.readyAt (DateTime?) field
+                   added to data-models.md for accurate hold-period start time.
+                 GAP-4 (MEDIUM): MerchantSubscription.cancelledAt (DateTime?) added to data-models.md.
+                   Win-back email sequence references this field; Merchant.updatedAt is unreliable.
+                 GAP-5 (LOW): Edge Runtime waitUntil() signature replaced with Next.js 15 after()
+                   from 'next/server'. context.waitUntil() as second arg to App Router handler doesn't
+                   exist in Next.js — would silently fail to defer PDF generation.
+Previously: Full-Spectrum Architecture Audit resolution pass (v3.10) — remaining pre-Step-1
                  and pre-launch red flags resolved:
                  RF-A: autoCompleteReadyMinutes field added to MerchantSettings; [Mark Complete]
                        KDS button documented; READY→COMPLETED state machine row fully specced.
