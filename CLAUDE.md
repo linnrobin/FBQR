@@ -10,10 +10,20 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-14
-Version        : 3.11
-Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : v3.10 secondary audit resolution pass (v3.11) — 5 gaps introduced by v3.10 fixes:
+Last updated   : 2026-03-15
+Version        : 4.0
+Current phase  : Phase 1 — Step 2 complete.
+Last completed : Step 2 — Prisma schema + seed data (v4.0)
+                 42 models across Platform, Merchant, Menu, Orders, Customers, Audit sections.
+                 Phase 2 scaffolding tables included (PatunganSession, BranchMenuOverride, etc.)
+                 Full seed: PlatformSettings singleton, Starter/Pro/Enterprise plans,
+                 first SystemAdmin from env vars, demo merchant (dev only).
+                 types/enums.ts synced: fixed SessionStatus CLOSED→COMPLETED, added 12 new enums.
+                 Prisma schema validated: prisma validate passes.
+                 Note: prisma.seed in package.json produces a deprecation warning in Prisma 6
+                   ("will be removed in Prisma 7"). Migration to prisma.config.ts can be done
+                   at Step 3 or later — no functional impact in current version.
+Previously: v3.11 secondary audit resolution pass — 5 gaps from v3.10 fixes:
                  GAP-1 (HIGH): Customer.status (ACTIVE|DELETED) + Customer.deletedAt fields added
                    to data-models.md. PII Deletion Cron used these fields but they weren't in schema.
                  GAP-2 (HIGH): Webhook handler transaction spec forked for Patungan — PENDING Order
@@ -225,7 +235,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 2 — Prisma schema + migrations + seed data (`packages/database`)
+Next step      : Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
@@ -260,7 +270,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 1 — Foundation
 - [x] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
-- [ ] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
+- [x] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)
 - [ ] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
