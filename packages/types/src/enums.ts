@@ -1,8 +1,8 @@
 /**
- * Shared enums — mirror the Prisma schema enums.
+ * Shared enums — mirror the Prisma schema enums exactly.
  * Keep in sync with packages/database/prisma/schema.prisma.
  * Used in shared business logic, API route handlers, and client components
- * that can't import from @prisma/client directly (e.g. apps/menu Edge Runtime).
+ * that cannot import from @prisma/client directly (e.g. apps/menu Edge Runtime).
  */
 
 export const OrderStatus = {
@@ -86,10 +86,11 @@ export const CustomerStatus = {
 } as const;
 export type CustomerStatus = (typeof CustomerStatus)[keyof typeof CustomerStatus];
 
+/// SessionStatus.COMPLETED (not CLOSED) — matches Prisma schema and docs/data-models.md
 export const CustomerSessionStatus = {
   ACTIVE: "ACTIVE",
+  COMPLETED: "COMPLETED",
   EXPIRED: "EXPIRED",
-  CLOSED: "CLOSED",
 } as const;
 export type CustomerSessionStatus = (typeof CustomerSessionStatus)[keyof typeof CustomerSessionStatus];
 
@@ -126,6 +127,7 @@ export const RoundingRule = {
 } as const;
 export type RoundingRule = (typeof RoundingRule)[keyof typeof RoundingRule];
 
+/// MERCHANT covers restaurant owner actions via merchant-pos
 export const ActorType = {
   SYSTEM: "SYSTEM",
   STAFF: "STAFF",
@@ -134,3 +136,85 @@ export const ActorType = {
   CUSTOMER: "CUSTOMER",
 } as const;
 export type ActorType = (typeof ActorType)[keyof typeof ActorType];
+
+export const OrderType = {
+  DINE_IN: "DINE_IN",
+  TAKEAWAY: "TAKEAWAY",
+  DELIVERY: "DELIVERY",
+} as const;
+export type OrderType = (typeof OrderType)[keyof typeof OrderType];
+
+export const PriceType = {
+  FIXED: "FIXED",
+  BY_WEIGHT: "BY_WEIGHT",
+} as const;
+export type PriceType = (typeof PriceType)[keyof typeof PriceType];
+
+export const OrderItemStatus = {
+  PENDING: "PENDING",
+  PREPARING: "PREPARING",
+  READY: "READY",
+  COMPLETED: "COMPLETED",
+} as const;
+export type OrderItemStatus = (typeof OrderItemStatus)[keyof typeof OrderItemStatus];
+
+export const CancellationReason = {
+  CUSTOMER_REQUEST: "CUSTOMER_REQUEST",
+  PAYMENT_FAILED: "PAYMENT_FAILED",
+  MERCHANT_CANCEL: "MERCHANT_CANCEL",
+  SYSTEM_EXPIRED: "SYSTEM_EXPIRED",
+  REFUND: "REFUND",
+} as const;
+export type CancellationReason = (typeof CancellationReason)[keyof typeof CancellationReason];
+
+export const BillingInvoiceStatus = {
+  PENDING: "PENDING",
+  PAID: "PAID",
+  OVERDUE: "OVERDUE",
+  CANCELLED: "CANCELLED",
+} as const;
+export type BillingInvoiceStatus = (typeof BillingInvoiceStatus)[keyof typeof BillingInvoiceStatus];
+
+export const SubscriptionCycle = {
+  MONTHLY: "MONTHLY",
+  ANNUAL: "ANNUAL",
+} as const;
+export type SubscriptionCycle = (typeof SubscriptionCycle)[keyof typeof SubscriptionCycle];
+
+export const PlatformName = {
+  GRABFOOD: "GRABFOOD",
+  GOFOOD: "GOFOOD",
+  SHOPEEFOOD: "SHOPEEFOOD",
+} as const;
+export type PlatformName = (typeof PlatformName)[keyof typeof PlatformName];
+
+export const ReservationStatus = {
+  PENDING: "PENDING",
+  CONFIRMED: "CONFIRMED",
+  CANCELLED: "CANCELLED",
+  SEATED: "SEATED",
+  NO_SHOW: "NO_SHOW",
+} as const;
+export type ReservationStatus = (typeof ReservationStatus)[keyof typeof ReservationStatus];
+
+export const MerchantIntegrationType = {
+  WHATSAPP: "WHATSAPP",
+  ACCURATE: "ACCURATE",
+  JURNAL: "JURNAL",
+  CUSTOM: "CUSTOM",
+} as const;
+export type MerchantIntegrationType = (typeof MerchantIntegrationType)[keyof typeof MerchantIntegrationType];
+
+export const MerchantRequestStatus = {
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+} as const;
+export type MerchantRequestStatus = (typeof MerchantRequestStatus)[keyof typeof MerchantRequestStatus];
+
+export const CronRunStatus = {
+  SUCCESS: "SUCCESS",
+  FAILED: "FAILED",
+  PARTIAL: "PARTIAL",
+} as const;
+export type CronRunStatus = (typeof CronRunStatus)[keyof typeof CronRunStatus];

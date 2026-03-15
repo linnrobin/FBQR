@@ -1,6 +1,6 @@
-// FBQR Prisma Schema — Step 2 will populate this with all models.
-// See docs/data-models.md for the full spec.
-// This stub exists so packages/database compiles and the PrismaClient export works.
+// FBQR Prisma Schema — Step 2
+// See docs/data-models.md for the full specification and rationale.
+// See docs/architecture.md for ADRs explaining key design decisions.
 
 generator client {
   provider = "prisma-client-js"
@@ -14,6 +14,1301 @@ datasource db {
   directUrl = env("DATABASE_DIRECT_URL")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Models are added in Step 2 — see docs/data-models.md for all field specs.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum MerchantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  DELETED
+}
+
+/// CustomerSession.status — COMPLETED (not CLOSED) matches the spec in docs/data-models.md
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  DIRTY
+  CLOSED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+/// Delivery platform sources — stored on Order.platformName
+enum PlatformName {
+  GRABFOOD
+  GOFOOD
+  SHOPEEFOOD
+}
+
+enum PaymentStatus {
+  PENDING
+  PENDING_CASH
+  SUCCESS
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  QRIS
+  EWALLET
+  VA
+  CARD
+  CASH
+}
+
+enum PaymentProvider {
+  GOPAY
+  OVO
+  DANA
+  SHOPEEPAY
+  BCA
+  MANDIRI
+  BNI
+  OTHER
+}
+
+/// FULL = standard charge; DEPOSIT = BY_WEIGHT upfront; BALANCE_CHARGE / BALANCE_REFUND = BY_WEIGHT adjustment
+enum PaymentType {
+  FULL
+  DEPOSIT
+  BALANCE_CHARGE
+  BALANCE_REFUND
+}
+
+enum PaymentMode {
+  PAY_FIRST
+  PAY_AT_CASHIER
+}
+
+/// FIXED = normal priced item; BY_WEIGHT = priced by weight (deposit + balance charge at KDS)
+enum PriceType {
+  FIXED
+  BY_WEIGHT
+}
+
+enum MenuLayout {
+  GRID
+  LIST
+  BUNDLE
+  SPOTLIGHT
+}
+
+enum RoundingRule {
+  NONE
+  ROUND_50
+  ROUND_100
+}
+
+enum WaiterRequestType {
+  ASSISTANCE
+  BILL
+  CALL
+}
+
+/// AuditLog.actorType — MERCHANT covers restaurant owner actions via merchant-pos
+enum ActorType {
+  STAFF
+  MERCHANT
+  ADMIN
+  CUSTOMER
+  SYSTEM
+}
+
+/// Per-item kitchen status — nullable in Phase 1; populated in Phase 2 KDS
+enum OrderItemStatus {
+  PENDING
+  PREPARING
+  READY
+  COMPLETED
+}
+
+enum CancellationReason {
+  CUSTOMER_REQUEST
+  PAYMENT_FAILED
+  MERCHANT_CANCEL
+  SYSTEM_EXPIRED
+  REFUND
+}
+
+enum PointsCalculationBasis {
+  SUBTOTAL
+  TOTAL
+}
+
+enum BillingInvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum SubscriptionCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SplitMode {
+  EQUAL
+  MANUAL
+}
+
+enum PatunganStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum MerchantRequestType {
+  MULTI_BRANCH
+}
+
+enum MerchantRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CronRunStatus {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  SEATED
+  NO_SHOW
+}
+
+enum MerchantIntegrationType {
+  WHATSAPP
+  ACCURATE
+  JURNAL
+  CUSTOM
+}
+
+// =============================================================================
+// PLATFORM — FBQRSYS admin accounts, subscription plans, platform config
+// =============================================================================
+
+model SystemAdmin {
+  id                 String               @id @default(uuid())
+  email              String               @unique
+  passwordHash       String
+  /// Set to true by seed and admin-creation flow. Auth middleware blocks all pages until cleared.
+  mustChangePassword Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  createdByAdminId   String?
+
+  createdBy         SystemAdmin?          @relation("AdminCreatedBy", fields: [createdByAdminId], references: [id])
+  createdAdmins     SystemAdmin[]         @relation("AdminCreatedBy")
+  roleAssignments   SystemRoleAssignment[]
+  assignedMerchants Merchant[]            @relation("AssignedAdmin")
+
+  @@map("system_admins")
+}
+
+model SystemRole {
+  id          String               @id @default(uuid())
+  name        String
+  permissions String[]
+  createdAt   DateTime             @default(now())
+
+  assignments SystemRoleAssignment[]
+
+  @@map("system_roles")
+}
+
+model SystemRoleAssignment {
+  id            String      @id @default(uuid())
+  systemAdminId String
+  systemRoleId  String
+  createdAt     DateTime    @default(now())
+
+  systemAdmin   SystemAdmin @relation(fields: [systemAdminId], references: [id], onDelete: Cascade)
+  systemRole    SystemRole  @relation(fields: [systemRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([systemAdminId, systemRoleId])
+  @@map("system_role_assignments")
+}
+
+model SubscriptionPlan {
+  id                 String   @id @default(uuid())
+  name               String
+  description        String?
+  priceMonthly       Int
+  priceAnnual        Int
+  features           Json     @default("[]")
+  isActive           Boolean  @default(true)
+  /// null = unlimited
+  tableLimitCount    Int?
+  /// null = unlimited
+  menuItemLimitCount Int?
+  /// null = unlimited
+  branchLimitCount   Int?
+  /// null = all layouts allowed. Example: ["GRID","LIST"] restricts to those layouts.
+  layoutAllowed      String[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  subscriptions MerchantSubscription[]
+
+  @@map("subscription_plans")
+}
+
+/// Singleton — always exactly one row with id = 1. Seed creates it; FBQRSYS Settings Panel edits it.
+model PlatformSettings {
+  id Int @id @default(1)
+
+  // Support contact
+  supportEmail           String  @default("support@fbqr.app")
+  supportWhatsapp        String  @default("+6281234567890")
+  supportResponseMessage String  @default("Kami membalas dalam 1×24 jam kerja")
+
+  // Platform identity
+  platformName       String  @default("FBQR")
+  platformTagline    String  @default("Pesan Lebih Mudah, Layani Lebih Cepat")
+  platformLogoUrl    String?
+  platformFaviconUrl String?
+
+  // Legal & compliance
+  tosUrl           String?
+  privacyPolicyUrl String?
+  dpoEmail         String? // Data Protection Officer
+
+  // Billing defaults (override per merchant via MerchantSubscription.gracePeriodDays)
+  trialDurationDays Int    @default(14)
+  gracePeriodDays   Int    @default(7)
+  defaultCurrency   String @default("IDR")
+
+  // Owner alert recipients
+  ownerAlertEmail    String?
+  ownerAlertWhatsapp String?
+
+  // Platform-wide feature flags
+  aiRecommendationsEnabled Boolean @default(false)
+  publicApiEnabled         Boolean @default(false)
+  referralProgramEnabled   Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+// =============================================================================
+// MERCHANT — accounts, subscriptions, invoices
+// =============================================================================
+
+model Merchant {
+  id                   String         @id @default(uuid())
+  email                String         @unique
+  passwordHash         String
+  status               MerchantStatus @default(TRIAL)
+  trialEndsAt          DateTime?
+  suspendedAt          DateTime?
+  suspendedReason      String?
+  suspendedByAdminId   String?
+  multiBranchEnabled   Boolean        @default(false)
+  branchLimit          Int            @default(1)
+
+  // Onboarding wizard state (UI built in Step 7)
+  onboardingStep      Int  @default(0)
+  onboardingChecklist Json @default("[]")
+  wizardCompletedAt   DateTime?
+
+  // Verification & compliance
+  emailVerifiedAt  DateTime?
+  privacyConsentAt DateTime?
+  /// NPWP — 15-digit Indonesian tax ID
+  taxId            String?
+
+  // FBQRSYS management
+  notes             String?
+  assignedToAdminId String?
+
+  // Referral program
+  referralCode         String? @unique
+  referredByMerchantId String?
+
+  // Cancellation & win-back (see docs/platform-owner.md § Win-back Email Sequence)
+  cancellationReason     String?
+  winBackOptOut          Boolean @default(false)
+  winBackEmailsSentCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  restaurant   Restaurant?
+  subscription MerchantSubscription?
+
+  assignedAdmin SystemAdmin? @relation("AssignedAdmin", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
+  referredBy    Merchant?    @relation("MerchantReferral", fields: [referredByMerchantId], references: [id])
+  referrals     Merchant[]   @relation("MerchantReferral")
+
+  requests     MerchantRequest[]
+  integrations MerchantIntegration[]
+
+  @@map("merchants")
+}
+
+model MerchantSubscription {
+  id                 String            @id @default(uuid())
+  merchantId         String            @unique
+  planId             String
+  cycle              SubscriptionCycle
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  autoRenew          Boolean           @default(true)
+
+  // Billing tracking — see docs/data-models.md § MerchantSubscription additional fields
+  reminderSentAt   DateTime?
+  reminderSentAt3d DateTime?
+  failedAttempts   Int       @default(0)
+  lastRenewalAt    DateTime?
+  gracePeriodDays  Int       @default(3)
+  /// Set atomically by billing cron at moment of CANCELLED transition. Used by win-back sequence.
+  cancelledAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  plan     SubscriptionPlan @relation(fields: [planId], references: [id])
+  invoices MerchantBillingInvoice[]
+
+  @@map("merchant_subscriptions")
+}
+
+model MerchantBillingInvoice {
+  id             String               @id @default(uuid())
+  merchantId     String
+  subscriptionId String
+  /// Format: FBQR-{YYYYMM}-{merchantSlug}
+  invoiceNumber  String               @unique
+  periodStart    DateTime
+  periodEnd      DateTime
+  /// Subscription fee in IDR, excl. tax
+  amount         Int
+  /// PPN 11%
+  tax            Int
+  total          Int
+  status         BillingInvoiceStatus @default(PENDING)
+  dueAt          DateTime
+  paidAt         DateTime?
+  pdfUrl         String?
+  currency       String               @default("IDR")
+  createdAt      DateTime             @default(now())
+
+  subscription MerchantSubscription @relation(fields: [subscriptionId], references: [id])
+
+  /// Idempotency guard — prevents duplicate invoices from cron double-fire
+  @@unique([merchantId, periodStart])
+  @@map("merchant_billing_invoices")
+}
+
+// =============================================================================
+// RESTAURANT — one per Merchant (strict)
+// =============================================================================
+
+model Restaurant {
+  id          String @id @default(uuid())
+  merchantId  String @unique
+  name        String
+  slug        String @unique
+  description String?
+  address     String?
+  city        String?
+  country     String @default("ID")
+  phone       String?
+  email       String?
+
+  // Social & contact (Phase 1 schema; customer-facing display in Step 12)
+  whatsappNumber   String?
+  instagramHandle  String?
+  tiktokHandle     String?
+  googleMapsUrl    String?
+  reservationEmail String?
+  cuisineType      String?
+
+  // Default kitchen station for items with no explicit routing
+  defaultStationId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant       Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  defaultStation KitchenStation? @relation("RestaurantDefaultStation", fields: [defaultStationId], references: [id], onDelete: SetNull)
+
+  branding        RestaurantBranding?
+  settings        MerchantSettings?
+  branches        Branch[]
+  categories      MenuCategory[]
+  staff           Staff[]
+  roles           MerchantRole[]
+  stations        KitchenStation[]       @relation("RestaurantStations")
+  promotions      Promotion[]
+  loyaltyPrograms MerchantLoyaltyProgram[]
+  analyticsEvents AnalyticsEvent[]
+  auditLogs       AuditLog[]
+
+  @@map("restaurants")
+}
+
+model RestaurantBranding {
+  id             String     @id @default(uuid())
+  restaurantId   String     @unique
+  logoUrl        String?
+  primaryColor   String     @default("#FF6B35")
+  secondaryColor String     @default("#2D3748")
+  accentColor    String     @default("#48BB78")
+  fontFamily     String     @default("Inter")
+  menuLayout     MenuLayout @default(GRID)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("restaurant_brandings")
+}
+
+/// Restaurant-level config (shared by all branches). Per-branch overrides are Phase 2.
+model MerchantSettings {
+  id           String @id @default(uuid())
+  restaurantId String @unique
+
+  // Payment
+  paymentMode           PaymentMode @default(PAY_FIRST)
+  paymentTimeoutMinutes Int         @default(15)
+
+  // Order limits
+  maxPendingOrders Int  @default(3)
+  maxOrderValueIDR Int  @default(5000000)
+  maxActiveOrders  Int?
+
+  // Ordering control
+  orderingPaused        Boolean @default(false)
+  orderingPausedMessage String?
+
+  // Late webhook revival window (docs/architecture.md ADR-025)
+  lateWebhookWindowMinutes Int @default(60)
+
+  // EOD PENDING_CASH cleanup hour (0–23, WIB)
+  eodCashCleanupHour Int @default(3)
+
+  // Table & session
+  enableDirtyState           Boolean @default(false)
+  tableSessionTimeoutMinutes Int     @default(120)
+
+  // Notifications
+  pushNotifications  Json @default("{\"newOrder\":true,\"waiterCall\":true,\"lowStock\":false,\"billingReminder\":true}")
+  emailNotifications Json @default("{\"dailySummary\":false,\"billingInvoice\":true,\"lowStock\":false}")
+
+  // Promotions
+  allowPromotionStacking Boolean @default(false)
+
+  // BY_WEIGHT feature gate (ADR-026 — Phase 1.5)
+  byWeightEnabled Boolean @default(false)
+
+  // Kitchen alerts (ADR-027)
+  preparingAlertMinutes    Int  @default(45)
+  /// null = manual only; set to enable auto READY→COMPLETED after N minutes
+  autoCompleteReadyMinutes Int?
+
+  // Printer integration (Step 20)
+  printerConfig          Json?
+  autoPrintKitchenTicket Boolean @default(true)
+  autoPrintReceipt       Boolean @default(true)
+
+  // Rounding (cash merchants)
+  roundingRule RoundingRule @default(NONE)
+
+  // AI features
+  aiShowBestsellers Boolean @default(true)
+  aiPersonalized    Boolean @default(false)
+  aiUpsell          Boolean @default(true)
+  aiTimeBased       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_settings")
+}
+
+model MerchantRole {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  permissions  String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant     Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  assignments    MerchantRoleAssignment[]
+  waiterRequests WaiterRequest[]
+
+  @@map("merchant_roles")
+}
+
+model MerchantRoleAssignment {
+  id             String   @id @default(uuid())
+  staffId        String
+  merchantRoleId String
+  createdAt      DateTime @default(now())
+
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  merchantRole MerchantRole @relation(fields: [merchantRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, merchantRoleId])
+  @@map("merchant_role_assignments")
+}
+
+model KitchenStation {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  displayColor String   @default("#6B7280")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant  @relation("RestaurantStations", fields: [restaurantId], references: [id], onDelete: Cascade)
+  /// Restaurants that use this as their default station
+  defaultFor  Restaurant[] @relation("RestaurantDefaultStation")
+  categories  MenuCategory[]
+
+  @@map("kitchen_stations")
+}
+
+model Branch {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  address      String?
+  city         String?
+  /// 4-char code used in invoice numbers. Auto-generated; editable by merchant.
+  branchCode   String
+  platformStoreId String?
+  openingHours Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  tables              Table[]
+  staff               Staff[]              @relation("BranchStaff")
+  orders              Order[]
+  queueCounters       QueueCounter[]
+  branchMenuOverrides BranchMenuOverride[]
+  reservations        Reservation[]
+  waiterRequests      WaiterRequest[]
+  customerSessions    CustomerSession[]
+
+  @@unique([restaurantId, branchCode])
+  @@map("branches")
+}
+
+model Table {
+  id        String      @id @default(uuid())
+  branchId  String
+  name      String
+  qrToken   String      @unique
+  status    TableStatus @default(AVAILABLE)
+  capacity  Int?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  branch         Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  sessions       CustomerSession[]
+  waiterRequests WaiterRequest[]
+  reservations   Reservation[]
+
+  @@map("tables")
+}
+
+model Staff {
+  id             String    @id @default(uuid())
+  restaurantId   String
+  branchId       String?
+  name           String
+  pinHash        String
+  isActive       Boolean   @default(true)
+  seenCoachMarks String[]  @default([])
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  restaurant      Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch          Branch?                  @relation("BranchStaff", fields: [branchId], references: [id], onDelete: SetNull)
+  roleAssignments MerchantRoleAssignment[]
+  ordersPlaced    Order[]                  @relation("PlacedByStaff")
+  weightEntries   OrderItem[]              @relation("WeightEnteredByStaff")
+
+  @@map("staff")
+}
+
+// =============================================================================
+// MENU
+// =============================================================================
+
+model MenuCategory {
+  id               String      @id @default(uuid())
+  restaurantId     String
+  kitchenStationId String?
+  name             String
+  description      String?
+  imageUrl         String?
+  displayOrder     Int         @default(0)
+  menuLayoutOverride MenuLayout?
+  /// HH:MM (24h WIB). null = always available. Both fields must be set together.
+  availableFrom    String?
+  /// HH:MM (24h WIB). Overnight ranges (e.g. 22:00–02:00) are supported modularly.
+  availableTo      String?
+  deletedAt        DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  restaurant     Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  kitchenStation KitchenStation? @relation(fields: [kitchenStationId], references: [id], onDelete: SetNull)
+  items          MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id                    String    @id @default(uuid())
+  categoryId            String
+  restaurantId          String
+  name                  String
+  description           String?
+  imageUrl              String?
+  price                 Int
+  priceType             PriceType @default(FIXED)
+  /// Price per unit for BY_WEIGHT items (IDR per gram/kg as configured)
+  pricePerUnit          Decimal?  @db.Decimal(10, 4)
+  unitLabel             String?
+  isAvailable           Boolean   @default(true)
+  stockCount            Int?
+  /// CONSTRAINT: mutually exclusive with stockCount. API must reject if both are set.
+  autoResetAvailability Boolean   @default(false)
+  estimatedPrepTime     Int?
+  isHalal               Boolean   @default(false)
+  isVegetarian          Boolean   @default(false)
+  allergens             String[]  @default([])
+  /// Live FK to KitchenStation.id. Overrides category routing for this item if set.
+  kitchenStationOverride String?
+  displayOrder          Int       @default(0)
+  deletedAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  category        MenuCategory        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  variants        MenuItemVariant[]
+  addons          MenuItemAddon[]
+  branchOverrides BranchMenuOverride[]
+
+  @@index([categoryId, isAvailable, deletedAt])
+  @@map("menu_items")
+}
+
+model MenuItemVariant {
+  id         String   @id @default(uuid())
+  menuItemId String
+  name       String
+  priceDelta Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@map("menu_item_variants")
+}
+
+model MenuItemAddon {
+  id            String   @id @default(uuid())
+  menuItemId    String
+  name          String
+  price         Int      @default(0)
+  isRequired    Boolean  @default(false)
+  maxSelections Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@map("menu_item_addons")
+}
+
+/// Phase 1 (Step 9): per-branch item availability toggle. Unique on (branchId, menuItemId).
+model BranchMenuOverride {
+  id          String   @id @default(uuid())
+  branchId    String
+  menuItemId  String
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, menuItemId])
+  @@map("branch_menu_overrides")
+}
+
+model Promotion {
+  id               String    @id @default(uuid())
+  restaurantId     String
+  name             String
+  description      String?
+  type             String
+  discountType     String
+  discountValue    Int
+  minOrderValue    Int       @default(0)
+  maxDiscountAmount Int?
+  code             String?
+  isActive         Boolean   @default(true)
+  startsAt         DateTime?
+  endsAt           DateTime?
+  maxUses          Int?
+  usedCount        Int       @default(0)
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("promotions")
+}
+
+// =============================================================================
+// ORDERS
+// =============================================================================
+
+model Order {
+  id                String      @id @default(uuid())
+  branchId          String
+  customerSessionId String?
+  orderType         OrderType   @default(DINE_IN)
+  status            OrderStatus @default(PENDING)
+  queueNumber       Int
+
+  // Financials — snapshotted at checkout time. Never joined back to MenuItem.
+  subtotal            Int
+  taxAmount           Int    @default(0)
+  serviceChargeAmount Int    @default(0)
+  grandTotal          Int
+  currency            String @default("IDR")
+
+  // Key timestamps
+  confirmedAt DateTime?
+  readyAt     DateTime?
+  cancelledAt DateTime?
+
+  // Client-generated idempotency key. PostgreSQL UNIQUE permits multiple NULLs.
+  idempotencyKey String? @unique
+
+  // Customer free-text note (max 200 chars, enforced at API layer)
+  customerNote String?
+
+  // Delivery platform
+  platformName    PlatformName?
+  platformOrderId String?
+
+  // Waiter-assisted order
+  placedByStaffId String?
+
+  // BY_WEIGHT booking deposit
+  depositRate   Decimal? @db.Decimal(5, 4)
+  depositAmount Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch          Branch           @relation(fields: [branchId], references: [id])
+  customerSession CustomerSession? @relation(fields: [customerSessionId], references: [id], onDelete: SetNull)
+  placedByStaff   Staff?           @relation("PlacedByStaff", fields: [placedByStaffId], references: [id], onDelete: SetNull)
+
+  items          OrderItem[]
+  events         OrderEvent[]
+  payments       Payment[]
+  rating         OrderRating?
+  invoice        Invoice?
+  waiterRequests WaiterRequest[]
+  patunganSession PatunganSession?
+
+  @@index([branchId, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([customerSessionId])
+  @@index([platformName, platformOrderId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                String  @id @default(uuid())
+  orderId           String
+  /// Snapshot reference — used for lookups only; NOT used for historical display (use name snapshot)
+  menuItemId        String
+  name              String
+  unitPrice         Int
+  variantPriceDelta Int     @default(0)
+  addonPriceTotal   Int     @default(0)
+  lineTotal         Int
+  quantity          Int     @default(1)
+  variantSnapshot   Json?
+  addonSnapshot     Json?
+  kitchenPriority   Int     @default(0)
+  /// Snapshot of KitchenStation.id at order time — plain string, NOT a live FK
+  kitchenStationId  String
+
+  // Phase 2: per-item status (nullable in Phase 1)
+  status OrderItemStatus?
+
+  // BY_WEIGHT fields (schema exists Phase 1; KDS UI ships Phase 1.5)
+  needsWeighing         Boolean  @default(false)
+  weightValue           Decimal? @db.Decimal(10, 3)
+  weightUnit            String?
+  /// round(weightValue × MenuItem.pricePerUnit); null until weight entered
+  finalLineTotal        Int?
+  weightEnteredByStaffId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order                Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  weightEnteredByStaff Staff? @relation("WeightEnteredByStaff", fields: [weightEnteredByStaffId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([kitchenStationId, kitchenPriority])
+  @@map("order_items")
+}
+
+/// Immutable log of order status transitions. One row per transition.
+model OrderEvent {
+  id                 String              @id @default(uuid())
+  orderId            String
+  fromStatus         OrderStatus?
+  toStatus           OrderStatus
+  actorId            String?
+  actorType          ActorType
+  actorName          String?
+  cancellationReason CancellationReason?
+  note               String?
+  createdAt          DateTime            @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_events")
+}
+
+model WaiterRequest {
+  id           String            @id @default(uuid())
+  branchId     String
+  tableId      String
+  orderId      String?
+  type         WaiterRequestType
+  /// null = notify all branch staff. Set when merchant configures per-type routing (Phase 2).
+  notifyRoleId String?
+  resolvedAt   DateTime?
+  createdAt    DateTime          @default(now())
+
+  branch      Branch        @relation(fields: [branchId], references: [id])
+  table       Table         @relation(fields: [tableId], references: [id])
+  order       Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  notifyRole  MerchantRole? @relation(fields: [notifyRoleId], references: [id], onDelete: SetNull)
+
+  @@map("waiter_requests")
+}
+
+model OrderRating {
+  id                String   @id @default(uuid())
+  orderId           String   @unique
+  customerSessionId String?
+  rating            Int
+  comment           String?
+  createdAt         DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_ratings")
+}
+
+/// Legal receipt generated after Payment SUCCESS. PDF stored in Supabase Storage.
+model Invoice {
+  id            String   @id @default(uuid())
+  orderId       String   @unique
+  /// Format: INV-{branchCode}-{YYYYMMDD}-{sequence}
+  invoiceNumber String   @unique
+  pdfUrl        String?
+  currency      String   @default("IDR")
+  createdAt     DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+/// Payment amount is ALWAYS positive (>= 0). Refund direction = paymentType = BALANCE_REFUND.
+/// BY_WEIGHT constraint: DEPOSIT + BALANCE_CHARGE/REFUND must share method + provider.
+model Payment {
+  id                    String          @id @default(uuid())
+  orderId               String
+  amount                Int
+  currency              String          @default("IDR")
+  method                PaymentMethod
+  provider              PaymentProvider?
+  paymentType           PaymentType     @default(FULL)
+  status                PaymentStatus   @default(PENDING)
+  midtransTransactionId String?         @unique
+  /// FK to PatunganSession — null for non-Patungan payments
+  splitGroupId          String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  patunganSession PatunganSession? @relation(fields: [splitGroupId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+// =============================================================================
+// CUSTOMERS
+// =============================================================================
+
+model Customer {
+  id                  String         @id @default(uuid())
+  email               String?        @unique
+  name                String?
+  googleId            String?        @unique
+  privacyConsentAt    DateTime?
+  deletionRequestedAt DateTime?
+  status              CustomerStatus @default(ACTIVE)
+  deletedAt           DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  sessions         CustomerSession[]
+  platformLoyalty  PlatformLoyaltyBalance?
+  merchantLoyalties MerchantLoyaltyBalance[]
+
+  @@map("customers")
+}
+
+model CustomerSession {
+  id           String        @id @default(uuid())
+  restaurantId String
+  branchId     String
+  tableId      String
+  customerId   String?
+  status       SessionStatus @default(ACTIVE)
+  /// httpOnly cookie value — used for page-refresh recovery (ADR-015). DO NOT use as PK in queries.
+  sessionCookie String       @unique
+  /// Set at creation: NOW() + tableSessionTimeoutMinutes. NEVER extended — see ADR-026.
+  expiresAt    DateTime
+  ipAddress    String
+  userAgent    String
+  deviceHash   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  table    Table     @relation(fields: [tableId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  branch   Branch    @relation(fields: [branchId], references: [id])
+
+  orders           Order[]
+  patunganSessions PatunganSession[] @relation("CreatedBySession")
+
+  @@index([tableId, status])
+  @@index([sessionCookie])
+  @@map("customer_sessions")
+}
+
+model MerchantLoyaltyProgram {
+  id                     String                 @id @default(uuid())
+  restaurantId           String
+  name                   String
+  idrPerPoint            Int
+  redemptionRate         Decimal                @db.Decimal(10, 4)
+  pointsCalculationBasis PointsCalculationBasis @default(SUBTOTAL)
+  isActive               Boolean                @default(true)
+  activatedAt            DateTime?
+  deactivatedAt          DateTime?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+
+  restaurant Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  tiers      LoyaltyTier[]
+  balances   MerchantLoyaltyBalance[]
+
+  @@map("merchant_loyalty_programs")
+}
+
+model LoyaltyTier {
+  id          String  @id @default(uuid())
+  programId   String
+  name        String
+  threshold   Int
+  multiplier  Decimal @db.Decimal(5, 2) @default(1.0)
+  customTitle String?
+  badge       String?
+  createdAt   DateTime @default(now())
+
+  program  MerchantLoyaltyProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  balances MerchantLoyaltyBalance[]
+
+  @@map("loyalty_tiers")
+}
+
+model MerchantLoyaltyBalance {
+  id           String   @id @default(uuid())
+  customerId   String
+  restaurantId String
+  programId    String
+  balance      Int      @default(0)
+  totalEarned  Int      @default(0)
+  tierId       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  program  MerchantLoyaltyProgram @relation(fields: [programId], references: [id])
+  tier     LoyaltyTier?           @relation(fields: [tierId], references: [id], onDelete: SetNull)
+
+  @@unique([customerId, restaurantId])
+  @@map("merchant_loyalty_balances")
+}
+
+/// Cross-restaurant FBQR Points (Phase 2 feature — schema stubbed in Phase 1)
+model PlatformLoyaltyBalance {
+  id          String   @id @default(uuid())
+  customerId  String   @unique
+  balance     Int      @default(0)
+  totalEarned Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("platform_loyalty_balances")
+}
+
+// =============================================================================
+// PLATFORM OPERATIONS
+// =============================================================================
+
+/// Append-only audit trail. Never deleted. actorName = "System" for SYSTEM events.
+model AuditLog {
+  id           String    @id @default(uuid())
+  actorId      String?
+  actorType    ActorType
+  actorRole    String?
+  actorName    String?
+  action       String
+  entity       String
+  entityId     String?
+  oldValue     Json?
+  newValue     Json?
+  ipAddress    String?
+  userAgent    String?
+  restaurantId String?
+  createdAt    DateTime  @default(now())
+
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+/// Transactional queue number counter. SELECT FOR UPDATE at issue time. Date is WIB "YYYY-MM-DD".
+model QueueCounter {
+  id         String   @id @default(uuid())
+  branchId   String
+  date       String
+  lastNumber Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, date])
+  @@map("queue_counters")
+}
+
+// =============================================================================
+// PHASE 2 SCAFFOLDING — schema only, no Phase 1 UI
+// =============================================================================
+
+model MerchantApiKey {
+  id           String    @id @default(uuid())
+  restaurantId String
+  keyHash      String    @unique
+  name         String
+  permissions  String[]
+  lastUsedAt   DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@map("merchant_api_keys")
+}
+
+model WebhookEndpoint {
+  id           String   @id @default(uuid())
+  restaurantId String
+  url          String
+  events       String[]
+  secret       String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  deliveryLogs WebhookDeliveryLog[]
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookDeliveryLog {
+  id           String   @id @default(uuid())
+  endpointId   String
+  event        String
+  payload      Json
+  statusCode   Int?
+  responseBody String?
+  attemptedAt  DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_delivery_logs")
+}
+
+model Reservation {
+  id          String            @id @default(uuid())
+  branchId    String
+  tableId     String?
+  guestName   String
+  guestPhone  String
+  partySize   Int
+  scheduledAt DateTime
+  depositPaid Boolean           @default(false)
+  status      ReservationStatus @default(PENDING)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  table  Table?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
+
+  @@map("reservations")
+}
+
+model MerchantIntegration {
+  id          String                  @id @default(uuid())
+  merchantId  String
+  type        MerchantIntegrationType
+  /// Credentials stored as JSON. Encryption at rest deferred to Phase 2.
+  credentials Json
+  isActive    Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_integrations")
+}
+
+/// Append-only product analytics events
+model AnalyticsEvent {
+  id           String   @id @default(uuid())
+  restaurantId String
+  sessionId    String?
+  eventType    String
+  properties   Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("analytics_events")
+}
+
+model MerchantRequest {
+  id                String                @id @default(uuid())
+  merchantId        String
+  type              MerchantRequestType
+  requestedBranches Int?
+  message           String?
+  status            MerchantRequestStatus @default(PENDING)
+  reviewedByAdminId String?
+  reviewedAt        DateTime?
+  createdAt         DateTime              @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_requests")
+}
+
+/// One row per cron invocation — used by /api/health to detect missed/failed runs
+model CronRunLog {
+  id           String        @id @default(uuid())
+  jobName      String
+  startedAt    DateTime      @default(now())
+  completedAt  DateTime?
+  status       CronRunStatus @default(SUCCESS)
+  affectedRows Int?
+  errorMessage String?
+
+  @@map("cron_run_logs")
+}
+
+/// Split-payment session for Patungan (Phase 1 Step 15). Schema stubbed in Phase 1 Prisma
+/// so Payment.splitGroupId can FK into it. UI and API activate in Step 15.
+model PatunganSession {
+  id                 String         @id @default(uuid())
+  orderId            String         @unique
+  /// 6-char human-readable share code for QR / link sharing
+  shareCode          String         @unique
+  splitMode          SplitMode
+  totalParts         Int
+  paidParts          Int            @default(0)
+  amountPerPart      Int?
+  status             PatunganStatus @default(PENDING)
+  expiresAt          DateTime
+  createdBySessionId String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  order            Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBySession CustomerSession @relation("CreatedBySession", fields: [createdBySessionId], references: [id])
+  payments         Payment[]
+
+  @@map("patungan_sessions")
+}
