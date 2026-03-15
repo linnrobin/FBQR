@@ -11,9 +11,25 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-15
-Version        : 4.0
-Current phase  : Phase 1 — Step 2 complete.
-Last completed : Step 2 — Prisma schema + seed data (v4.0)
+Version        : 4.1
+Current phase  : Phase 2 — Step 3 complete.
+Last completed : Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (apps/web)
+                 NextAuth v5 (Auth.js) with two Credentials providers:
+                   - "fbqrsys": SystemAdmin email+password auth
+                   - "merchant": Merchant email+password auth (rejects SUSPENDED/CANCELLED)
+                 JWT session strategy; session type-augmented via types/next-auth.d.ts.
+                 Staff PIN auth: POST /api/auth/pin → sets fbqr_staff_session cookie (4h TTL).
+                 Staff sessions use jose (HS256, edge-compatible) keyed off NEXTAUTH_SECRET.
+                 middleware.ts protects /fbqrsys/*, /merchant/*, /kitchen/* routes.
+                 mustChangePassword enforcement: all /fbqrsys/* routes redirect to
+                   /fbqrsys/change-password until flag is cleared via POST /api/auth/change-password.
+                 Login pages: /fbqrsys/login, /merchant/login, /kitchen/login (numpad UI).
+                 Force password change: /fbqrsys/change-password.
+                 Vitest configured in apps/web; 22 tests passing:
+                   lib/auth/pin.test.ts (12 tests): pinSchema, hashPin, verifyPin
+                   lib/auth/staff-jwt.test.ts (10 tests): sign, verify, TTL, tamper, wrong secret
+                 jose + vitest added to apps/web dependencies.
+Previously: Step 2 — Prisma schema + seed data (v4.0)
                  42 models across Platform, Merchant, Menu, Orders, Customers, Audit sections.
                  Phase 2 scaffolding tables included (PatunganSession, BranchMenuOverride, etc.)
                  Full seed: PlatformSettings singleton, Starter/Pro/Enterprise plans,
@@ -235,7 +251,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
+Next step      : Step 4 — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
@@ -273,7 +289,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)
-- [ ] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
+- [x] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
 - [ ] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
 - [ ] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
 - [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
