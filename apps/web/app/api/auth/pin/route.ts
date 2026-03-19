@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     include: {
       roleAssignments: {
         include: {
-          role: { select: { permissions: true } },
+          merchantRole: { select: { permissions: true } },
         },
       },
     },
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   // Collect permissions from all assigned roles
   const permissions = Array.from(
     new Set(
-      matchedStaff.roleAssignments.flatMap((ra) => ra.role.permissions)
+      matchedStaff.roleAssignments.flatMap((ra) => ra.merchantRole.permissions)
     )
   );
 

@@ -10,18 +10,37 @@
  *
  * See docs/architecture.md § Authentication Model and ADR-005.
  */
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthResult, type Session } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@repo/database";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import type { NextMiddleware, NextRequest } from "next/server";
+
+/**
+ * Minimal `auth` type using only publicly-exported package APIs.
+ * Covers the two usage patterns in this codebase:
+ *   1. `await auth()` — server component / route handler (returns Session | null)
+ *   2. `auth(middleware)` — Next.js middleware wrapper (returns NextMiddleware)
+ *
+ * Reason: next-auth v5 beta's full `auth` type references non-exported internal
+ * paths (next-auth/lib, next-auth/lib/types), causing TS2742 on every export.
+ * This cast silences the false-positive without losing practical type safety.
+ */
+type Auth = (() => Promise<Session | null>) &
+  ((
+    middleware: (
+      req: NextRequest,
+      ctx: unknown
+    ) => Response | void | Promise<Response | void>
+  ) => NextMiddleware);
 
 const credentialsSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
+const _nextAuth: NextAuthResult = NextAuth({
   providers: [
     /**
      * FBQRSYS admin authentication.
@@ -148,3 +167,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     error: "/fbqrsys/login",
   },
 });
+
+export const { handlers, signIn, signOut } = _nextAuth;
+export const auth = _nextAuth.auth as Auth;
