@@ -1,6 +1,7 @@
 /**
  * Server-side session helpers for NextAuth (email+password) sessions.
  * For staff PIN sessions, use verifyStaffJwt from staff-jwt.ts.
+ * For permission checks, use requirePermission() from rbac.ts.
  */
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
@@ -47,4 +48,13 @@ export async function requireMerchant(): Promise<MerchantSession> {
     redirect("/merchant/login");
   }
   return session as MerchantSession;
+}
+
+/**
+ * Get the current session without redirecting.
+ * Returns null if there is no active session.
+ * Useful for optionally checking the session in layouts and shared components.
+ */
+export async function getSession(): Promise<Session | null> {
+  return auth();
 }

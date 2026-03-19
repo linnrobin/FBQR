@@ -10,10 +10,35 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-15
-Version        : 4.1
-Current phase  : Phase 2 — Step 3 complete.
-Last completed : Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (apps/web)
+Last updated   : 2026-03-19
+Version        : 4.2
+Current phase  : Phase 2 — Step 4 complete.
+Last completed : Step 4 — Dynamic RBAC: role/permission engine (apps/web)
+                 packages/config/src/roleTemplates.ts updated:
+                   - MerchantPermission type (15 permissions, matches docs exactly):
+                     menu:manage, promotions:manage, reports:read, orders:view,
+                     orders:manage, orders:refund, kitchen:view, kitchen:manage,
+                     staff:manage, tables:manage, settings:manage, branding:manage,
+                     invoices:read, loyalty:manage, billing:read
+                   - MERCHANT_PERMISSIONS const array + MERCHANT_ROLE_TEMPLATES
+                   - SystemPermission type (9 FBQRSYS permissions) + SYSTEM_PERMISSIONS
+                   - SYSTEM_ROLE_TEMPLATES (Platform Owner, Merchant Manager, Billing Admin,
+                     Analyst, Support Staff) — hardcoded JSON, NOT DB records (ADR-005)
+                   - Legacy exports kept: Permission, RoleTemplate, ROLE_TEMPLATES aliases
+                 apps/web/lib/auth/rbac.ts created:
+                   - hasPermission(permissions, permission) — pure utility
+                   - ForbiddenError class (permission property)
+                   - requireStaffPermission(staff, permission) — throws ForbiddenError
+                   - getStaffSession(cookieStore) — parses fbqr_staff_session cookie
+                   - isMerchantOwner(userType) — short-circuit for owner full-access
+                   - getSystemAdminPermissions(adminId) — DB lookup, unions all roles
+                   - requireSystemPermission(adminId, permission) — FBQRSYS gate, redirects
+                   - forbiddenResponse(permission?) — 403 body builder for API routes
+                 apps/web/lib/auth/session.ts: added getSession() helper
+                 apps/web/lib/auth/rbac.test.ts: 19 tests, all passing
+                 Total tests: 41 passing (19 rbac + 14 pin + 8 staff-jwt)
+                 No DB schema changes. No new migrations needed.
+Previously: Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (apps/web)
                  NextAuth v5 (Auth.js) with two Credentials providers:
                    - "fbqrsys": SystemAdmin email+password auth
                    - "merchant": Merchant email+password auth (rejects SUSPENDED/CANCELLED)
@@ -25,9 +50,6 @@ Last completed : Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (app
                    /fbqrsys/change-password until flag is cleared via POST /api/auth/change-password.
                  Login pages: /fbqrsys/login, /merchant/login, /kitchen/login (numpad UI).
                  Force password change: /fbqrsys/change-password.
-                 Vitest configured in apps/web; 22 tests passing:
-                   lib/auth/pin.test.ts (12 tests): pinSchema, hashPin, verifyPin
-                   lib/auth/staff-jwt.test.ts (10 tests): sign, verify, TTL, tamper, wrong secret
                  jose + vitest added to apps/web dependencies.
 Previously: Step 2 — Prisma schema + seed data (v4.0)
                  42 models across Platform, Merchant, Menu, Orders, Customers, Audit sections.
@@ -251,7 +273,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 4 — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
+Next step      : Step 5 — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
@@ -290,7 +312,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)
 - [x] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
-- [ ] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
+- [x] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
 - [ ] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
 - [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 
