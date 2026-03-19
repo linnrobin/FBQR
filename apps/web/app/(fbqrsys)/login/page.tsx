@@ -41,7 +41,7 @@ export default function FbqrsysLoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-50 px-4">
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-8">

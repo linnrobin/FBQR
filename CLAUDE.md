@@ -11,9 +11,33 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-19
-Version        : 4.2
-Current phase  : Phase 2 — Step 4 complete.
-Last completed : Step 4 — Dynamic RBAC: role/permission engine (apps/web)
+Version        : 4.3
+Current phase  : Phase 2 — Step 5 complete.
+Last completed : Step 5 — FBQRSYS merchant management UI (apps/web)
+                 apps/web/app/(fbqrsys)/layout.tsx: updated with FbqrsysSidebar shell
+                 apps/web/app/(fbqrsys)/page.tsx: root redirect → /fbqrsys/dashboard
+                 apps/web/app/(fbqrsys)/dashboard/page.tsx: stat cards + mini bar charts
+                 apps/web/app/(fbqrsys)/merchants/page.tsx: merchant list, filters, bulk actions
+                 apps/web/app/(fbqrsys)/merchants/[merchantId]/page.tsx: detail + suspend modal
+                 apps/web/app/(fbqrsys)/merchants/new/page.tsx: create merchant form
+                 apps/web/app/(fbqrsys)/settings/page.tsx: PlatformSettings editor
+                 apps/web/app/(fbqrsys)/settings/staff/page.tsx: staff list + invite + role create
+                 apps/web/components/fbqrsys/sidebar.tsx: nav sidebar (client component)
+                 apps/web/components/fbqrsys/status-badge.tsx: MerchantStatus/BillingInvoice badges
+                 apps/web/components/fbqrsys/stat-card.tsx: dashboard stat card
+                 API routes created:
+                   GET/POST /api/fbqrsys/merchants — list (search/filter/page) + create
+                   GET/PATCH /api/fbqrsys/merchants/[merchantId] — detail + update
+                   POST /api/fbqrsys/merchants/[merchantId]/suspend — suspend/unsuspend
+                   GET /api/fbqrsys/dashboard — platform stats + 30-day growth charts
+                   GET/PATCH /api/fbqrsys/settings — PlatformSettings singleton
+                   GET/POST /api/fbqrsys/staff — list + create SystemAdmin
+                   GET/POST /api/fbqrsys/roles — list + create SystemRole
+                   GET /api/fbqrsys/plans — list active SubscriptionPlans
+                 lucide-react added to apps/web dependencies.
+                 Login/change-password pages use fixed inset-0 z-50 to cover sidebar.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 4 — Dynamic RBAC: role/permission engine (apps/web)
                  packages/config/src/roleTemplates.ts updated:
                    - MerchantPermission type (15 permissions, matches docs exactly):
                      menu:manage, promotions:manage, reports:read, orders:view,
@@ -273,8 +297,10 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 5 — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
+Next step      : Step 6 — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
+Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
+                 if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
                  estimated wait time display — formula in docs/merchant.md, UI Phase 2;
@@ -313,7 +339,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)
 - [x] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
 - [x] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
-- [ ] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
+- [x] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
 - [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 
 ### Phase 3 — Merchant POS
