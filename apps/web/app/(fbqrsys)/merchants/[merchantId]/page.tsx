@@ -8,11 +8,11 @@
  * Layout: breadcrumb + two-column (main left, sidebar right).
  * Spec: docs/platform-owner.md § Screen 4 — Merchant Detail
  */
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MerchantStatusBadge, BillingInvoiceStatusBadge } from "@/components/fbqrsys/status-badge";
-import { ChevronRight, Building2, AlertTriangle } from "lucide-react";
+import { ChevronRight, Building2, AlertTriangle, CreditCard, Clock } from "lucide-react";
 
 interface Branch {
   id: string;
@@ -98,6 +98,13 @@ export default function MerchantDetailPage({
   const [suspendLoading, setSuspendLoading] = useState(false);
   const [suspendReason, setSuspendReason] = useState("");
   const [showSuspendConfirm, setShowSuspendConfirm] = useState(false);
+  const [showChangePlan, setShowChangePlan] = useState(false);
+  const [showExtendTrial, setShowExtendTrial] = useState(false);
+  const [availablePlans, setAvailablePlans] = useState<{ id: string; name: string; priceMonthly: number }[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [selectedCycle, setSelectedCycle] = useState<"MONTHLY" | "ANNUAL">("MONTHLY");
+  const [extendDays, setExtendDays] = useState("14");
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
 
   useEffect(() => {
     fetch(`/api/fbqrsys/merchants/${merchantId}`)
@@ -117,6 +124,57 @@ export default function MerchantDetailPage({
       body: JSON.stringify({ notes }),
     });
     setNotesSaving(false);
+  }
+
+  // Load available plans lazily when the modal is opened
+  const loadPlans = useCallback(async () => {
+    if (availablePlans.length > 0) return;
+    const res = await fetch("/api/fbqrsys/billing/plans");
+    if (res.ok) {
+      const d = await res.json();
+      setAvailablePlans(d.plans ?? []);
+      if (d.plans?.length) setSelectedPlanId(d.plans[0].id);
+    }
+  }, [availablePlans.length]);
+
+  async function handleChangePlan() {
+    if (!selectedPlanId) return;
+    setSubscriptionLoading(true);
+    const res = await fetch(`/api/fbqrsys/merchants/${merchantId}/subscription`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "change_plan", planId: selectedPlanId, cycle: selectedCycle }),
+    });
+    setSubscriptionLoading(false);
+    if (res.ok) {
+      setShowChangePlan(false);
+      // Reload merchant data to reflect plan change
+      const refresh = await fetch(`/api/fbqrsys/merchants/${merchantId}`);
+      if (refresh.ok) {
+        const d = await refresh.json();
+        setMerchant(d.merchant);
+      }
+    }
+  }
+
+  async function handleExtendTrial() {
+    const days = parseInt(extendDays, 10);
+    if (!days || days < 1) return;
+    setSubscriptionLoading(true);
+    const res = await fetch(`/api/fbqrsys/merchants/${merchantId}/subscription`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "extend_trial", days }),
+    });
+    setSubscriptionLoading(false);
+    if (res.ok) {
+      setShowExtendTrial(false);
+      const refresh = await fetch(`/api/fbqrsys/merchants/${merchantId}`);
+      if (refresh.ok) {
+        const d = await refresh.json();
+        setMerchant(d.merchant);
+      }
+    }
   }
 
   async function handleSuspend() {
@@ -289,6 +347,25 @@ export default function MerchantDetailPage({
                   </>
                 )}
               </div>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowChangePlan(true);
+                    loadPlans();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  Ganti Plan
+                </button>
+                <button
+                  onClick={() => setShowExtendTrial(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                >
+                  <Clock className="h-4 w-4" />
+                  Perpanjang Trial
+                </button>
+              </div>
             </div>
           )}
 
@@ -429,6 +506,104 @@ export default function MerchantDetailPage({
           </div>
         </div>
       </div>
+
+      {/* Change Plan Modal */}
+      {showChangePlan && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-semibold text-stone-900">Ganti Subscription Plan</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-stone-700">Plan *</label>
+                <select
+                  value={selectedPlanId}
+                  onChange={(e) => setSelectedPlanId(e.target.value)}
+                  className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                >
+                  {availablePlans.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} — {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(p.priceMonthly)}/bln
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-stone-700">Siklus Billing</label>
+                <div className="flex gap-3">
+                  {(["MONTHLY", "ANNUAL"] as const).map((c) => (
+                    <label key={c} className="flex items-center gap-2 text-sm text-stone-700">
+                      <input
+                        type="radio"
+                        value={c}
+                        checked={selectedCycle === c}
+                        onChange={() => setSelectedCycle(c)}
+                      />
+                      {c === "MONTHLY" ? "Bulanan" : "Tahunan"}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setShowChangePlan(false)}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleChangePlan}
+                disabled={subscriptionLoading || !selectedPlanId}
+                className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
+              >
+                {subscriptionLoading ? "Menyimpan..." : "Simpan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extend Trial Modal */}
+      {showExtendTrial && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-semibold text-stone-900">Perpanjang Trial</h3>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-stone-700">
+                Tambah Hari *
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={extendDays}
+                onChange={(e) => setExtendDays(e.target.value)}
+                className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              {merchant.trialEndsAt && (
+                <p className="mt-1 text-xs text-stone-400">
+                  Trial saat ini berakhir: {formatDate(merchant.trialEndsAt)}
+                </p>
+              )}
+            </div>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setShowExtendTrial(false)}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleExtendTrial}
+                disabled={subscriptionLoading}
+                className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
+              >
+                {subscriptionLoading ? "Menyimpan..." : "Perpanjang"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Suspend Confirmation Modal */}
       {showSuspendConfirm && (
