@@ -10,10 +10,28 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-19
-Version        : 4.3
-Current phase  : Phase 2 — Step 5 complete.
-Last completed : Step 5 — FBQRSYS merchant management UI (apps/web)
+Last updated   : 2026-03-20
+Version        : 4.4
+Current phase  : Phase 2 — Step 6 complete.
+Last completed : Step 6 — Merchant subscription & billing (apps/web)
+                 apps/web/app/(fbqrsys)/billing/page.tsx: billing overview (stat cards + invoices table)
+                 apps/web/app/(fbqrsys)/billing/plans/page.tsx: subscription plans grid + create/edit modal
+                 apps/web/app/(fbqrsys)/merchants/[merchantId]/page.tsx: added [Ganti Plan] + [Perpanjang Trial] buttons
+                 API routes created:
+                   GET/POST  /api/fbqrsys/billing/plans — list all plans (incl. inactive) + create
+                   GET/PATCH/DELETE /api/fbqrsys/billing/plans/[planId] — get/update/deactivate
+                   GET       /api/fbqrsys/billing — invoices list (filter/paginate)
+                   GET       /api/fbqrsys/billing/stats — MRR, issued, overdue, collection rate
+                   PATCH     /api/fbqrsys/merchants/[merchantId]/subscription — change plan, extend trial, toggle auto-renew, set grace period
+                 Billing cron implemented (/api/cron/billing):
+                   Step 1: 7-day renewal reminder emails (idempotency: reminderSentAt)
+                   Step 2: Auto-renewal — PENDING invoice + advance period; suspend on grace breach
+                   Step 3: Trial expiry — TRIAL → SUSPENDED when trialEndsAt < now
+                   Step 4: 3-day renewal reminders (reminderSentAt3d)
+                   Step 5: Win-back email sequence for CANCELLED merchants (days 1/7/14/30)
+                           Day 30 mandatory regardless of winBackOptOut (UU PDP legal notice)
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 5 — FBQRSYS merchant management UI (apps/web)
                  apps/web/app/(fbqrsys)/layout.tsx: updated with FbqrsysSidebar shell
                  apps/web/app/(fbqrsys)/page.tsx: root redirect → /fbqrsys/dashboard
                  apps/web/app/(fbqrsys)/dashboard/page.tsx: stat cards + mini bar charts
@@ -297,7 +315,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 6 — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
+Next step      : Step 7 — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
                  if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
@@ -340,7 +358,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
 - [x] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
 - [x] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
-- [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
+- [x] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 
 ### Phase 3 — Merchant POS
 - [ ] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
