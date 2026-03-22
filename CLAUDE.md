@@ -10,10 +10,37 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-20
-Version        : 4.4
-Current phase  : Phase 2 — Step 6 complete.
-Last completed : Step 6 — Merchant subscription & billing (apps/web)
+Last updated   : 2026-03-22
+Version        : 4.5
+Current phase  : Phase 3 — Step 7 complete.
+Last completed : Step 7 — Merchant onboarding: trial/free tier flow, plan selection (apps/web)
+                 Self-service registration:
+                   /register — public registration page (businessName, email, password, agreeToTerms)
+                   POST /api/auth/register — creates Merchant + Restaurant + Branch (Pusat) in one
+                     transaction; sends HMAC-signed email verification link (jose, 24h expiry)
+                   GET  /api/auth/verify-email?token=... — sets emailVerifiedAt, redirects to /merchant/login
+                 Onboarding wizard (5 steps, full-page layout, no sidebar):
+                   /merchant/onboarding/step-1 — Info Restoran (REQUIRED): name, cuisine, logo URL, address
+                   /merchant/onboarding/step-2 — Menu Pertama: category + up to 5 items, live preview panel
+                   /merchant/onboarding/step-3 — Meja & QR Code (REQUIRED): creates Table, generates
+                     qrToken (UUID), returns QR code as base64 data URL (qrcode npm package)
+                   /merchant/onboarding/step-4 — Pengaturan Pembayaran: paymentMode radio (3 options)
+                   /merchant/onboarding/step-5 — Tambahkan Staff: name+PIN+role per staff member
+                 Onboarding API routes:
+                   GET  /api/merchant/onboarding — fetch current state
+                   PATCH /api/merchant/onboarding/step/[step] — save each step (1–5)
+                   POST /api/merchant/onboarding/complete — sets onboardingStep=6, wizardCompletedAt
+                 Merchant dashboard:
+                   /merchant/dashboard — Server Component; redirects to wizard if step<1 or step<3
+                   Dashboard shows trial expiry warning, dismissible onboarding checklist card,
+                   quick navigation cards for all merchant POS sections
+                   Full live dashboard (stat cards, Realtime charts) deferred to Step 9
+                 Wizard progress component: apps/web/components/merchant/wizard-progress.tsx
+                 qrcode + @types/qrcode added to apps/web dependencies
+                 Merchant login page: updated "Daftar sekarang" link → /register;
+                   shows verified=1 success banner and invalid_token error banner
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 6 — Merchant subscription & billing (apps/web)
                  apps/web/app/(fbqrsys)/billing/page.tsx: billing overview (stat cards + invoices table)
                  apps/web/app/(fbqrsys)/billing/plans/page.tsx: subscription plans grid + create/edit modal
                  apps/web/app/(fbqrsys)/merchants/[merchantId]/page.tsx: added [Ganti Plan] + [Perpanjang Trial] buttons
@@ -315,7 +342,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 7 — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
+Next step      : Step 8 — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
                  if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
@@ -361,7 +388,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 
 ### Phase 3 — Merchant POS
-- [ ] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
+- [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 - [ ] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)

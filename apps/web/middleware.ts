@@ -59,6 +59,9 @@ export default auth(async function middleware(req: NextRequest) {
     ) {
       return NextResponse.next();
     }
+    // Onboarding routes — accessible to authenticated merchants (wizard itself
+    // handles step-order enforcement via server-side redirects in each page).
+    // No additional middleware check needed beyond auth below.
 
     // @ts-expect-error — req.auth is added by the auth() wrapper
     const session = req.auth;

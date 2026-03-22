@@ -8,11 +8,14 @@
 import { useState, type FormEvent } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 export default function MerchantLoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/merchant/dashboard";
+  const verified = searchParams.get("verified") === "1";
+  const tokenError = searchParams.get("error") === "invalid_token";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,6 +57,17 @@ export default function MerchantLoginPage() {
         {/* Card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-6">Masuk</h2>
+
+          {verified && (
+            <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">
+              Email berhasil diverifikasi! Silakan masuk.
+            </div>
+          )}
+          {tokenError && (
+            <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              Link verifikasi tidak valid atau sudah kedaluwarsa.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -113,9 +127,9 @@ export default function MerchantLoginPage() {
 
           <p className="text-center text-xs text-gray-400 mt-6">
             Belum punya akun?{" "}
-            <a href="#" className="text-blue-600 hover:underline">
+            <Link href="/register" className="text-orange-600 hover:underline">
               Daftar sekarang
-            </a>
+            </Link>
           </p>
         </div>
       </div>
