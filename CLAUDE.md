@@ -11,37 +11,50 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-22
-Version        : 4.6
-Current phase  : Phase 3 — Step 8 complete.
-Last completed : Step 8 — Restaurant branding settings + CSS variable injection (apps/web + apps/menu)
+Version        : 4.7
+Current phase  : Phase 3 — Step 9 complete.
+Last completed : Step 9 — merchant-pos: menu & category management, allergens, CSV import,
+                 per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
                  Schema changes:
-                   RestaurantBranding model: added bannerUrl (String?), borderRadius (BorderRadiusStyle
-                     enum: sharp/rounded/pill, default rounded), customCss (String?)
-                   New enum BorderRadiusStyle added to schema.prisma
-                   Default primaryColor updated to #E8622A (FBQR brand), secondaryColor to #F5F5F5
-                 apps/web — Branding settings page:
-                   /merchant/branding — Server Component; fetches branding and passes to client
-                   apps/web/app/(merchant)/merchant/branding/page.tsx — page server component
-                   apps/web/app/(merchant)/merchant/branding/branding-client.tsx — full client UI:
-                     Logo URL + banner URL inputs
-                     Primary + secondary color pickers (native <input type="color"> + hex text input)
-                     WCAG 2.1 AA contrast validation — live client-side warnings (warn-only, no block)
-                     Font family selector (8 options: Inter, Poppins, Lato, etc.)
-                     Border radius selector (sharp / rounded / pill)
-                     Menu layout selector (GRID / LIST / BUNDLE / SPOTLIGHT)
-                     Live phone-frame preview of menu header + item cards with picked settings
-                 apps/web — API route:
-                   GET/PATCH /api/merchant/branding — fetch + upsert branding per merchant restaurant
-                   Server-side WCAG contrast validation; warnings returned in response (never block)
-                   Zod validation for all fields
-                 apps/menu — SSR CSS variable injection:
-                   apps/menu/app/[restaurantId]/layout.tsx — Server Component; fetches branding
-                     and injects CSS custom properties into <head> server-side (no FOUC):
-                     --color-primary, --color-primary-hover, --color-secondary,
-                     --font-family, --border-radius, --border-radius-sm
-                   customCss injection for FBQRSYS admin raw CSS overrides (sanitized before storage)
-                   Covers both [restaurantId]/[tableId] and [restaurantId]/menu routes
+                   MenuItem: added isVegan (Boolean default false), spiceLevel (Int?),
+                     depositAmount (Int?); changed pricePerUnit Decimal → Int? (IDR int)
+                   MenuItemVariant: added isDefault (Boolean), sortOrder (Int), deletedAt (DateTime?)
+                   MenuItemAddon: renamed price → priceDelta, renamed maxSelections → maxQuantity,
+                     added isDefault (Boolean), sortOrder (Int), deletedAt (DateTime?)
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/menu/categories — list + create
+                   GET/PATCH/DELETE /api/merchant/menu/categories/[categoryId] — CRUD
+                   PATCH      /api/merchant/menu/categories/reorder — drag reorder
+                   GET/POST   /api/merchant/menu/items — list (filter by category + search) + create
+                   GET/PATCH/DELETE /api/merchant/menu/items/[itemId] — CRUD with variants + addons
+                   PATCH      /api/merchant/menu/items/[itemId]/availability — toggle isAvailable
+                   POST       /api/merchant/menu/items/[itemId]/duplicate — duplicate item
+                   PATCH      /api/merchant/menu/items/reorder — reorder within category
+                   POST       /api/merchant/menu/items/import — CSV import (multipart)
+                   GET        /api/merchant/menu/branches/[branchId]/overrides — list overrides
+                   PATCH      /api/merchant/menu/branches/[branchId]/overrides/[itemId] — upsert override
+                 Merchant menu pages (apps/web/(merchant)/merchant/menu):
+                   /merchant/menu — Server Component; fetches categories+items+branches+stations
+                   menu-client.tsx — Category sidebar, item table (availability toggle, duplicate,
+                     delete, edit link), CSV import modal, BranchMenuOverride side panel,
+                     category create/edit modal with time windows + layout override + station
+                   /merchant/menu/items/new — create item form
+                   /merchant/menu/items/[itemId]/edit — edit item form
+                   components/merchant/menu-item-form.tsx — full two-column item form:
+                     all MenuItem fields, variants (add/edit/delete), addons (add/edit/delete)
+                 Merchant layout updated:
+                   Added MerchantSidebar (components/merchant/sidebar.tsx) to (merchant)/layout.tsx
+                   Login page + onboarding layout use fixed inset-0 z-50 to cover sidebar
+                 PWA offline mode for merchant-pos:
+                   public/manifest.json — Web App Manifest (scope: /merchant/)
+                   public/sw.js — Service Worker: cache-first static, network-first navigation,
+                     network-only API; offline fallback to public/offline.html
+                   public/offline.html — Indonesian offline page with iOS Add-to-Home-Screen tip
+                   components/merchant/pwa-register.tsx — client component; registers SW,
+                     shows dismissible iOS banner prompting "Add to Home Screen" in Safari
+                   (merchant)/layout.tsx — includes PwaRegister + manifest link in metadata
                  All 41 tests still passing.
+Previously: Step 8 — Restaurant branding settings + CSS variable injection (apps/web + apps/menu)
 Previously: Step 7 — Merchant onboarding: trial/free tier flow, plan selection (apps/web)
                  Self-service registration:
                    /register — public registration page (businessName, email, password, agreeToTerms)
@@ -371,7 +384,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 9 — merchant-pos: menu & category management, layouts, allergens, CSV import, per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode for merchant-pos (`apps/web/(merchant)`)
+Next step      : Step 10 — merchant-pos: table management, QR generation, floor map, waiter-assisted order mode (`apps/web/(merchant)`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
                  if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
@@ -419,7 +432,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 3 — Merchant POS
 - [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 - [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
-- [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
+- [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
 - [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
 

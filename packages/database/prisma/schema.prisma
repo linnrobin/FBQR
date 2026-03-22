@@ -726,8 +726,10 @@ model MenuItem {
   price                 Int
   priceType             PriceType @default(FIXED)
   /// Price per unit for BY_WEIGHT items (IDR per gram/kg as configured)
-  pricePerUnit          Decimal?  @db.Decimal(10, 4)
+  pricePerUnit          Int?
   unitLabel             String?
+  /// Upfront deposit charge at checkout for BY_WEIGHT items
+  depositAmount         Int?
   isAvailable           Boolean   @default(true)
   stockCount            Int?
   /// CONSTRAINT: mutually exclusive with stockCount. API must reject if both are set.
@@ -735,7 +737,10 @@ model MenuItem {
   estimatedPrepTime     Int?
   isHalal               Boolean   @default(false)
   isVegetarian          Boolean   @default(false)
+  isVegan               Boolean   @default(false)
   allergens             String[]  @default([])
+  /// 0=none, 1=mild, 2=medium, 3=hot — shown as 🌶️ count
+  spiceLevel            Int?
   /// Live FK to KitchenStation.id. Overrides category routing for this item if set.
   kitchenStationOverride String?
   displayOrder          Int       @default(0)
@@ -753,12 +758,15 @@ model MenuItem {
 }
 
 model MenuItemVariant {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   menuItemId String
   name       String
-  priceDelta Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  priceDelta Int       @default(0)
+  isDefault  Boolean   @default(false)
+  sortOrder  Int       @default(0)
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
 
@@ -766,14 +774,16 @@ model MenuItemVariant {
 }
 
 model MenuItemAddon {
-  id            String   @id @default(uuid())
-  menuItemId    String
-  name          String
-  price         Int      @default(0)
-  isRequired    Boolean  @default(false)
-  maxSelections Int      @default(1)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String    @id @default(uuid())
+  menuItemId  String
+  name        String
+  priceDelta  Int       @default(0)
+  isDefault   Boolean   @default(false)
+  maxQuantity Int?
+  sortOrder   Int       @default(0)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
 

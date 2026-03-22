@@ -14,7 +14,7 @@ export default function OnboardingLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-stone-50">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-50">
       {children}
     </div>
   );
