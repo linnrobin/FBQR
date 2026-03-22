@@ -122,6 +122,12 @@ enum MenuLayout {
   SPOTLIGHT
 }
 
+enum BorderRadiusStyle {
+  sharp
+  rounded
+  pill
+}
+
 enum RoundingRule {
   NONE
   ROUND_50
@@ -486,16 +492,19 @@ model Restaurant {
 }
 
 model RestaurantBranding {
-  id             String     @id @default(uuid())
-  restaurantId   String     @unique
+  id             String             @id @default(uuid())
+  restaurantId   String             @unique
   logoUrl        String?
-  primaryColor   String     @default("#FF6B35")
-  secondaryColor String     @default("#2D3748")
-  accentColor    String     @default("#48BB78")
-  fontFamily     String     @default("Inter")
-  menuLayout     MenuLayout @default(GRID)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  bannerUrl      String?
+  primaryColor   String             @default("#E8622A")
+  secondaryColor String             @default("#F5F5F5")
+  accentColor    String             @default("#48BB78")
+  fontFamily     String             @default("Inter")
+  borderRadius   BorderRadiusStyle  @default(rounded)
+  menuLayout     MenuLayout         @default(GRID)
+  customCss      String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 

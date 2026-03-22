@@ -11,9 +11,38 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-22
-Version        : 4.5
-Current phase  : Phase 3 — Step 7 complete.
-Last completed : Step 7 — Merchant onboarding: trial/free tier flow, plan selection (apps/web)
+Version        : 4.6
+Current phase  : Phase 3 — Step 8 complete.
+Last completed : Step 8 — Restaurant branding settings + CSS variable injection (apps/web + apps/menu)
+                 Schema changes:
+                   RestaurantBranding model: added bannerUrl (String?), borderRadius (BorderRadiusStyle
+                     enum: sharp/rounded/pill, default rounded), customCss (String?)
+                   New enum BorderRadiusStyle added to schema.prisma
+                   Default primaryColor updated to #E8622A (FBQR brand), secondaryColor to #F5F5F5
+                 apps/web — Branding settings page:
+                   /merchant/branding — Server Component; fetches branding and passes to client
+                   apps/web/app/(merchant)/merchant/branding/page.tsx — page server component
+                   apps/web/app/(merchant)/merchant/branding/branding-client.tsx — full client UI:
+                     Logo URL + banner URL inputs
+                     Primary + secondary color pickers (native <input type="color"> + hex text input)
+                     WCAG 2.1 AA contrast validation — live client-side warnings (warn-only, no block)
+                     Font family selector (8 options: Inter, Poppins, Lato, etc.)
+                     Border radius selector (sharp / rounded / pill)
+                     Menu layout selector (GRID / LIST / BUNDLE / SPOTLIGHT)
+                     Live phone-frame preview of menu header + item cards with picked settings
+                 apps/web — API route:
+                   GET/PATCH /api/merchant/branding — fetch + upsert branding per merchant restaurant
+                   Server-side WCAG contrast validation; warnings returned in response (never block)
+                   Zod validation for all fields
+                 apps/menu — SSR CSS variable injection:
+                   apps/menu/app/[restaurantId]/layout.tsx — Server Component; fetches branding
+                     and injects CSS custom properties into <head> server-side (no FOUC):
+                     --color-primary, --color-primary-hover, --color-secondary,
+                     --font-family, --border-radius, --border-radius-sm
+                   customCss injection for FBQRSYS admin raw CSS overrides (sanitized before storage)
+                   Covers both [restaurantId]/[tableId] and [restaurantId]/menu routes
+                 All 41 tests still passing.
+Previously: Step 7 — Merchant onboarding: trial/free tier flow, plan selection (apps/web)
                  Self-service registration:
                    /register — public registration page (businessName, email, password, agreeToTerms)
                    POST /api/auth/register — creates Merchant + Restaurant + Branch (Pusat) in one
@@ -342,7 +371,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 8 — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
+Next step      : Step 9 — merchant-pos: menu & category management, layouts, allergens, CSV import, per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode for merchant-pos (`apps/web/(merchant)`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
                  if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
@@ -389,7 +418,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 3 — Merchant POS
 - [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
-- [ ] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
+- [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
 - [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
