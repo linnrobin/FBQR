@@ -41,7 +41,7 @@ export default async function TablesPage() {
       select: { orderingPaused: true, orderingPausedMessage: true, enableDirtyState: true },
     }),
     prisma.menuCategory.findMany({
-      where: { restaurantId, deletedAt: null, isActive: true },
+      where: { restaurantId, deletedAt: null },
       include: {
         items: {
           where: { deletedAt: null, isAvailable: true },

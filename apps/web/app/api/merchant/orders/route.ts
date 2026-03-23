@@ -11,10 +11,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
-import { getStaffSession, requireStaffPermission } from "@/lib/auth/rbac";
+import { getStaffSession, hasPermission, forbiddenResponse } from "@/lib/auth/rbac";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { format } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 
 const OrderItemSchema = z.object({
   menuItemId: z.string().uuid(),
@@ -40,7 +40,9 @@ export async function POST(req: NextRequest) {
   let restaurantId: string | null = null;
 
   if (staffSession) {
-    requireStaffPermission(staffSession, "orders:manage");
+    if (!hasPermission(staffSession.permissions, "orders:manage")) {
+      return NextResponse.json(forbiddenResponse("orders:manage"), { status: 403 });
+    }
     placedByStaffId = staffSession.staffId;
     restaurantId = staffSession.restaurantId;
   } else {
@@ -79,6 +81,13 @@ export async function POST(req: NextRequest) {
   }
   if (!branch) {
     return NextResponse.json({ error: "Branch not found" }, { status: 404 });
+  }
+  // Cross-check: table must belong to the specified branch
+  if (table.branchId !== branchId) {
+    return NextResponse.json(
+      { error: "Table does not belong to the specified branch" },
+      { status: 409 }
+    );
   }
 
   // Fetch menu items with variants and addons for pricing/snapshotting
@@ -128,8 +137,14 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+    if (menuItem.priceType === "BY_WEIGHT") {
+      return NextResponse.json(
+        { error: `BY_WEIGHT items cannot be ordered via waiter-assisted mode: ${menuItem.name}` },
+        { status: 422 }
+      );
+    }
 
-    const unitPrice = menuItem.pricePerUnit ?? 0;
+    const unitPrice = menuItem.price;
     let variantPriceDelta = 0;
     let variantSnapshot: Record<string, unknown> | null = null;
 
@@ -188,7 +203,7 @@ export async function POST(req: NextRequest) {
   const grandTotal = subtotal;
 
   // Get or create today's queue counter for the branch
-  const todayKey = format(new Date(), "yyyy-MM-dd");
+  const todayKey = formatInTimeZone(new Date(), "Asia/Jakarta", "yyyy-MM-dd");
   const counter = await prisma.queueCounter.upsert({
     where: { branchId_date: { branchId, date: todayKey } },
     update: { lastNumber: { increment: 1 } },
