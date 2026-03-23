@@ -11,7 +11,7 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-23
-Version        : 4.8
+Version        : 4.9
 Current phase  : Phase 3 — Step 10 in progress (partial).
 Last completed : Step 10 (partial) — table management API routes + page server component.
                  Bug fixes applied (same session):
@@ -21,6 +21,10 @@ Last completed : Step 10 (partial) — table management API routes + page server
                    orders/route.ts: added BY_WEIGHT guard (422 — not supported in waiter-assisted mode)
                    orders/route.ts: replaced date-fns format() with formatInTimeZone(Asia/Jakarta) for QueueCounter key
                    tables/page.tsx: removed non-existent MenuCategory.isActive filter
+                 Routing bug fixed (same session):
+                   (merchant)/dashboard/ was at the WRONG URL (/dashboard, unprotected by middleware).
+                   Moved to (merchant)/merchant/dashboard/ so it serves /merchant/dashboard correctly
+                   and falls under the /merchant/* middleware protection.
                  API routes created (apps/web):
                    GET/POST   /api/merchant/tables — list tables by branch + create with auto qrToken
                    GET/PATCH/DELETE /api/merchant/tables/[tableId] — CRUD
@@ -29,10 +33,28 @@ Last completed : Step 10 (partial) — table management API routes + page server
                    GET        /api/merchant/tables/[tableId]/qr — QR code as base64 data URL
                    POST       /api/merchant/orders — waiter-assisted order placement
                  Merchant page: /merchant/tables — Server Component (fetches branches, tables, settings, categories)
-                 MISSING (to complete Step 10):
-                   apps/web/app/(merchant)/merchant/tables/tables-client.tsx — floor map, QR modal,
-                     table status panel, waiter-assisted order panel
                  All 41 tests still passing. No DB schema changes.
+
+INCOMPLETE WORK — must finish before marking Step 10 complete:
+  [ ] apps/web/app/(merchant)/merchant/tables/tables-client.tsx
+        Floor map grid (table cards with status colours), QR code modal (download + print),
+        table status action buttons, waiter-assisted order panel (category/item selector,
+        variant/addon picker, confirm → POST /api/merchant/orders).
+        See docs/merchant.md § Table Management and § Waiter-Assisted Order Mode for full spec.
+
+KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
+  Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
+              Real Resend integration is Step 18 (push notifications + email).
+  Step 7  — /merchant/dashboard shows a static checklist card only. Full live stat cards
+              and revenue chart are deferred to after Step 20 (Realtime connected).
+  Step 10 — tables-client.tsx (see INCOMPLETE WORK above).
+
+SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
+  /merchant/promotions  → Step 11 (not built yet)
+  /merchant/analytics   → Step 21 (not built yet)
+  /merchant/settings    → not assigned to a step yet; add MerchantSettings editor in Step 10
+                           or treat as a standalone step before Step 11. See docs/merchant.md.
+  /fbqrsys/audit-log    → Step 24 (not built yet)
 Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
                  per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
                  Schema changes:
@@ -404,22 +426,26 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 10 (resume) — complete tables-client.tsx: floor map UI, QR modal, table status panel, waiter-assisted order panel (`apps/web/(merchant)/merchant/tables/`)
+Next step      : Step 10 (resume) — build tables-client.tsx (floor map, QR modal, waiter order panel),
+                 then add /merchant/settings page before starting Step 11.
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
-Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
-                 if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
-Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
-                 estimated wait time display — formula in docs/merchant.md, UI Phase 2;
-                 Hidang mode full flow — deferred to Phase 2;
-                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
+Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
+                   if FREE tier is needed, add to schema in Step 6 or Phase 2 cleanup.
+                 /merchant/settings page not assigned to a step — spec is in docs/merchant.md
+                   (MerchantSettings fields: orderingPaused, paymentMode, timeouts, etc.).
+                   Should be built as part of Step 10 completion or a new sub-step.
+                 refund flow full detail — deferred to Step 15 and Step 19.
+                 estimated wait time display — formula in docs/merchant.md, UI deferred to Phase 2.
+                 Hidang mode full flow — deferred to Phase 2.
+                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message.
                  BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
-                   refund API integration detail deferred to Step 15;
-                 DB Row-Level Security (RLS) — deferred to Phase 2;
-                 PII field encryption at rest — deferred to Phase 2;
-                 apps/menu PWA offline mode — deferred to future step;
-                 quick sold-out from KDS — UX note for Step 20;
-                 EFAKTUR API for Faktur Pajak — deferred to Phase 2
+                   refund API integration detail deferred to Step 15.
+                 DB Row-Level Security (RLS) — deferred to Phase 2.
+                 PII field encryption at rest — deferred to Phase 2.
+                 apps/menu PWA offline mode — deferred to future step.
+                 quick sold-out from KDS — UX note for Step 20.
+                 EFAKTUR API for Faktur Pajak — deferred to Phase 2.
 ```
 
 ---
