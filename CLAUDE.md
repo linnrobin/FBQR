@@ -10,10 +10,30 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-22
-Version        : 4.7
-Current phase  : Phase 3 — Step 9 complete.
-Last completed : Step 9 — merchant-pos: menu & category management, allergens, CSV import,
+Last updated   : 2026-03-23
+Version        : 4.8
+Current phase  : Phase 3 — Step 10 in progress (partial).
+Last completed : Step 10 (partial) — table management API routes + page server component.
+                 Bug fixes applied (same session):
+                   orders/route.ts: used MenuItem.price (not pricePerUnit) for unit price snapshot
+                   orders/route.ts: replaced requireStaffPermission() throw with hasPermission() early return (403 not 500)
+                   orders/route.ts: added table.branchId === branchId cross-check
+                   orders/route.ts: added BY_WEIGHT guard (422 — not supported in waiter-assisted mode)
+                   orders/route.ts: replaced date-fns format() with formatInTimeZone(Asia/Jakarta) for QueueCounter key
+                   tables/page.tsx: removed non-existent MenuCategory.isActive filter
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/tables — list tables by branch + create with auto qrToken
+                   GET/PATCH/DELETE /api/merchant/tables/[tableId] — CRUD
+                   PATCH      /api/merchant/tables/[tableId]/status — manual status transitions
+                   POST       /api/merchant/tables/[tableId]/rotate-token — regenerate qrToken
+                   GET        /api/merchant/tables/[tableId]/qr — QR code as base64 data URL
+                   POST       /api/merchant/orders — waiter-assisted order placement
+                 Merchant page: /merchant/tables — Server Component (fetches branches, tables, settings, categories)
+                 MISSING (to complete Step 10):
+                   apps/web/app/(merchant)/merchant/tables/tables-client.tsx — floor map, QR modal,
+                     table status panel, waiter-assisted order panel
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
                  per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
                  Schema changes:
                    MenuItem: added isVegan (Boolean default false), spiceLevel (Int?),
@@ -384,7 +404,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 10 — merchant-pos: table management, QR generation, floor map, waiter-assisted order mode (`apps/web/(merchant)`)
+Next step      : Step 10 (resume) — complete tables-client.tsx: floor map UI, QR modal, table status panel, waiter-assisted order panel (`apps/web/(merchant)/merchant/tables/`)
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
                  if FREE tier is needed add to schema in Step 6 or Phase 2 cleanup.
