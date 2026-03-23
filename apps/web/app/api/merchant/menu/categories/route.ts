@@ -29,7 +29,6 @@ const CreateCategorySchema = z
       .nullable()
       .optional(),
     kitchenStationId: z.string().uuid().nullable().optional(),
-    isActive: z.boolean().optional(),
     displayOrder: z.number().int().optional(),
   })
   .refine(

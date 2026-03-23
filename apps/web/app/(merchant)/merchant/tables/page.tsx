@@ -26,7 +26,7 @@ export default async function TablesPage() {
             _count: {
               select: {
                 sessions: {
-                  where: { status: { in: ["ACTIVE", "ORDERING"] } },
+                  where: { status: "ACTIVE" },
                 },
               },
             },

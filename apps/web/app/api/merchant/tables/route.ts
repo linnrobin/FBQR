@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
         select: {
           sessions: {
             where: {
-              status: { in: ["ACTIVE", "ORDERING"] },
+              status: "ACTIVE",
             },
           },
         },
