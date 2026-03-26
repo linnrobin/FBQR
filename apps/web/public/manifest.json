@@ -1,0 +1,27 @@
+{
+  "name": "FBQR Merchant",
+  "short_name": "FBQR",
+  "description": "FBQR Merchant POS — kelola menu, pesanan, dan restoran Anda",
+  "start_url": "/merchant/dashboard",
+  "scope": "/merchant/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#E8622A",
+  "background_color": "#FAFAF9",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "food"],
+  "lang": "id"
+}

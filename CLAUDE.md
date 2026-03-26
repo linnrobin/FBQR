@@ -10,10 +10,211 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-14
-Version        : 3.11
-Current phase  : Phase 0 — Requirements complete. No code written yet.
-Last completed : v3.10 secondary audit resolution pass (v3.11) — 5 gaps introduced by v3.10 fixes:
+Last updated   : 2026-03-23
+Version        : 4.9
+Current phase  : Phase 3 — Step 10 in progress (partial).
+Last completed : Step 10 (partial) — table management API routes + page server component.
+                 Bug fixes applied (same session):
+                   orders/route.ts: used MenuItem.price (not pricePerUnit) for unit price snapshot
+                   orders/route.ts: replaced requireStaffPermission() throw with hasPermission() early return (403 not 500)
+                   orders/route.ts: added table.branchId === branchId cross-check
+                   orders/route.ts: added BY_WEIGHT guard (422 — not supported in waiter-assisted mode)
+                   orders/route.ts: replaced date-fns format() with formatInTimeZone(Asia/Jakarta) for QueueCounter key
+                   tables/page.tsx: removed non-existent MenuCategory.isActive filter
+                 Routing bug fixed (same session):
+                   (merchant)/dashboard/ was at the WRONG URL (/dashboard, unprotected by middleware).
+                   Moved to (merchant)/merchant/dashboard/ so it serves /merchant/dashboard correctly
+                   and falls under the /merchant/* middleware protection.
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/tables — list tables by branch + create with auto qrToken
+                   GET/PATCH/DELETE /api/merchant/tables/[tableId] — CRUD
+                   PATCH      /api/merchant/tables/[tableId]/status — manual status transitions
+                   POST       /api/merchant/tables/[tableId]/rotate-token — regenerate qrToken
+                   GET        /api/merchant/tables/[tableId]/qr — QR code as base64 data URL
+                   POST       /api/merchant/orders — waiter-assisted order placement
+                 Merchant page: /merchant/tables — Server Component (fetches branches, tables, settings, categories)
+                 All 41 tests still passing. No DB schema changes.
+
+INCOMPLETE WORK — must finish before marking Step 10 complete:
+  [ ] apps/web/app/(merchant)/merchant/tables/tables-client.tsx
+        Floor map grid (table cards with status colours), QR code modal (download + print),
+        table status action buttons, waiter-assisted order panel (category/item selector,
+        variant/addon picker, confirm → POST /api/merchant/orders).
+        See docs/merchant.md § Table Management and § Waiter-Assisted Order Mode for full spec.
+
+KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
+  Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
+              Real Resend integration is Step 18 (push notifications + email).
+  Step 7  — /merchant/dashboard shows a static checklist card only. Full live stat cards
+              and revenue chart are deferred to after Step 20 (Realtime connected).
+  Step 10 — tables-client.tsx (see INCOMPLETE WORK above).
+
+SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
+  /merchant/promotions  → Step 11 (not built yet)
+  /merchant/analytics   → Step 21 (not built yet)
+  /merchant/settings    → not assigned to a step yet; add MerchantSettings editor in Step 10
+                           or treat as a standalone step before Step 11. See docs/merchant.md.
+  /fbqrsys/audit-log    → Step 24 (not built yet)
+Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
+                 per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
+                 Schema changes:
+                   MenuItem: added isVegan (Boolean default false), spiceLevel (Int?),
+                     depositAmount (Int?); changed pricePerUnit Decimal → Int? (IDR int)
+                   MenuItemVariant: added isDefault (Boolean), sortOrder (Int), deletedAt (DateTime?)
+                   MenuItemAddon: renamed price → priceDelta, renamed maxSelections → maxQuantity,
+                     added isDefault (Boolean), sortOrder (Int), deletedAt (DateTime?)
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/menu/categories — list + create
+                   GET/PATCH/DELETE /api/merchant/menu/categories/[categoryId] — CRUD
+                   PATCH      /api/merchant/menu/categories/reorder — drag reorder
+                   GET/POST   /api/merchant/menu/items — list (filter by category + search) + create
+                   GET/PATCH/DELETE /api/merchant/menu/items/[itemId] — CRUD with variants + addons
+                   PATCH      /api/merchant/menu/items/[itemId]/availability — toggle isAvailable
+                   POST       /api/merchant/menu/items/[itemId]/duplicate — duplicate item
+                   PATCH      /api/merchant/menu/items/reorder — reorder within category
+                   POST       /api/merchant/menu/items/import — CSV import (multipart)
+                   GET        /api/merchant/menu/branches/[branchId]/overrides — list overrides
+                   PATCH      /api/merchant/menu/branches/[branchId]/overrides/[itemId] — upsert override
+                 Merchant menu pages (apps/web/(merchant)/merchant/menu):
+                   /merchant/menu — Server Component; fetches categories+items+branches+stations
+                   menu-client.tsx — Category sidebar, item table (availability toggle, duplicate,
+                     delete, edit link), CSV import modal, BranchMenuOverride side panel,
+                     category create/edit modal with time windows + layout override + station
+                   /merchant/menu/items/new — create item form
+                   /merchant/menu/items/[itemId]/edit — edit item form
+                   components/merchant/menu-item-form.tsx — full two-column item form:
+                     all MenuItem fields, variants (add/edit/delete), addons (add/edit/delete)
+                 Merchant layout updated:
+                   Added MerchantSidebar (components/merchant/sidebar.tsx) to (merchant)/layout.tsx
+                   Login page + onboarding layout use fixed inset-0 z-50 to cover sidebar
+                 PWA offline mode for merchant-pos:
+                   public/manifest.json — Web App Manifest (scope: /merchant/)
+                   public/sw.js — Service Worker: cache-first static, network-first navigation,
+                     network-only API; offline fallback to public/offline.html
+                   public/offline.html — Indonesian offline page with iOS Add-to-Home-Screen tip
+                   components/merchant/pwa-register.tsx — client component; registers SW,
+                     shows dismissible iOS banner prompting "Add to Home Screen" in Safari
+                   (merchant)/layout.tsx — includes PwaRegister + manifest link in metadata
+                 All 41 tests still passing.
+Previously: Step 8 — Restaurant branding settings + CSS variable injection (apps/web + apps/menu)
+Previously: Step 7 — Merchant onboarding: trial/free tier flow, plan selection (apps/web)
+                 Self-service registration:
+                   /register — public registration page (businessName, email, password, agreeToTerms)
+                   POST /api/auth/register — creates Merchant + Restaurant + Branch (Pusat) in one
+                     transaction; sends HMAC-signed email verification link (jose, 24h expiry)
+                   GET  /api/auth/verify-email?token=... — sets emailVerifiedAt, redirects to /merchant/login
+                 Onboarding wizard (5 steps, full-page layout, no sidebar):
+                   /merchant/onboarding/step-1 — Info Restoran (REQUIRED): name, cuisine, logo URL, address
+                   /merchant/onboarding/step-2 — Menu Pertama: category + up to 5 items, live preview panel
+                   /merchant/onboarding/step-3 — Meja & QR Code (REQUIRED): creates Table, generates
+                     qrToken (UUID), returns QR code as base64 data URL (qrcode npm package)
+                   /merchant/onboarding/step-4 — Pengaturan Pembayaran: paymentMode radio (3 options)
+                   /merchant/onboarding/step-5 — Tambahkan Staff: name+PIN+role per staff member
+                 Onboarding API routes:
+                   GET  /api/merchant/onboarding — fetch current state
+                   PATCH /api/merchant/onboarding/step/[step] — save each step (1–5)
+                   POST /api/merchant/onboarding/complete — sets onboardingStep=6, wizardCompletedAt
+                 Merchant dashboard:
+                   /merchant/dashboard — Server Component; redirects to wizard if step<1 or step<3
+                   Dashboard shows trial expiry warning, dismissible onboarding checklist card,
+                   quick navigation cards for all merchant POS sections
+                   Full live dashboard (stat cards, Realtime charts) deferred to Step 9
+                 Wizard progress component: apps/web/components/merchant/wizard-progress.tsx
+                 qrcode + @types/qrcode added to apps/web dependencies
+                 Merchant login page: updated "Daftar sekarang" link → /register;
+                   shows verified=1 success banner and invalid_token error banner
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 6 — Merchant subscription & billing (apps/web)
+                 apps/web/app/(fbqrsys)/billing/page.tsx: billing overview (stat cards + invoices table)
+                 apps/web/app/(fbqrsys)/billing/plans/page.tsx: subscription plans grid + create/edit modal
+                 apps/web/app/(fbqrsys)/merchants/[merchantId]/page.tsx: added [Ganti Plan] + [Perpanjang Trial] buttons
+                 API routes created:
+                   GET/POST  /api/fbqrsys/billing/plans — list all plans (incl. inactive) + create
+                   GET/PATCH/DELETE /api/fbqrsys/billing/plans/[planId] — get/update/deactivate
+                   GET       /api/fbqrsys/billing — invoices list (filter/paginate)
+                   GET       /api/fbqrsys/billing/stats — MRR, issued, overdue, collection rate
+                   PATCH     /api/fbqrsys/merchants/[merchantId]/subscription — change plan, extend trial, toggle auto-renew, set grace period
+                 Billing cron implemented (/api/cron/billing):
+                   Step 1: 7-day renewal reminder emails (idempotency: reminderSentAt)
+                   Step 2: Auto-renewal — PENDING invoice + advance period; suspend on grace breach
+                   Step 3: Trial expiry — TRIAL → SUSPENDED when trialEndsAt < now
+                   Step 4: 3-day renewal reminders (reminderSentAt3d)
+                   Step 5: Win-back email sequence for CANCELLED merchants (days 1/7/14/30)
+                           Day 30 mandatory regardless of winBackOptOut (UU PDP legal notice)
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 5 — FBQRSYS merchant management UI (apps/web)
+                 apps/web/app/(fbqrsys)/layout.tsx: updated with FbqrsysSidebar shell
+                 apps/web/app/(fbqrsys)/page.tsx: root redirect → /fbqrsys/dashboard
+                 apps/web/app/(fbqrsys)/dashboard/page.tsx: stat cards + mini bar charts
+                 apps/web/app/(fbqrsys)/merchants/page.tsx: merchant list, filters, bulk actions
+                 apps/web/app/(fbqrsys)/merchants/[merchantId]/page.tsx: detail + suspend modal
+                 apps/web/app/(fbqrsys)/merchants/new/page.tsx: create merchant form
+                 apps/web/app/(fbqrsys)/settings/page.tsx: PlatformSettings editor
+                 apps/web/app/(fbqrsys)/settings/staff/page.tsx: staff list + invite + role create
+                 apps/web/components/fbqrsys/sidebar.tsx: nav sidebar (client component)
+                 apps/web/components/fbqrsys/status-badge.tsx: MerchantStatus/BillingInvoice badges
+                 apps/web/components/fbqrsys/stat-card.tsx: dashboard stat card
+                 API routes created:
+                   GET/POST /api/fbqrsys/merchants — list (search/filter/page) + create
+                   GET/PATCH /api/fbqrsys/merchants/[merchantId] — detail + update
+                   POST /api/fbqrsys/merchants/[merchantId]/suspend — suspend/unsuspend
+                   GET /api/fbqrsys/dashboard — platform stats + 30-day growth charts
+                   GET/PATCH /api/fbqrsys/settings — PlatformSettings singleton
+                   GET/POST /api/fbqrsys/staff — list + create SystemAdmin
+                   GET/POST /api/fbqrsys/roles — list + create SystemRole
+                   GET /api/fbqrsys/plans — list active SubscriptionPlans
+                 lucide-react added to apps/web dependencies.
+                 Login/change-password pages use fixed inset-0 z-50 to cover sidebar.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 4 — Dynamic RBAC: role/permission engine (apps/web)
+                 packages/config/src/roleTemplates.ts updated:
+                   - MerchantPermission type (15 permissions, matches docs exactly):
+                     menu:manage, promotions:manage, reports:read, orders:view,
+                     orders:manage, orders:refund, kitchen:view, kitchen:manage,
+                     staff:manage, tables:manage, settings:manage, branding:manage,
+                     invoices:read, loyalty:manage, billing:read
+                   - MERCHANT_PERMISSIONS const array + MERCHANT_ROLE_TEMPLATES
+                   - SystemPermission type (9 FBQRSYS permissions) + SYSTEM_PERMISSIONS
+                   - SYSTEM_ROLE_TEMPLATES (Platform Owner, Merchant Manager, Billing Admin,
+                     Analyst, Support Staff) — hardcoded JSON, NOT DB records (ADR-005)
+                   - Legacy exports kept: Permission, RoleTemplate, ROLE_TEMPLATES aliases
+                 apps/web/lib/auth/rbac.ts created:
+                   - hasPermission(permissions, permission) — pure utility
+                   - ForbiddenError class (permission property)
+                   - requireStaffPermission(staff, permission) — throws ForbiddenError
+                   - getStaffSession(cookieStore) — parses fbqr_staff_session cookie
+                   - isMerchantOwner(userType) — short-circuit for owner full-access
+                   - getSystemAdminPermissions(adminId) — DB lookup, unions all roles
+                   - requireSystemPermission(adminId, permission) — FBQRSYS gate, redirects
+                   - forbiddenResponse(permission?) — 403 body builder for API routes
+                 apps/web/lib/auth/session.ts: added getSession() helper
+                 apps/web/lib/auth/rbac.test.ts: 19 tests, all passing
+                 Total tests: 41 passing (19 rbac + 14 pin + 8 staff-jwt)
+                 No DB schema changes. No new migrations needed.
+Previously: Step 3 — Auth: email+password JWT, PIN auth, NextAuth.js (apps/web)
+                 NextAuth v5 (Auth.js) with two Credentials providers:
+                   - "fbqrsys": SystemAdmin email+password auth
+                   - "merchant": Merchant email+password auth (rejects SUSPENDED/CANCELLED)
+                 JWT session strategy; session type-augmented via types/next-auth.d.ts.
+                 Staff PIN auth: POST /api/auth/pin → sets fbqr_staff_session cookie (4h TTL).
+                 Staff sessions use jose (HS256, edge-compatible) keyed off NEXTAUTH_SECRET.
+                 middleware.ts protects /fbqrsys/*, /merchant/*, /kitchen/* routes.
+                 mustChangePassword enforcement: all /fbqrsys/* routes redirect to
+                   /fbqrsys/change-password until flag is cleared via POST /api/auth/change-password.
+                 Login pages: /fbqrsys/login, /merchant/login, /kitchen/login (numpad UI).
+                 Force password change: /fbqrsys/change-password.
+                 jose + vitest added to apps/web dependencies.
+Previously: Step 2 — Prisma schema + seed data (v4.0)
+                 42 models across Platform, Merchant, Menu, Orders, Customers, Audit sections.
+                 Phase 2 scaffolding tables included (PatunganSession, BranchMenuOverride, etc.)
+                 Full seed: PlatformSettings singleton, Starter/Pro/Enterprise plans,
+                 first SystemAdmin from env vars, demo merchant (dev only).
+                 types/enums.ts synced: fixed SessionStatus CLOSED→COMPLETED, added 12 new enums.
+                 Prisma schema validated: prisma validate passes.
+                 Note: prisma.seed in package.json produces a deprecation warning in Prisma 6
+                   ("will be removed in Prisma 7"). Migration to prisma.config.ts can be done
+                   at Step 3 or later — no functional impact in current version.
+Previously: v3.11 secondary audit resolution pass — 5 gaps from v3.10 fixes:
                  GAP-1 (HIGH): Customer.status (ACTIVE|DELETED) + Customer.deletedAt fields added
                    to data-models.md. PII Deletion Cron used these fields but they weren't in schema.
                  GAP-2 (HIGH): Webhook handler transaction spec forked for Patungan — PENDING Order
@@ -225,20 +426,26 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 1 — Monorepo scaffold (Turborepo, packages, apps)
+Next step      : Step 10 (resume) — build tables-client.tsx (floor map, QR modal, waiter order panel),
+                 then add /merchant/settings page before starting Step 11.
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
-Known doc gaps : refund flow full detail — deferred to Step 15 and Step 19;
-                 estimated wait time display — formula in docs/merchant.md, UI Phase 2;
-                 Hidang mode full flow — deferred to Phase 2;
-                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message;
+Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
+                   if FREE tier is needed, add to schema in Step 6 or Phase 2 cleanup.
+                 /merchant/settings page not assigned to a step — spec is in docs/merchant.md
+                   (MerchantSettings fields: orderingPaused, paymentMode, timeouts, etc.).
+                   Should be built as part of Step 10 completion or a new sub-step.
+                 refund flow full detail — deferred to Step 15 and Step 19.
+                 estimated wait time display — formula in docs/merchant.md, UI deferred to Phase 2.
+                 Hidang mode full flow — deferred to Phase 2.
+                 customer READY notification — Phase 1 accepts gap, Phase 2 WA message.
                  BY_WEIGHT BALANCE_REFUND via same Midtrans channel — Midtrans partial
-                   refund API integration detail deferred to Step 15;
-                 DB Row-Level Security (RLS) — deferred to Phase 2;
-                 PII field encryption at rest — deferred to Phase 2;
-                 apps/menu PWA offline mode — deferred to future step;
-                 quick sold-out from KDS — UX note for Step 20;
-                 EFAKTUR API for Faktur Pajak — deferred to Phase 2
+                   refund API integration detail deferred to Step 15.
+                 DB Row-Level Security (RLS) — deferred to Phase 2.
+                 PII field encryption at rest — deferred to Phase 2.
+                 apps/menu PWA offline mode — deferred to future step.
+                 quick sold-out from KDS — UX note for Step 20.
+                 EFAKTUR API for Faktur Pajak — deferred to Phase 2.
 ```
 
 ---
@@ -259,19 +466,19 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] CLAUDE.md refactored to command center only — all specs delegated to docs/
 
 ### Phase 1 — Foundation
-- [ ] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
-- [ ] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
+- [x] **Step 1** — Monorepo scaffold: Turborepo, `apps/web`, `apps/menu`, `packages/database`, `packages/ui`, `packages/types`, `packages/config`
+- [x] **Step 2** — Prisma schema + migrations + seed data (`packages/database`)
 
 ### Phase 2 — Auth & Platform Admin (FBQRSYS)
-- [ ] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
-- [ ] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
-- [ ] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
-- [ ] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
+- [x] **Step 3** — Auth: email+password JWT, PIN auth, NextAuth.js (`apps/web`)
+- [x] **Step 4** — Dynamic RBAC: role/permission engine + middleware (`apps/web`)
+- [x] **Step 5** — FBQRSYS: merchant management UI — create, view, suspend (`apps/web/(fbqrsys)`)
+- [x] **Step 6** — Merchant subscription & billing: plans, invoices, auto-lock, email reminders (`apps/web/(fbqrsys)`)
 
 ### Phase 3 — Merchant POS
-- [ ] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
-- [ ] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
-- [ ] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
+- [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
+- [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
+- [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
 - [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
 
