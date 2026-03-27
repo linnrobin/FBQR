@@ -11,7 +11,7 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.11
+Version        : 4.12
 Current phase  : Phase 3 — Step 10 complete + QA pass done.
 Last completed : Step 10 QA pass — 4 bugs fixed in table management UI components:
                    tables-floor-map.tsx: KebabMenu.transition() was closing the menu before
@@ -446,6 +446,35 @@ Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec bu
 
 ---
 
+## Component Architecture Pre-split Guide
+
+> **Read this before starting any flagged step.** Steps marked ⚠ below will produce a single
+> client component exceeding ~400 lines if built naively. Pre-plan the split before writing code.
+> Pattern established in Step 10: split into focused sub-components + thin orchestrator.
+>
+> **Rule of thumb:** any client component projected to exceed 400 lines must be split.
+> Each sub-component file should do one thing (grid rendering, one modal, one form, one panel).
+
+### Steps requiring pre-emptive splitting
+
+| Step | Proposed sub-components | Why it needs splitting |
+|---|---|---|
+| **11** | `promotions-list.tsx` (table + filters) · `promotion-form.tsx` (12-field form with conditional visibility — discount type, category/item selectors, date pickers) · `promotions-client.tsx` (orchestrator) | Form alone is ~320 lines due to conditional fields (PERCENTAGE shows max cap; BOGO shows buy/get selectors) |
+| **12** | `menu-grid-layout.tsx` (grid + scroll-spy) · `menu-item-card.tsx` (reusable card) · `menu-category-tabs.tsx` (scroll-spy tabs) · `menu-home.tsx` (orchestrator + branding injection) | Grid layout handles column responsiveness, scroll-spy category sync, branding CSS override, and badge display simultaneously |
+| **13** | `menu-list-layout.tsx` · `menu-list-row.tsx` · `menu-bundle-layout.tsx` · `menu-spotlight-layout.tsx` (carousel) | Three distinct layout renderers — each warrants its own file; ListLayout also includes search/filter state |
+| **14** | `item-detail-modal.tsx` (sheet wrapper + state) · `item-variant-selector.tsx` (radio group) · `item-addon-selector.tsx` (multi-checkbox) · `item-detail-content.tsx` (scrollable body) | Bottom sheet has 11 distinct sections; variant/addon selectors will be reused in cart and Patungan screens |
+| **15** | `cart-sheet.tsx` (slide-over cart) · `checkout-screen.tsx` (pre-invoice + tax/service breakdown) · `payment-method-selector.tsx` · `patungan-setup-modal.tsx` (split mode selection + per-part amount calc) · `patungan-host-screen.tsx` (host progress view) · `patungan-participant-screen.tsx` | Checkout is a tax/service state machine; Patungan adds host/participant branching + Realtime progress tracking — easily 700+ lines if merged |
+| **16** | `order-tracking-screen.tsx` (Realtime subscription + routing) · `order-status-display.tsx` (status badge + items list) · `order-timeline.tsx` (vertical event log) · `call-waiter-menu.tsx` (action sheet) · `order-rating-prompt.tsx` | Real-time subscription + Call Waiter action sheet + rating form + BY_WEIGHT balance alert all in one screen |
+| **20** | `kitchen-display.tsx` (Realtime sub + station tabs + fallback poll) · `kitchen-order-grid.tsx` (grid layout) · `kitchen-order-card.tsx` (card + action buttons + weight numpad) · `kitchen-station-tabs.tsx` · `kitchen-priority-reorder.tsx` (drag-drop) | ~500-line component without split; real-time + drag-drop + fallback polling + station routing all compete for complexity |
+| **21** | `analytics-dashboard.tsx` (layout + date range state) · `analytics-revenue-section.tsx` (stat cards + trend chart) · `analytics-orders-section.tsx` (order stats + by-hour chart) · `analytics-menu-table.tsx` (top/slowest items) · `analytics-ratings-section.tsx` · `analytics-export-button.tsx` · individual chart files per chart type (each ~80 lines) | 8 chart types + 5 sections = 600+ lines if merged; Recharts components should each live in their own file |
+
+### Steps that do NOT need splitting (all components stay under 300 lines)
+
+Steps 17 (queue display), 18 (push notifications), 19 (PDF/invoice), 22 (delivery integration),
+23 (AI badges/sections), 24 (audit log viewer), 25 (loyalty + customer account), 26–28.
+
+---
+
 ## Phase Tracker
 
 Work through phases in order. Do not start a phase until all previous steps are committed and pushed.
@@ -476,23 +505,23 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [x] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
-- [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
+- [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`) ⚠ pre-split
 
 ### Phase 4 — Customer Ordering (end-user-system)
-- [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`)
-- [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`)
-- [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`)
-- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`)
-- [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`)
+- [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
+- [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
+- [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
+- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
+- [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 
 ### Phase 5 — Kitchen & Operations
 - [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
 - [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
 - [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
-- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`)
+- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 
 ### Phase 6 — Analytics & Intelligence
-- [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`)
+- [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
 - [ ] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
 - [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
