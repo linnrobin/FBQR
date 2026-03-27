@@ -11,9 +11,43 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.14
-Current phase  : Phase 3 — Step 11 complete.
-Last completed : Step 11 — Promotions + discount codes.
+Version        : 4.15
+Current phase  : Phase 4 — Step 12 complete.
+Last completed : Step 12 — QR validation + branded menu + Grid layout + shareable URL.
+                 New files created (apps/menu):
+                   lib/qr-auth.ts — HMAC-SHA256 sign/verify (ADR-015); signQrUrl(),
+                     verifyQrSig() timing-safe, buildSignedMenuUrl() with 24h expiry
+                   app/r/[tableToken]/route.ts — QR redirect handler: table lookup,
+                     merchant/table status validation, HTML error pages, 302 redirect to
+                     signed URL. Table DIRTY check gates on enableDirtyState setting.
+                   app/api/menu/session/route.ts — Session creation/resume: re-validates
+                     sig, creates CustomerSession (sessionCookie, expiresAt, ip, ua),
+                     sets fbqr_session_id httpOnly cookie, redirects back to menu.
+                     CRITICAL ADR-015: resume query uses sessionCookie, not id.
+                   components/menu-item-card.tsx — Item card: image, dietary badges
+                     (Halal/Vegan/Vegetarian/Allergen), spice level, price (+ deposit
+                     for BY_WEIGHT), cart quantity badge, [+ Tambah] button disabled
+                     for unavailable/BY_WEIGHT items.
+                   components/menu-category-tabs.tsx — Horizontal scroll-spy tabs:
+                     IntersectionObserver drives active tab; auto-scrolls active tab
+                     into view; click scrolls to section with header+tab offset.
+                   components/menu-grid-layout.tsx — 2/3-col grid per category section:
+                     category time-window filter (WIB, overnight range support).
+                   components/menu-home.tsx — Orchestrator: sticky header (logo, name,
+                     cart icon), ordering-paused banner, category tabs, grid layout,
+                     fixed bottom cart bar (isOrderingMode=true) or browse-only banner
+                     "Pindai QR di meja untuk memesan" (isOrderingMode=false).
+                     Cart state: quantity map (full checkout deferred to Step 15).
+                     Scroll-spy via IntersectionObserver.
+                   app/[restaurantId]/[tableId]/page.tsx — QR-validated table menu:
+                     full ADR-015 security flow (sig validation → path param assertion
+                     → table/merchant status checks → session create/resume → menu
+                     render). Session creation uses redirect to /api/menu/session.
+                   app/[restaurantId]/menu/page.tsx — Shareable browse-only menu:
+                     no QR needed; merchant/restaurant status check; primary branch
+                     BranchMenuOverride applied; browse-only banner rendered.
+                 apps/menu/package.json: added lucide-react ^0.469.0.
+                 All 41 tests still passing. No DB schema changes.
                  Schema changes:
                    Added DiscountType enum (PERCENTAGE, FIXED_AMOUNT, BOGO, FREE_ITEM)
                    Added PromotionScope enum (ALL_ITEMS, SPECIFIC_CATEGORIES, SPECIFIC_ITEMS)
@@ -457,8 +491,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 12 — QR validation + branded menu, Grid layout, dine-in,
-                 shareable browse-only menu URL (apps/menu) (⚠ pre-split required).
+Next step      : Step 13 — List, Bundle, Spotlight layouts (apps/menu) (⚠ pre-split).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -543,7 +576,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`) ⚠ pre-split
 
 ### Phase 4 — Customer Ordering (end-user-system)
-- [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
+- [x] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
 - [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
 - [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
 - [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
