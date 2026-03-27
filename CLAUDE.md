@@ -10,44 +10,30 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-23
-Version        : 4.9
-Current phase  : Phase 3 — Step 10 in progress (partial).
-Last completed : Step 10 (partial) — table management API routes + page server component.
-                 Bug fixes applied (same session):
-                   orders/route.ts: used MenuItem.price (not pricePerUnit) for unit price snapshot
-                   orders/route.ts: replaced requireStaffPermission() throw with hasPermission() early return (403 not 500)
-                   orders/route.ts: added table.branchId === branchId cross-check
-                   orders/route.ts: added BY_WEIGHT guard (422 — not supported in waiter-assisted mode)
-                   orders/route.ts: replaced date-fns format() with formatInTimeZone(Asia/Jakarta) for QueueCounter key
-                   tables/page.tsx: removed non-existent MenuCategory.isActive filter
-                 Routing bug fixed (same session):
-                   (merchant)/dashboard/ was at the WRONG URL (/dashboard, unprotected by middleware).
-                   Moved to (merchant)/merchant/dashboard/ so it serves /merchant/dashboard correctly
-                   and falls under the /merchant/* middleware protection.
-                 API routes created (apps/web):
-                   GET/POST   /api/merchant/tables — list tables by branch + create with auto qrToken
-                   GET/PATCH/DELETE /api/merchant/tables/[tableId] — CRUD
-                   PATCH      /api/merchant/tables/[tableId]/status — manual status transitions
-                   POST       /api/merchant/tables/[tableId]/rotate-token — regenerate qrToken
-                   GET        /api/merchant/tables/[tableId]/qr — QR code as base64 data URL
-                   POST       /api/merchant/orders — waiter-assisted order placement
-                 Merchant page: /merchant/tables — Server Component (fetches branches, tables, settings, categories)
+Last updated   : 2026-03-27
+Version        : 4.10
+Current phase  : Phase 3 — Step 10 complete.
+Last completed : Step 10 — table management UI complete.
+                 Client components created (apps/web):
+                   tables-floor-map.tsx  — responsive grid of table cards (status colours,
+                     kebab actions for status transitions, create/edit/delete table forms)
+                   tables-qr-modal.tsx   — QR view modal (download PNG, print, rotate token
+                     with confirmation dialog; fetches from GET /api/merchant/tables/[id]/qr)
+                   tables-order-panel.tsx — full-screen waiter-assisted POS panel (category
+                     tabs, item grid, variant/addon picker modal, cart with qty controls,
+                     POST /api/merchant/orders; BY_WEIGHT items shown disabled)
+                   tables-client.tsx     — orchestrator (branch tabs, pause-orders banner
+                     with toggle → PATCH /api/merchant/settings, floor-map/list view toggle,
+                     list view table, mounts QrModal + OrderPanel)
                  All 41 tests still passing. No DB schema changes.
-
-INCOMPLETE WORK — must finish before marking Step 10 complete:
-  [ ] apps/web/app/(merchant)/merchant/tables/tables-client.tsx
-        Floor map grid (table cards with status colours), QR code modal (download + print),
-        table status action buttons, waiter-assisted order panel (category/item selector,
-        variant/addon picker, confirm → POST /api/merchant/orders).
-        See docs/merchant.md § Table Management and § Waiter-Assisted Order Mode for full spec.
+                 Note: /merchant/settings page still missing — spec in docs/merchant.md.
+                   Build as standalone step before Step 11.
 
 KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
   Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
               Real Resend integration is Step 18 (push notifications + email).
   Step 7  — /merchant/dashboard shows a static checklist card only. Full live stat cards
               and revenue chart are deferred to after Step 20 (Realtime connected).
-  Step 10 — tables-client.tsx (see INCOMPLETE WORK above).
 
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
   /merchant/promotions  → Step 11 (not built yet)
@@ -426,8 +412,9 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 10 (resume) — build tables-client.tsx (floor map, QR modal, waiter order panel),
-                 then add /merchant/settings page before starting Step 11.
+Next step      : Build /merchant/settings page (MerchantSettings editor — orderingPaused,
+                 paymentMode, timeouts, etc.; spec in docs/merchant.md), then Step 11
+                 (promotions + discount codes).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -479,7 +466,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 - [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
-- [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
+- [x] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
 - [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
 
 ### Phase 4 — Customer Ordering (end-user-system)
