@@ -8,8 +8,10 @@
  *   - Active category tab (driven by scroll-spy via IntersectionObserver)
  *   - Ordering-paused banner
  *   - Browse-only mode banner (shareable URL)
+ *   - Layout switching: GRID | LIST | BUNDLE | SPOTLIGHT
  *
- * Renders: Header → CategoryTabs → GridLayout → Bottom CartBar / BrowseBanner
+ * Renders: Header → [CategoryTabs] → Layout → Bottom CartBar / BrowseBanner
+ * Note: Spotlight layout omits CategoryTabs (all items in one carousel).
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -17,8 +19,13 @@ import Image from "next/image";
 import { ShoppingCart } from "lucide-react";
 import { MenuCategoryTabs } from "./menu-category-tabs";
 import { MenuGridLayout, type MenuCategoryData } from "./menu-grid-layout";
+import { MenuListLayout } from "./menu-list-layout";
+import { MenuBundleLayout } from "./menu-bundle-layout";
+import { MenuSpotlightLayout } from "./menu-spotlight-layout";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export type MenuLayout = "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT";
 
 interface MenuHomeProps {
   restaurantName: string;
@@ -28,6 +35,8 @@ interface MenuHomeProps {
   orderingPaused: boolean;
   orderingPausedMessage: string | null;
   categories: MenuCategoryData[];
+  /** Restaurant's configured layout (defaults to GRID if not set) */
+  menuLayout?: MenuLayout | null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -39,7 +48,10 @@ export function MenuHome({
   orderingPaused,
   orderingPausedMessage,
   categories,
+  menuLayout,
 }: MenuHomeProps) {
+  const layout: MenuLayout = menuLayout ?? "GRID";
+  const isSpotlight = layout === "SPOTLIGHT";
   // Cart: itemId → quantity
   const [cartQuantities, setCartQuantities] = useState<Map<string, number>>(
     new Map()
@@ -141,21 +153,49 @@ export function MenuHome({
         </div>
       )}
 
-      {/* ── Category Tabs ── */}
-      <MenuCategoryTabs
-        categories={tabCategories}
-        activeCategoryId={activeCategoryId}
-        onTabClick={setActiveCategoryId}
-      />
-
-      {/* ── Grid ── */}
-      <main>
-        <MenuGridLayout
-          categories={categories}
-          isOrderingMode={isOrderingMode && !orderingPaused}
-          cartQuantities={cartQuantities}
-          onAddItem={handleAddItem}
+      {/* ── Category Tabs — hidden in Spotlight (all items in one carousel) ── */}
+      {!isSpotlight && (
+        <MenuCategoryTabs
+          categories={tabCategories}
+          activeCategoryId={activeCategoryId}
+          onTabClick={setActiveCategoryId}
         />
+      )}
+
+      {/* ── Layout ── */}
+      <main>
+        {layout === "LIST" && (
+          <MenuListLayout
+            categories={categories}
+            isOrderingMode={isOrderingMode && !orderingPaused}
+            cartQuantities={cartQuantities}
+            onAddItem={handleAddItem}
+          />
+        )}
+        {layout === "BUNDLE" && (
+          <MenuBundleLayout
+            categories={categories}
+            isOrderingMode={isOrderingMode && !orderingPaused}
+            cartQuantities={cartQuantities}
+            onAddItem={handleAddItem}
+          />
+        )}
+        {layout === "SPOTLIGHT" && (
+          <MenuSpotlightLayout
+            categories={categories}
+            isOrderingMode={isOrderingMode && !orderingPaused}
+            cartQuantities={cartQuantities}
+            onAddItem={handleAddItem}
+          />
+        )}
+        {(layout === "GRID" || !["LIST", "BUNDLE", "SPOTLIGHT"].includes(layout)) && (
+          <MenuGridLayout
+            categories={categories}
+            isOrderingMode={isOrderingMode && !orderingPaused}
+            cartQuantities={cartQuantities}
+            onAddItem={handleAddItem}
+          />
+        )}
       </main>
 
       {/* ── Bottom Bar ── */}

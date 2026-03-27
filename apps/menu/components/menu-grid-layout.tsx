@@ -8,7 +8,7 @@
  */
 
 import { useMemo } from "react";
-import { toZonedTime } from "date-fns-tz";
+import { isCategoryAvailable } from "@/lib/menu-time-window";
 import { MenuItemCard, type MenuItemData } from "./menu-item-card";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -26,34 +26,6 @@ interface MenuGridLayoutProps {
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
   onAddItem: (itemId: string) => void;
-}
-
-// ─── Time Window Helpers ──────────────────────────────────────────────────────
-
-function nowWibMinutes(): number {
-  const wib = toZonedTime(new Date(), "Asia/Jakarta");
-  return wib.getHours() * 60 + wib.getMinutes();
-}
-
-function parseHHMM(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
-
-/**
- * Returns true if a category is available at the current WIB time.
- * Handles overnight ranges (e.g. 22:00–02:00).
- */
-function isCategoryAvailable(cat: MenuCategoryData): boolean {
-  if (!cat.availableFrom || !cat.availableTo) return true; // no window = always available
-  const now = nowWibMinutes();
-  const from = parseHHMM(cat.availableFrom);
-  const to = parseHHMM(cat.availableTo);
-  if (from <= to) {
-    return now >= from && now < to;
-  }
-  // Overnight: available from `from` until midnight + from midnight until `to`
-  return now >= from || now < to;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

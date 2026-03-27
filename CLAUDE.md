@@ -11,9 +11,42 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.15
-Current phase  : Phase 4 — Step 12 complete.
-Last completed : Step 12 — QR validation + branded menu + Grid layout + shareable URL.
+Version        : 4.16
+Current phase  : Phase 4 — Step 13 complete.
+Last completed : Step 13 — List, Bundle, Spotlight layouts (apps/menu).
+                 New files created (apps/menu):
+                   lib/menu-time-window.ts — shared isCategoryAvailable() helper (WIB
+                     time-window filtering, overnight range support); extracted from
+                     menu-grid-layout.tsx so all layout renderers share one source of truth.
+                   components/menu-list-row.tsx — single item row: 56×56 image, name
+                     (1-line clamp), description (2-line clamp), dietary badges, price,
+                     add-to-cart button (h-8 w-8 rounded-full); spec from customer.md.
+                   components/menu-list-layout.tsx — List layout orchestrator: full-width
+                     search bar (Cari menu...), horizontal category filter chips (Semua +
+                     per-category), category sections with list rows when no filter/search;
+                     flat filtered results when search active; category tabs remain (scroll-spy).
+                   components/menu-bundle-layout.tsx — Bundle layout: per-item full-width
+                     cards (16:7 hero image, name, description, price, dietary badges,
+                     full-width add button pinned to card bottom); category sections with
+                     scroll-spy IDs.
+                   components/menu-spotlight-layout.tsx — Spotlight carousel: all items
+                     flattened across categories; Framer Motion drag="x" swipe navigation;
+                     chevron arrow buttons; "N / total" pagination indicator; full-width
+                     hero image (4:3), Display-size name (text-4xl font-bold), H2 price,
+                     4-line description clamp, dietary badges, full-width add button.
+                     No category tabs (omitted per spec).
+                 Modified files (apps/menu):
+                   components/menu-grid-layout.tsx — removed inline time-window helpers;
+                     now imports isCategoryAvailable from lib/menu-time-window.
+                   components/menu-home.tsx — added menuLayout prop (GRID|LIST|BUNDLE|
+                     SPOTLIGHT, default GRID); conditionally renders appropriate layout
+                     component; hides MenuCategoryTabs for SPOTLIGHT layout; added
+                     imports for three new layout components.
+                   app/[restaurantId]/[tableId]/page.tsx — passes branding.menuLayout
+                     to MenuHome.
+                   app/[restaurantId]/menu/page.tsx — passes branding.menuLayout to MenuHome.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 12 — QR validation + branded menu + Grid layout + shareable URL.
                  New files created (apps/menu):
                    lib/qr-auth.ts — HMAC-SHA256 sign/verify (ADR-015); signQrUrl(),
                      verifyQrSig() timing-safe, buildSignedMenuUrl() with 24h expiry
@@ -491,7 +524,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 13 — List, Bundle, Spotlight layouts (apps/menu) (⚠ pre-split).
+Next step      : Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu) (⚠ pre-split).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -577,7 +610,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 4 — Customer Ordering (end-user-system)
 - [x] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
-- [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
+- [x] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
 - [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
 - [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
 - [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split

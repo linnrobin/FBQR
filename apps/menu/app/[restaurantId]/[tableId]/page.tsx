@@ -264,6 +264,7 @@ export default async function TableMenuPage({
       orderingPaused={settings?.orderingPaused ?? false}
       orderingPausedMessage={settings?.orderingPausedMessage ?? null}
       categories={categories}
+      menuLayout={(branding?.menuLayout as "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT") ?? "GRID"}
     />
   );
 }

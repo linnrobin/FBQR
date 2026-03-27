@@ -170,6 +170,7 @@ export default async function ShareableMenuPage({
       orderingPaused={false}
       orderingPausedMessage={null}
       categories={categories}
+      menuLayout={(branding?.menuLayout as "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT") ?? "GRID"}
     />
   );
 }
