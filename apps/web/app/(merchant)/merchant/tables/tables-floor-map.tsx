@@ -89,10 +89,14 @@ function KebabMenu({
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setTransitionError(null);
+      }
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -100,14 +104,22 @@ function KebabMenu({
 
   async function transition(newStatus: TableStatus) {
     setLoading(true);
-    setOpen(false);
+    setTransitionError(null);
     try {
       const res = await fetch(`/api/merchant/tables/${table.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) router.refresh();
+      if (res.ok) {
+        setOpen(false);
+        router.refresh();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setTransitionError(data.error ?? "Gagal mengubah status");
+      }
+    } catch {
+      setTransitionError("Koneksi gagal. Coba lagi.");
     } finally {
       setLoading(false);
     }
@@ -116,7 +128,7 @@ function KebabMenu({
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((p) => !p)}
+        onClick={() => { setOpen((p) => !p); setTransitionError(null); }}
         disabled={loading}
         className="p-1 rounded hover:bg-stone-100 text-stone-500 disabled:opacity-50"
         aria-label="Aksi meja"
@@ -126,6 +138,11 @@ function KebabMenu({
 
       {open && (
         <div className="absolute right-0 top-7 z-50 min-w-[180px] bg-white border border-stone-200 rounded-lg shadow-lg py-1 text-sm">
+          {transitionError && (
+            <p className="text-xs text-red-600 px-3 py-2 border-b border-stone-100">
+              {transitionError}
+            </p>
+          )}
           {table.status === "DIRTY" && (
             <button
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-stone-50 text-green-700"
@@ -216,12 +233,14 @@ function TableFormModal({ branchId, table, onClose }: TableFormModalProps) {
           });
 
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setError(data.error ?? "Gagal menyimpan meja");
         return;
       }
       router.refresh();
       onClose();
+    } catch {
+      setError("Koneksi gagal. Coba lagi.");
     } finally {
       setSaving(false);
     }
@@ -295,12 +314,25 @@ function TableFormModal({ branchId, table, onClose }: TableFormModalProps) {
 function DeleteConfirm({ table, onClose }: { table: FloorMapTable; onClose: () => void }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function confirm() {
     setLoading(true);
-    const res = await fetch(`/api/merchant/tables/${table.id}`, { method: "DELETE" });
-    if (res.ok) { router.refresh(); onClose(); }
-    setLoading(false);
+    setError(null);
+    try {
+      const res = await fetch(`/api/merchant/tables/${table.id}`, { method: "DELETE" });
+      if (res.ok) {
+        router.refresh();
+        onClose();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Gagal menghapus meja");
+      }
+    } catch {
+      setError("Koneksi gagal. Coba lagi.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -310,6 +342,7 @@ function DeleteConfirm({ table, onClose }: { table: FloorMapTable; onClose: () =
         <p className="text-sm text-stone-600 mb-4">
           Meja <strong>{table.name}</strong> akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.
         </p>
+        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
         <div className="flex gap-2">
           <button
             onClick={onClose}

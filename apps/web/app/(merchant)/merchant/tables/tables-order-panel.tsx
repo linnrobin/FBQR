@@ -313,11 +313,13 @@ export function OrderPanel({
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setSubmitError(data.error ?? "Gagal mengirim pesanan");
         return;
       }
       setSubmitted(true);
+    } catch {
+      setSubmitError("Koneksi gagal. Coba lagi.");
     } finally {
       setSubmitting(false);
     }
