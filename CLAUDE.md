@@ -11,23 +11,33 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.10
-Current phase  : Phase 3 — Step 10 complete.
-Last completed : Step 10 — table management UI complete.
-                 Client components created (apps/web):
-                   tables-floor-map.tsx  — responsive grid of table cards (status colours,
-                     kebab actions for status transitions, create/edit/delete table forms)
-                   tables-qr-modal.tsx   — QR view modal (download PNG, print, rotate token
-                     with confirmation dialog; fetches from GET /api/merchant/tables/[id]/qr)
-                   tables-order-panel.tsx — full-screen waiter-assisted POS panel (category
-                     tabs, item grid, variant/addon picker modal, cart with qty controls,
-                     POST /api/merchant/orders; BY_WEIGHT items shown disabled)
-                   tables-client.tsx     — orchestrator (branch tabs, pause-orders banner
-                     with toggle → PATCH /api/merchant/settings, floor-map/list view toggle,
-                     list view table, mounts QrModal + OrderPanel)
+Version        : 4.11
+Current phase  : Phase 3 — Step 10 complete + QA pass done.
+Last completed : Step 10 QA pass — 4 bugs fixed in table management UI components:
+                   tables-floor-map.tsx: KebabMenu.transition() was closing the menu before
+                     the fetch resolved; on non-ok response the failure was silent. Fixed:
+                     menu now closes only on success; inline error shown in dropdown; network
+                     exceptions caught. DeleteConfirm.confirm() had no error state and no
+                     try/catch — failure was invisible to the user. Fixed: added error display
+                     and catch block. TableFormModal.submit() had try/finally without catch —
+                     network errors propagated unhandled. Fixed: added catch block.
+                   tables-order-panel.tsx: submitOrder() same try/finally-only pattern.
+                     Fixed: added catch block so network failures set submitError.
+                   All res.json() calls on error paths now use .catch(() => ({})) to handle
+                     non-JSON responses (e.g. 502 from proxy) without a second exception.
+                 Previously: Step 10 — table management UI complete.
+                   Client components created (apps/web):
+                     tables-floor-map.tsx  — responsive grid of table cards (status colours,
+                       kebab actions for status transitions, create/edit/delete table forms)
+                     tables-qr-modal.tsx   — QR view modal (download PNG, print, rotate token
+                       with confirmation dialog; fetches from GET /api/merchant/tables/[id]/qr)
+                     tables-order-panel.tsx — full-screen waiter-assisted POS panel (category
+                       tabs, item grid, variant/addon picker modal, cart with qty controls,
+                       POST /api/merchant/orders; BY_WEIGHT items shown disabled)
+                     tables-client.tsx     — orchestrator (branch tabs, pause-orders banner
+                       with toggle → PATCH /api/merchant/settings, floor-map/list view toggle,
+                       list view table, mounts QrModal + OrderPanel)
                  All 41 tests still passing. No DB schema changes.
-                 Note: /merchant/settings page still missing — spec in docs/merchant.md.
-                   Build as standalone step before Step 11.
 
 KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
   Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
@@ -38,8 +48,7 @@ KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
   /merchant/promotions  → Step 11 (not built yet)
   /merchant/analytics   → Step 21 (not built yet)
-  /merchant/settings    → not assigned to a step yet; add MerchantSettings editor in Step 10
-                           or treat as a standalone step before Step 11. See docs/merchant.md.
+  /merchant/settings    → build before Step 11; spec in docs/merchant.md § MerchantSettings
   /fbqrsys/audit-log    → Step 24 (not built yet)
 Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
                  per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
