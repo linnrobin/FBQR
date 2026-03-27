@@ -11,9 +11,47 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.16
-Current phase  : Phase 4 — Step 13 complete.
-Last completed : Step 13 — List, Bundle, Spotlight layouts (apps/menu).
+Version        : 4.17
+Current phase  : Phase 4 — Step 14 complete.
+Last completed : Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu).
+                 New files created (apps/menu):
+                   components/item-variant-selector.tsx — Radio pill-chip group for variant
+                     selection; selected chip uses border/bg/text in --color-primary; shows
+                     price delta (+Rp / -Rp) next to each option.
+                   components/item-addon-selector.tsx — Multi-select checkbox chip list for
+                     optional add-ons; simple toggle for maxQuantity=null/1; [−][qty][+]
+                     controls for maxQuantity>1; isDefault pre-checked on modal open.
+                   components/item-detail-content.tsx — Scrollable modal body: 11 spec
+                     sections (image 16:9 / name / price / dietary badges / prep time /
+                     description / variants / add-ons / allergen warning box / special
+                     request textarea / qty selector [−][n][+]).
+                   components/item-detail-modal.tsx — Framer Motion bottom sheet (max-h-90vh,
+                     spring animation, body scroll lock); manages selectedVariantId,
+                     selectedAddons Map<id,qty>, qty, specialRequest state; pre-fills from
+                     existingEntry when item already in cart; footer "Tambahkan ke Pesanan"
+                     button disabled for BY_WEIGHT, unavailable, or missing required variant;
+                     exports CartEntry and CartAddon types for Step 15 cart/checkout.
+                 Modified files (apps/menu):
+                   components/menu-item-card.tsx — added MenuItemVariant and MenuItemAddon
+                     interfaces to MenuItemData; whole card now clickable (role=button);
+                     onAdd → onOpenItem(item); add button opens modal instead of direct add.
+                   components/menu-grid-layout.tsx — onAddItem → onOpenItem(item).
+                   components/menu-list-row.tsx — whole row clickable; onAdd → onOpenItem(item).
+                   components/menu-list-layout.tsx — onAddItem → onOpenItem(item).
+                   components/menu-bundle-layout.tsx — whole card clickable; onAddItem →
+                     onOpenItem(item).
+                   components/menu-spotlight-layout.tsx — button opens modal via
+                     onOpenItem(item); onAddItem → onOpenItem(item).
+                   components/menu-home.tsx — cart upgraded from Map<string,number> to
+                     Map<string,CartEntry> (stores variant/addon/special-request/lineTotal
+                     per item); added openItem + modalOpen state; ItemDetailModal wired
+                     with existingEntry for re-editing; bottom bar uses CartEntry.lineTotal.
+                   app/[restaurantId]/[tableId]/page.tsx — added variants and addons to
+                     Prisma query (deletedAt: null filter, sortOrder ordering); mapped to
+                     MenuItemData.variants / addons; allergens cast to string[].
+                   app/[restaurantId]/menu/page.tsx — same variants/addons query expansion.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 13 — List, Bundle, Spotlight layouts (apps/menu).
                  New files created (apps/menu):
                    lib/menu-time-window.ts — shared isCategoryAvailable() helper (WIB
                      time-window filtering, overnight range support); extracted from
@@ -524,7 +562,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu) (⚠ pre-split).
+Next step      : Step 15 — Cart + pre-invoice + Midtrans QRIS + cash option + split payment / Patungan (apps/menu) (⚠ pre-split).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -611,7 +649,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 4 — Customer Ordering (end-user-system)
 - [x] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
 - [x] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
-- [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
+- [x] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
 - [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
 - [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 

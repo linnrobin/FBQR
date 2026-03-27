@@ -117,6 +117,29 @@ export default async function ShareableMenuPage({
             allergens: true,
             spiceLevel: true,
             estimatedPrepTime: true,
+            variants: {
+              where: { deletedAt: null },
+              select: {
+                id: true,
+                name: true,
+                priceDelta: true,
+                isDefault: true,
+                sortOrder: true,
+              },
+              orderBy: { sortOrder: "asc" },
+            },
+            addons: {
+              where: { deletedAt: null },
+              select: {
+                id: true,
+                name: true,
+                priceDelta: true,
+                isDefault: true,
+                maxQuantity: true,
+                sortOrder: true,
+              },
+              orderBy: { sortOrder: "asc" },
+            },
           },
           orderBy: { displayOrder: "asc" },
         },
@@ -153,12 +176,14 @@ export default async function ShareableMenuPage({
       isHalal: item.isHalal,
       isVegetarian: item.isVegetarian,
       isVegan: item.isVegan,
-      allergens: item.allergens,
+      allergens: item.allergens as string[],
       spiceLevel: item.spiceLevel,
       estimatedPrepTime: item.estimatedPrepTime,
       effectivelyAvailable: overrideMap.has(item.id)
         ? (overrideMap.get(item.id) ?? true)
         : item.isAvailable,
+      variants: item.variants,
+      addons: item.addons,
     })),
   }));
 

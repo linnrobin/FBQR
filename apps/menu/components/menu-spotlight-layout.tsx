@@ -44,7 +44,7 @@ interface MenuSpotlightLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
-  onAddItem: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ export function MenuSpotlightLayout({
   categories,
   isOrderingMode,
   cartQuantities,
-  onAddItem,
+  onOpenItem,
 }: MenuSpotlightLayoutProps) {
   // Flatten all available-window categories into a single item list
   const items: MenuItemData[] = useMemo(
@@ -191,19 +191,17 @@ export function MenuSpotlightLayout({
               )}
             </div>
 
-            {/* Add to order button — full width */}
+            {/* Add to order button — opens item detail modal for variant/add-on selection */}
             {isOrderingMode && (
               <button
                 type="button"
-                disabled={!available || isByWeight}
-                onClick={() => onAddItem(item.id)}
-                title={isByWeight ? "Item ini ditimbang oleh staff" : undefined}
-                className="mt-5 w-full h-12 bg-[--color-primary] text-white text-base font-semibold rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-[0.97] transition-all"
+                onClick={() => onOpenItem(item)}
+                className="mt-5 w-full h-12 bg-[--color-primary] text-white text-base font-semibold rounded-xl hover:opacity-90 active:scale-[0.97] transition-all"
               >
-                {isByWeight
-                  ? "⚖️ Timbang (hubungi staff)"
-                  : cartQty > 0
+                {cartQty > 0
                   ? `+ Tambahkan ke Pesanan (${cartQty} di keranjang)`
+                  : isByWeight
+                  ? "⚖️ Lihat Detail"
                   : "+ Tambahkan ke Pesanan"}
               </button>
             )}

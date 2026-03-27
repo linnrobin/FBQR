@@ -4,13 +4,14 @@
  * MenuHome — top-level orchestrator for the customer menu experience.
  *
  * Manages:
- *   - Cart state (item quantities; full checkout deferred to Step 15)
+ *   - Cart state (CartEntry per item: qty, variant, add-ons, special request, line total)
+ *   - Item detail modal state (open item, opens bottom sheet)
  *   - Active category tab (driven by scroll-spy via IntersectionObserver)
  *   - Ordering-paused banner
  *   - Browse-only mode banner (shareable URL)
  *   - Layout switching: GRID | LIST | BUNDLE | SPOTLIGHT
  *
- * Renders: Header → [CategoryTabs] → Layout → Bottom CartBar / BrowseBanner
+ * Renders: Header → [CategoryTabs] → Layout → ItemDetailModal → Bottom CartBar / BrowseBanner
  * Note: Spotlight layout omits CategoryTabs (all items in one carousel).
  */
 
@@ -22,10 +23,15 @@ import { MenuGridLayout, type MenuCategoryData } from "./menu-grid-layout";
 import { MenuListLayout } from "./menu-list-layout";
 import { MenuBundleLayout } from "./menu-bundle-layout";
 import { MenuSpotlightLayout } from "./menu-spotlight-layout";
+import { ItemDetailModal, type CartEntry } from "./item-detail-modal";
+import type { MenuItemData } from "./menu-item-card";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type MenuLayout = "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT";
+
+// Re-export CartEntry so callers (Step 15+) can import it from here
+export type { CartEntry };
 
 interface MenuHomeProps {
   restaurantName: string;
@@ -52,36 +58,59 @@ export function MenuHome({
 }: MenuHomeProps) {
   const layout: MenuLayout = menuLayout ?? "GRID";
   const isSpotlight = layout === "SPOTLIGHT";
-  // Cart: itemId → quantity
-  const [cartQuantities, setCartQuantities] = useState<Map<string, number>>(
-    new Map()
-  );
+
+  // ── Cart: itemId → CartEntry ──────────────────────────────────────────────
+  const [cartItems, setCartItems] = useState<Map<string, CartEntry>>(new Map());
+
+  // ── Item detail modal state ───────────────────────────────────────────────
+  const [openItem, setOpenItem] = useState<MenuItemData | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // ── Category scroll-spy ───────────────────────────────────────────────────
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(
     categories[0]?.id ?? null
   );
 
-  // ─── Cart helpers ────────────────────────────────────────────────────────
+  // ── Derived cart values ───────────────────────────────────────────────────
 
-  const cartItemCount = Array.from(cartQuantities.values()).reduce(
-    (sum, q) => sum + q,
+  /** itemId → qty for layout badge display */
+  const cartQuantities: Map<string, number> = new Map(
+    Array.from(cartItems.entries()).map(([id, entry]) => [id, entry.qty])
+  );
+
+  const cartItemCount = Array.from(cartItems.values()).reduce(
+    (sum, e) => sum + e.qty,
     0
   );
-  const cartTotal = categories
-    .flatMap((c) => c.items)
-    .reduce((sum, item) => {
-      const qty = cartQuantities.get(item.id) ?? 0;
-      return sum + item.price * qty;
-    }, 0);
+  const cartTotal = Array.from(cartItems.values()).reduce(
+    (sum, e) => sum + e.lineTotal,
+    0
+  );
 
-  const handleAddItem = useCallback((itemId: string) => {
-    setCartQuantities((prev) => {
+  // ── Cart handlers ─────────────────────────────────────────────────────────
+
+  /** Open the item detail modal for an item (from any layout) */
+  const handleOpenItem = useCallback((item: MenuItemData) => {
+    setOpenItem(item);
+    setModalOpen(true);
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setModalOpen(false);
+    // Keep openItem until animation completes to avoid flash of empty modal
+    setTimeout(() => setOpenItem(null), 300);
+  }, []);
+
+  /** Called by ItemDetailModal when the user confirms "Tambahkan ke Pesanan" */
+  const handleAddToCart = useCallback((entry: CartEntry) => {
+    setCartItems((prev) => {
       const next = new Map(prev);
-      next.set(itemId, (next.get(itemId) ?? 0) + 1);
+      next.set(entry.itemId, entry);
       return next;
     });
   }, []);
 
-  // ─── Scroll-spy via IntersectionObserver ─────────────────────────────────
+  // ── Scroll-spy via IntersectionObserver ──────────────────────────────────
 
   useEffect(() => {
     if (categories.length === 0) return;
@@ -169,7 +198,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
-            onAddItem={handleAddItem}
+            onOpenItem={handleOpenItem}
           />
         )}
         {layout === "BUNDLE" && (
@@ -177,7 +206,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
-            onAddItem={handleAddItem}
+            onOpenItem={handleOpenItem}
           />
         )}
         {layout === "SPOTLIGHT" && (
@@ -185,7 +214,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
-            onAddItem={handleAddItem}
+            onOpenItem={handleOpenItem}
           />
         )}
         {(layout === "GRID" || !["LIST", "BUNDLE", "SPOTLIGHT"].includes(layout)) && (
@@ -193,10 +222,20 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
-            onAddItem={handleAddItem}
+            onOpenItem={handleOpenItem}
           />
         )}
       </main>
+
+      {/* ── Item Detail Modal (bottom sheet) ── */}
+      <ItemDetailModal
+        item={openItem}
+        isOpen={modalOpen}
+        existingEntry={openItem ? (cartItems.get(openItem.id) ?? null) : null}
+        isOrderingMode={isOrderingMode && !orderingPaused}
+        onClose={handleCloseModal}
+        onAddToCart={handleAddToCart}
+      />
 
       {/* ── Bottom Bar ── */}
       {isOrderingMode && cartItemCount > 0 && (

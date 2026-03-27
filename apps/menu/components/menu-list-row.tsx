@@ -7,6 +7,7 @@
 
 import Image from "next/image";
 import type { MenuItemData } from "./menu-item-card";
+import { Plus } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -24,18 +25,21 @@ interface MenuListRowProps {
   item: MenuItemData;
   isOrderingMode: boolean;
   cartQty: number;
-  onAdd: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function MenuListRow({ item, isOrderingMode, cartQty, onAdd }: MenuListRowProps) {
+export function MenuListRow({ item, isOrderingMode, cartQty, onOpenItem }: MenuListRowProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
-  const isByWeight = item.priceType === "BY_WEIGHT";
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 border-b border-stone-100 ${
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenItem(item)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenItem(item); }}
+      className={`flex items-center gap-3 px-4 py-3 border-b border-stone-100 cursor-pointer hover:bg-stone-50 active:bg-stone-100 transition-colors ${
         !available ? "opacity-60" : ""
       }`}
     >
@@ -105,16 +109,14 @@ export function MenuListRow({ item, isOrderingMode, cartQty, onAdd }: MenuListRo
         {isOrderingMode && (
           <button
             type="button"
-            disabled={!available || isByWeight}
-            onClick={() => onAdd(item.id)}
-            title={isByWeight ? "Item ini ditimbang oleh staff" : undefined}
-            className="h-8 w-8 bg-[--color-primary] text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
+            onClick={(e) => { e.stopPropagation(); onOpenItem(item); }}
+            className="h-8 w-8 bg-[--color-primary] text-white rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
             aria-label={`Tambah ${item.name}`}
           >
             {cartQty > 0 ? (
               <span className="text-xs font-bold">{cartQty}</span>
             ) : (
-              <span className="text-lg font-semibold leading-none">+</span>
+              <Plus className="w-4 h-4" />
             )}
           </button>
         )}

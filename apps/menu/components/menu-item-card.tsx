@@ -9,6 +9,23 @@ import Image from "next/image";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface MenuItemVariant {
+  id: string;
+  name: string;
+  priceDelta: number;
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+export interface MenuItemAddon {
+  id: string;
+  name: string;
+  priceDelta: number;
+  isDefault: boolean;
+  maxQuantity: number | null;
+  sortOrder: number;
+}
+
 export interface MenuItemData {
   id: string;
   name: string;
@@ -27,6 +44,8 @@ export interface MenuItemData {
   estimatedPrepTime: number | null;
   /** Effective availability after BranchMenuOverride. */
   effectivelyAvailable: boolean;
+  variants: MenuItemVariant[];
+  addons: MenuItemAddon[];
 }
 
 interface MenuItemCardProps {
@@ -34,7 +53,8 @@ interface MenuItemCardProps {
   /** isOrderingMode=false → hide add button (shareable browse-only mode) */
   isOrderingMode: boolean;
   cartQty: number;
-  onAdd: (itemId: string) => void;
+  /** Opens the item detail modal for variant/add-on selection */
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -90,14 +110,18 @@ export function MenuItemCard({
   item,
   isOrderingMode,
   cartQty,
-  onAdd,
+  onOpenItem,
 }: MenuItemCardProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
   const isByWeight = item.priceType === "BY_WEIGHT";
 
   return (
     <div
-      className={`bg-white rounded-[--border-radius] shadow-sm overflow-hidden flex flex-col transition-opacity ${
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenItem(item)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenItem(item); }}
+      className={`bg-white rounded-[--border-radius] shadow-sm overflow-hidden flex flex-col transition-opacity cursor-pointer hover:shadow-md active:scale-[0.98] transition-transform ${
         available ? "" : "opacity-60"
       }`}
     >
@@ -150,16 +174,14 @@ export function MenuItemCard({
 
         <DietaryBadges item={item} />
 
-        {/* Add button */}
+        {/* Add button — opens item detail modal */}
         {isOrderingMode && (
           <button
             type="button"
-            disabled={!available || isByWeight}
-            onClick={() => onAdd(item.id)}
-            title={isByWeight ? "Item ini ditimbang oleh staff" : undefined}
-            className="mt-2 w-full h-8 bg-[--color-primary] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-[--border-radius-sm] transition-opacity"
+            onClick={(e) => { e.stopPropagation(); onOpenItem(item); }}
+            className="mt-2 w-full h-8 bg-[--color-primary] hover:opacity-90 text-white text-sm font-semibold rounded-[--border-radius-sm] transition-opacity"
           >
-            {isByWeight ? "⚖️ Timbang" : cartQty > 0 ? `+ Tambah (${cartQty})` : "+ Tambah"}
+            {cartQty > 0 ? `+ Tambah (${cartQty})` : isByWeight ? "⚖️ Lihat Detail" : "+ Tambah"}
           </button>
         )}
       </div>

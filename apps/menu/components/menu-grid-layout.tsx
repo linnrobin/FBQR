@@ -25,7 +25,7 @@ interface MenuGridLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
-  onAddItem: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ export function MenuGridLayout({
   categories,
   isOrderingMode,
   cartQuantities,
-  onAddItem,
+  onOpenItem,
 }: MenuGridLayoutProps) {
   const visibleCategories = useMemo(
     () => categories.filter(isCategoryAvailable),
@@ -71,7 +71,7 @@ export function MenuGridLayout({
                   item={item}
                   isOrderingMode={isOrderingMode}
                   cartQty={cartQuantities.get(item.id) ?? 0}
-                  onAdd={onAddItem}
+                  onOpenItem={onOpenItem}
                 />
               ))}
             </div>

@@ -16,6 +16,7 @@ import { Search } from "lucide-react";
 import { isCategoryAvailable } from "@/lib/menu-time-window";
 import { MenuListRow } from "./menu-list-row";
 import type { MenuCategoryData } from "./menu-grid-layout";
+import type { MenuItemData } from "./menu-item-card";
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ interface MenuListLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
-  onAddItem: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ export function MenuListLayout({
   categories,
   isOrderingMode,
   cartQuantities,
-  onAddItem,
+  onOpenItem,
 }: MenuListLayoutProps) {
   const [search, setSearch] = useState("");
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string | null>(null);
@@ -153,7 +154,7 @@ export function MenuListLayout({
                 item={item}
                 isOrderingMode={isOrderingMode}
                 cartQty={cartQuantities.get(item.id) ?? 0}
-                onAdd={onAddItem}
+                onOpenItem={onOpenItem}
               />
             ))}
           </div>
@@ -177,7 +178,7 @@ export function MenuListLayout({
                     item={item}
                     isOrderingMode={isOrderingMode}
                     cartQty={cartQuantities.get(item.id) ?? 0}
-                    onAdd={onAddItem}
+                    onOpenItem={onOpenItem}
                   />
                 ))}
               </div>

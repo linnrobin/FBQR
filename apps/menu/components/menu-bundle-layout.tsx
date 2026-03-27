@@ -36,17 +36,21 @@ interface BundleCardProps {
   item: MenuItemData;
   isOrderingMode: boolean;
   cartQty: number;
-  onAdd: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
-function BundleCard({ item, isOrderingMode, cartQty, onAdd }: BundleCardProps) {
+function BundleCard({ item, isOrderingMode, cartQty, onOpenItem }: BundleCardProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
   const isByWeight = item.priceType === "BY_WEIGHT";
   const priceDisplay = isByWeight ? formatDeposit(item) : formatPrice(item.price);
 
   return (
     <div
-      className={`mx-4 rounded-xl overflow-hidden shadow-sm border border-stone-100 bg-white ${
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenItem(item)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenItem(item); }}
+      className={`mx-4 rounded-xl overflow-hidden shadow-sm border border-stone-100 bg-white cursor-pointer hover:shadow-md active:scale-[0.99] transition-transform ${
         !available ? "opacity-60" : ""
       }`}
     >
@@ -131,19 +135,17 @@ function BundleCard({ item, isOrderingMode, cartQty, onAdd }: BundleCardProps) {
         </div>
       </div>
 
-      {/* Add button — full width, pinned to card bottom */}
+      {/* Add button — full width, pinned to card bottom; opens item detail modal */}
       {isOrderingMode && (
         <button
           type="button"
-          disabled={!available || isByWeight}
-          onClick={() => onAdd(item.id)}
-          title={isByWeight ? "Item ini ditimbang oleh staff" : undefined}
-          className="w-full h-10 bg-[--color-primary] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          onClick={(e) => { e.stopPropagation(); onOpenItem(item); }}
+          className="w-full h-10 bg-[--color-primary] text-white text-sm font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
-          {isByWeight
-            ? "⚖️ Timbang (hubungi staff)"
-            : cartQty > 0
+          {cartQty > 0
             ? `+ Tambah (${cartQty} di keranjang)`
+            : isByWeight
+            ? "⚖️ Lihat Detail"
             : "+ Tambah"}
         </button>
       )}
@@ -157,14 +159,14 @@ interface MenuBundleLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
-  onAddItem: (itemId: string) => void;
+  onOpenItem: (item: MenuItemData) => void;
 }
 
 export function MenuBundleLayout({
   categories,
   isOrderingMode,
   cartQuantities,
-  onAddItem,
+  onOpenItem,
 }: MenuBundleLayoutProps) {
   const visibleCategories = useMemo(
     () => categories.filter(isCategoryAvailable),
@@ -199,7 +201,7 @@ export function MenuBundleLayout({
                   item={item}
                   isOrderingMode={isOrderingMode}
                   cartQty={cartQuantities.get(item.id) ?? 0}
-                  onAdd={onAddItem}
+                  onOpenItem={onOpenItem}
                 />
               ))}
             </div>
