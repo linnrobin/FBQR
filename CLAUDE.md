@@ -11,9 +11,34 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.13
-Current phase  : Phase 3 — Step 10 complete + QA pass done.
-Last completed : /merchant/settings page — 7-tab MerchantSettings editor.
+Version        : 4.14
+Current phase  : Phase 3 — Step 11 complete.
+Last completed : Step 11 — Promotions + discount codes.
+                 Schema changes:
+                   Added DiscountType enum (PERCENTAGE, FIXED_AMOUNT, BOGO, FREE_ITEM)
+                   Added PromotionScope enum (ALL_ITEMS, SPECIFIC_CATEGORIES, SPECIFIC_ITEMS)
+                   Redesigned Promotion model: removed redundant `type String` + `discountType
+                     String`; replaced with single `discountType DiscountType` enum field.
+                     Renamed startsAt→validFrom, endsAt→validTo, maxUses→usageLimit,
+                     usedCount→usageCount. Added scope fields: applicableTo (PromotionScope),
+                     applicableItemIds (Json default "[]"), maximumDiscountAmount (Int?),
+                     minimumOrderValue (Int?), perCustomerLimit (Int?).
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/promotions — list (non-deleted) + create; code
+                     uniqueness enforced at restaurant scope (409 on conflict)
+                   GET/PATCH/DELETE /api/merchant/promotions/[promotionId] — CRUD; soft delete
+                 Merchant pages created (apps/web/(merchant)/merchant/promotions):
+                   /merchant/promotions — Server Component + PromotionsClient + PromotionsList
+                     (table with status/type filters, kebab actions: edit/duplicate/toggle/delete)
+                   /merchant/promotions/new — Server Component + PromotionForm (create)
+                   /merchant/promotions/[promotionId]/edit — Server Component + PromotionForm (edit)
+                 Pre-split client components (per component architecture guide):
+                   promotion-form.tsx    — full create/edit form (all 12 fields per spec)
+                   promotions-list.tsx   — filterable table with RowActions kebab
+                   promotions-client.tsx — thin shell; mounts PromotionsList
+                 Sidebar link /merchant/promotions was already wired (sidebar.tsx unchanged).
+                 All 41 tests still passing.
+Previously: /merchant/settings page — 7-tab MerchantSettings editor.
                  API expanded (PATCH /api/merchant/settings): fixed stale PaymentMode BOTH
                    value; added 17 new settable fields covering payment limits, kitchen alerts,
                    print toggles, notification preferences, AI toggles, promotion stacking.
@@ -57,7 +82,7 @@ KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
               and revenue chart are deferred to after Step 20 (Realtime connected).
 
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
-  /merchant/promotions  → Step 11 (not built yet)
+  /merchant/promotions  → ✓ built (Step 11 complete)
   /merchant/analytics   → Step 21 (not built yet)
   /merchant/settings    → ✓ built (7-tab MerchantSettings editor)
   /fbqrsys/audit-log    → Step 24 (not built yet)
@@ -432,8 +457,8 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 11 — promotions + discount codes (⚠ pre-split; see Component
-                 Architecture Pre-split Guide above).
+Next step      : Step 12 — QR validation + branded menu, Grid layout, dine-in,
+                 shareable browse-only menu URL (apps/menu) (⚠ pre-split required).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -515,7 +540,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
 - [x] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
-- [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`) ⚠ pre-split
+- [x] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`) ⚠ pre-split
 
 ### Phase 4 — Customer Ordering (end-user-system)
 - [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
