@@ -28,6 +28,7 @@ export default async function PromotionsPage() {
       maximumDiscountAmount: true,
       minimumOrderValue: true,
       applicableTo: true,
+      applicableItemIds: true,
       code: true,
       usageLimit: true,
       usageCount: true,

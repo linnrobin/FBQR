@@ -23,6 +23,7 @@ export interface PromotionRow {
   maximumDiscountAmount: number | null;
   minimumOrderValue: number | null;
   applicableTo: string;
+  applicableItemIds: string[];
   code: string | null;
   usageLimit: number | null;
   usageCount: number;
@@ -38,7 +39,7 @@ export interface PromotionRow {
 
 const TYPE_LABELS: Record<DiscountType, string> = {
   PERCENTAGE: "Persentase",
-  FIXED_AMOUNT: "Fixed",
+  FIXED_AMOUNT: "Potongan Harga",
   BOGO: "BOGO",
   FREE_ITEM: "Item Gratis",
 };
@@ -239,7 +240,7 @@ export function PromotionsList({ initialPromotions }: PromotionsListProps) {
         maximumDiscountAmount: promo.maximumDiscountAmount,
         minimumOrderValue: promo.minimumOrderValue,
         applicableTo: promo.applicableTo,
-        applicableItemIds: promo.applicableTo !== "ALL_ITEMS" ? [] : [],
+        applicableItemIds: promo.applicableTo === "ALL_ITEMS" ? [] : (promo.applicableItemIds ?? []),
         code: null, // reset code — codes must be unique
         usageLimit: promo.usageLimit,
         perCustomerLimit: promo.perCustomerLimit,
