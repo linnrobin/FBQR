@@ -11,9 +11,20 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-27
-Version        : 4.12
+Version        : 4.13
 Current phase  : Phase 3 — Step 10 complete + QA pass done.
-Last completed : Step 10 QA pass — 4 bugs fixed in table management UI components:
+Last completed : /merchant/settings page — 7-tab MerchantSettings editor.
+                 API expanded (PATCH /api/merchant/settings): fixed stale PaymentMode BOTH
+                   value; added 17 new settable fields covering payment limits, kitchen alerts,
+                   print toggles, notification preferences, AI toggles, promotion stacking.
+                   Fixed pre-existing exactOptionalPropertyTypes Prisma upsert error.
+                 Pages created (apps/web):
+                   /merchant/settings — Server Component + SettingsClient (7 active tabs:
+                     Operasi, Pembayaran, Sesi Meja, Dapur, Notifikasi, Fitur AI, Promosi;
+                     each tab saves independently via PATCH /api/merchant/settings;
+                     Branding tab links to /merchant/branding; Loyalty stub = coming soon)
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 10 QA pass — 4 bugs fixed in table management UI components:
                    tables-floor-map.tsx: KebabMenu.transition() was closing the menu before
                      the fetch resolved; on non-ok response the failure was silent. Fixed:
                      menu now closes only on success; inline error shown in dropdown; network
@@ -48,7 +59,7 @@ KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
   /merchant/promotions  → Step 11 (not built yet)
   /merchant/analytics   → Step 21 (not built yet)
-  /merchant/settings    → build before Step 11; spec in docs/merchant.md § MerchantSettings
+  /merchant/settings    → ✓ built (7-tab MerchantSettings editor)
   /fbqrsys/audit-log    → Step 24 (not built yet)
 Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
                  per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
@@ -421,9 +432,8 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Build /merchant/settings page (MerchantSettings editor — orderingPaused,
-                 paymentMode, timeouts, etc.; spec in docs/merchant.md), then Step 11
-                 (promotions + discount codes).
+Next step      : Step 11 — promotions + discount codes (⚠ pre-split; see Component
+                 Architecture Pre-split Guide above).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
