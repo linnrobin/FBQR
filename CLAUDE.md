@@ -11,9 +11,33 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.30
-Current phase  : Phase 7 — Step 27 complete.
-Last completed : Step 27 — WhatsApp Business integration (shared).
+Version        : 4.31
+Current phase  : Phase 7 — Step 28 complete.
+Last completed : Step 28 — Full live merchant dashboard.
+                 No schema changes. No new packages.
+                 New files created (apps/web):
+                   app/api/merchant/dashboard/route.ts — GET: live dashboard stats
+                     (activeOrders, occupiedTables, openWaiterRequests, todayRevenue,
+                     7-day revenue chartData, recentOrders last 10, waiterRequests list,
+                     orderingPaused/Message); auth: merchant owner or staff orders:view.
+                   app/api/merchant/waiter-requests/[requestId]/resolve/route.ts — PATCH:
+                     sets resolvedAt = NOW(); validates restaurant ownership; audit logged.
+                   components/merchant/dashboard-revenue-chart.tsx — Recharts AreaChart
+                     component for 7-day revenue (formatIDR Y-axis, orange gradient fill).
+                 Modified files (apps/web):
+                   app/(merchant)/merchant/dashboard/page.tsx — now fetches full initial
+                     dashboard data (branches, order counts, table stats, waiter requests,
+                     today revenue, 7-day revenue, recent 10 orders, settings) and passes
+                     as initialData prop; imports date-fns / date-fns-tz for WIB aggregation.
+                   app/(merchant)/merchant/dashboard/dashboard-client.tsx — full rewrite:
+                     stat cards (Pesanan Aktif / Meja Terisi / Permintaan Pelayan /
+                     Pendapatan Hari Ini); ordering pause/resume toggle (PATCH /api/merchant/
+                     settings); DashboardRevenueChart; recent orders table; WaiterRequest
+                     alerts panel with [Tandai Selesai]; onboarding checklist card;
+                     Supabase Realtime subscription on orders:{primaryBranchId} channel;
+                     30-second fallback REST poll; offline banner.
+                 All 41 tests still passing.
+Previously: Step 27 — WhatsApp Business integration (shared).
                  Schema changes:
                    Customer: added phone (String?) — WhatsApp-compatible phone (E.164 format).
                    MerchantSettings: added waNotifications (Json default
@@ -675,8 +699,9 @@ Previously: Step 10 QA pass — 4 bugs fixed in table management UI components:
 KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
   Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
               Real Resend integration is Step 18 (push notifications + email).
-  Step 7  — /merchant/dashboard shows a static checklist card only. Full live stat cards
-              and revenue chart are deferred to after Step 20 (Realtime connected).
+  Step 7  — /merchant/dashboard: Full live dashboard built in Step 28 (stat cards,
+              ordering toggle, revenue chart, recent orders, waiter requests panel,
+              Supabase Realtime + 30s fallback poll). ✓ Complete.
 
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
   /merchant/promotions  → ✓ built (Step 11 complete)
@@ -1054,7 +1079,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 28 — Remaining backlog items (TBD).
+Next step      : Phase 1 complete. Phase 2 items (see docs/architecture.md Feature Backlog).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -1161,7 +1186,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
 - [x] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
 - [x] **Step 27** — WhatsApp Business integration (shared)
-- [ ] **Step 28** — Remaining backlog items (TBD)
+- [x] **Step 28** — Remaining backlog items: full live merchant dashboard
 
 ---
 
