@@ -10,6 +10,7 @@ import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { z } from "zod";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const CreatePromotionSchema = z.object({
   name: z.string().min(1).max(100),
@@ -105,6 +106,20 @@ export async function POST(req: NextRequest) {
       validFrom: validFrom ? new Date(validFrom) : null,
       validTo: validTo ? new Date(validTo) : null,
     },
+  });
+
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "CREATE",
+    entity: "Promotion",
+    entityId: promotion.id,
+    newValue: { name: promotion.name, discountType: promotion.discountType, code: promotion.code },
+    restaurantId,
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({ promotion }, { status: 201 });

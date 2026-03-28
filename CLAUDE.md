@@ -11,9 +11,38 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.26
-Current phase  : Phase 6 — Step 23 complete.
-Last completed : Step 23 — AI recommendation engine: bestsellers, upsell, frequently-ordered-together (apps/menu).
+Version        : 4.27
+Current phase  : Phase 7 — Step 24 complete.
+Last completed : Step 24 — Audit log: logging middleware + viewer UI (apps/web).
+                 No schema changes. No new packages.
+                 New files created (apps/web):
+                   lib/audit.ts — shared auditLog() helper + getRequestMeta(); wraps
+                     prisma.auditLog.create(); non-fatal (catches + logs errors, never throws);
+                     used by all state-changing API routes instead of inline prisma calls.
+                 New files created (apps/menu):
+                   lib/audit.ts — identical helper for apps/menu (same interface, same non-fatal
+                     behavior); apps/menu inline transaction-level calls left as-is (intentionally
+                     transactional).
+                 New files created (apps/web):
+                   app/api/fbqrsys/audit-log/route.ts — GET: paginated audit log list (50/page);
+                     requires reports:read; filters: search (actorName/entity/entityId), actorType,
+                     action, entity, restaurantId, dateFrom, dateTo; returns logs + restaurant.name.
+                   app/(fbqrsys)/audit-log/page.tsx — client component; filter bar (search,
+                     actorType, action, entity, date range); paginated table (Waktu/Aktor/Tindakan/
+                     Entitas/Restoran/IP); row click expands JSON diff (oldValue/newValue side-by-side
+                     in bg-stone-950 code blocks); action badge colors per spec; empty state with
+                     Shield icon; debounced filter fetch (300ms).
+                 Modified files (apps/web) — auditLog() wired into:
+                   app/api/auth/pin/route.ts — Staff LOGIN event.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — Order UPDATE (status transition).
+                   app/api/fbqrsys/merchants/[merchantId]/suspend/route.ts — Merchant SUSPEND/UNSUSPEND.
+                   app/api/merchant/menu/items/route.ts — MenuItem CREATE.
+                   app/api/merchant/menu/items/[itemId]/route.ts — MenuItem UPDATE + DELETE.
+                   app/api/merchant/promotions/route.ts — Promotion CREATE.
+                   app/api/merchant/promotions/[promotionId]/route.ts — Promotion UPDATE + DELETE.
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/priority/route.ts — OrderItem REORDER.
+                 All 41 tests still passing. No schema changes.
+Previously: Step 23 — AI recommendation engine: bestsellers, upsell, frequently-ordered-together (apps/menu).
                  No schema changes. No new packages.
                  New files created (apps/menu):
                    app/api/recommendations/route.ts — GET: pure-SQL recommendation engine; no external
@@ -891,7 +920,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 24 — Audit log: logging middleware + viewer UI (all).
+Next step      : Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -994,7 +1023,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
 ### Phase 7 — Platform Hardening
-- [ ] **Step 24** — Audit log: logging middleware + viewer UI (all)
+- [x] **Step 24** — Audit log: logging middleware + viewer UI (all)
 - [ ] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
 - [ ] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
 - [ ] **Step 27** — WhatsApp Business integration (shared)

@@ -13,6 +13,7 @@ import { prisma } from "@repo/database";
 import { getStaffSession, hasPermission } from "@/lib/auth/rbac";
 import { requireMerchant } from "@/lib/auth/session";
 import { cookies } from "next/headers";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 export async function PATCH(
   req: NextRequest,
@@ -85,6 +86,19 @@ export async function PATCH(
     await prisma.orderItem.update({
       where: { id: itemId },
       data: { kitchenPriority: newPriority },
+    });
+
+    const { ipAddress, userAgent } = getRequestMeta(req);
+    await auditLog({
+      actorType: "STAFF",
+      action: "REORDER",
+      entity: "OrderItem",
+      entityId: itemId,
+      oldValue: { kitchenPriority: item.kitchenPriority, direction },
+      newValue: { kitchenPriority: newPriority },
+      restaurantId,
+      ipAddress,
+      userAgent,
     });
 
     return NextResponse.json({ ok: true, kitchenPriority: newPriority });

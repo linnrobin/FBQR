@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
 import { z } from "zod";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const ALLERGENS = ["nuts", "dairy", "gluten", "seafood", "eggs", "soy"] as const;
 
@@ -177,6 +178,20 @@ export async function POST(req: NextRequest) {
       addons: { where: { deletedAt: null }, orderBy: { sortOrder: "asc" } },
       category: { select: { id: true, name: true } },
     },
+  });
+
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "CREATE",
+    entity: "MenuItem",
+    entityId: item.id,
+    newValue: { name: item.name, price: item.price, categoryId: item.categoryId },
+    restaurantId,
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({ item }, { status: 201 });

@@ -11,6 +11,7 @@ import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { z } from "zod";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const UpdatePromotionSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -116,11 +117,26 @@ export async function PATCH(
     data: data as any,
   });
 
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "UPDATE",
+    entity: "Promotion",
+    entityId: promotionId,
+    oldValue: { name: existing.name, isActive: existing.isActive },
+    newValue: data,
+    restaurantId,
+    ipAddress,
+    userAgent,
+  });
+
   return NextResponse.json({ promotion });
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ promotionId: string }> }
 ) {
   const session = await requireMerchant();
@@ -142,6 +158,20 @@ export async function DELETE(
   await prisma.promotion.update({
     where: { id: promotionId },
     data: { deletedAt: new Date() },
+  });
+
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "DELETE",
+    entity: "Promotion",
+    entityId: promotionId,
+    oldValue: { name: existing.name, code: existing.code },
+    restaurantId,
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({ success: true });

@@ -18,6 +18,7 @@ import { z } from "zod";
 import { prisma } from "@repo/database";
 import { verifyPin } from "@/lib/auth/pin";
 import { signStaffJwt, STAFF_SESSION_TTL_SECONDS } from "@/lib/auth/staff-jwt";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const bodySchema = z.object({
   restaurantId: z.string().uuid(),
@@ -63,6 +64,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
   }
 
+  const { ipAddress, userAgent } = getRequestMeta(req);
+
   // Collect permissions from all assigned roles
   const permissions = Array.from(
     new Set(
@@ -92,6 +95,18 @@ export async function POST(req: NextRequest) {
     sameSite: "lax",
     path: "/",
     maxAge: STAFF_SESSION_TTL_SECONDS,
+  });
+
+  await auditLog({
+    actorId: matchedStaff.id,
+    actorType: "STAFF",
+    actorName: matchedStaff.name,
+    action: "LOGIN",
+    entity: "Staff",
+    entityId: matchedStaff.id,
+    restaurantId: matchedStaff.restaurantId,
+    ipAddress,
+    userAgent,
   });
 
   return response;

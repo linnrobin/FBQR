@@ -16,6 +16,7 @@ import { prisma } from "@repo/database";
 import { getStaffSession, hasPermission } from "@/lib/auth/rbac";
 import { requireMerchant } from "@/lib/auth/session";
 import { cookies } from "next/headers";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const VALID_TRANSITIONS: Record<string, string> = {
   CONFIRMED: "PREPARING",
@@ -33,6 +34,9 @@ export async function PATCH(
     // Auth
     const cookieStore = await cookies();
     let restaurantId: string | null = null;
+    let actorId: string | null = null;
+    let actorName: string | null = null;
+    let actorType: "STAFF" | "MERCHANT" = "STAFF";
 
     const staffCookie = cookieStore.get("fbqr_staff_session");
     if (staffCookie) {
@@ -45,17 +49,23 @@ export async function PATCH(
       }
       const staff = await prisma.staff.findUnique({
         where: { id: staffSession.staffId },
-        select: { restaurantId: true },
+        select: { restaurantId: true, name: true },
       });
       restaurantId = staff?.restaurantId ?? null;
+      actorId = staffSession.staffId;
+      actorName = staff?.name ?? null;
+      actorType = "STAFF";
     } else {
       try {
         const session = await requireMerchant();
         const merchant = await prisma.merchant.findUnique({
           where: { id: session.user.merchantId! },
-          select: { restaurant: { select: { id: true } } },
+          select: { restaurant: { select: { id: true } }, email: true },
         });
         restaurantId = merchant?.restaurant?.id ?? null;
+        actorId = session.user.merchantId ?? null;
+        actorName = merchant?.email ?? null;
+        actorType = "MERCHANT";
       } catch {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
@@ -102,6 +112,21 @@ export async function PATCH(
         ...(newStatus === "READY" ? { readyAt: now } : {}),
       },
       select: { id: true, status: true },
+    });
+
+    const { ipAddress, userAgent } = getRequestMeta(req);
+    await auditLog({
+      actorId,
+      actorType,
+      actorName,
+      action: "UPDATE",
+      entity: "Order",
+      entityId: orderId,
+      oldValue: { status: order.status },
+      newValue: { status: newStatus },
+      restaurantId,
+      ipAddress,
+      userAgent,
     });
 
     return NextResponse.json({ order: updated });
