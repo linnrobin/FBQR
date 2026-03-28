@@ -11,12 +11,14 @@
  * Display an in-app banner prompting this for optimal notification support.
  */
 
-const CACHE_VERSION = "fbqr-merchant-v1";
+const CACHE_VERSION = "fbqr-merchant-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const OFFLINE_URL = "/offline.html";
+const KITCHEN_OFFLINE_URL = "/kitchen-offline.html";
 
 const PRECACHE_URLS = [
   "/offline.html",
+  "/kitchen-offline.html",
 ];
 
 // ── Install ───────────────────────────────────────────────────────────────────
@@ -77,11 +79,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation: network-first, fall back to offline page
+  // Navigation: network-first, fall back to scope-aware offline page
   if (request.mode === "navigate") {
+    const isKitchen = url.pathname.startsWith("/kitchen/") || url.pathname === "/kitchen";
+    const fallbackUrl = isKitchen ? KITCHEN_OFFLINE_URL : OFFLINE_URL;
     event.respondWith(
       fetch(request).catch(() =>
-        caches.match(OFFLINE_URL).then(
+        caches.match(fallbackUrl).then(
           (offline) => offline ?? new Response("Offline", { status: 503 })
         )
       )

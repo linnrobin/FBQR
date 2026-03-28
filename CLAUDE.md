@@ -11,9 +11,52 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.22
-Current phase  : Phase 5 — Step 19 complete.
-Last completed : Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
+Version        : 4.23
+Current phase  : Phase 5 — Step 20 complete.
+Last completed : Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
+                   queue number display, PWA offline mode, kitchen ticket + receipt printing.
+                 No schema changes.
+                 New package: node-thermal-printer (apps/web dependencies).
+                 New files created (apps/web):
+                   app/(kitchen)/kitchen/page.tsx — Server component: auth check (kitchen:view),
+                     fetches initial orders + stations + settings; renders KitchenDisplay.
+                   app/api/kitchen/orders/route.ts — GET: CONFIRMED+PREPARING+READY orders for branch;
+                     staff PIN session (kitchen:view) or merchant owner auth.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — PATCH: status transitions
+                     (CONFIRMED→PREPARING→READY→COMPLETED); sets readyAt on READY transition.
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/priority/route.ts — PATCH: up/down
+                     kitchenPriority (scoped per item, per station intent).
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/weight/route.ts — PATCH: enter
+                     actual weight for BY_WEIGHT items; computes finalLineTotal; returns delta vs
+                     Order.depositAmount; sets needsWeighing=false.
+                   app/api/kitchen/print/route.ts — POST: trigger KITCHEN_TICKET or RECEIPT print job;
+                     reads printerConfig from MerchantSettings; non-fatal on failure.
+                   lib/printer.ts — printKitchenTicket() + printCustomerReceipt() via
+                     node-thermal-printer; supports NETWORK (TCP/IP); USB/BT require local bridge
+                     (Phase 2); fails gracefully with toast message.
+                   components/kitchen/kitchen-station-tabs.tsx — Tab bar: "Semua" + one per active
+                     station; active tab bg-primary; order count badge per tab.
+                   components/kitchen/kitchen-order-card.tsx — Order card: header (table/queue/type/time),
+                     items (qty/name/variant/addons/badges ⚖️🔥), elapsed timer (green/yellow/red),
+                     action button (Disiapkan/Siap/Selesai), priority ↑↓ controls, print button.
+                   components/kitchen/weight-entry-modal.tsx — Numpad modal for BY_WEIGHT items;
+                     opens on ⚖️ tap; submits to weight API; shows delta (charge/refund) on save.
+                   components/kitchen/kitchen-order-grid.tsx — 2/3/4-col responsive grid with
+                     AnimatePresence entrance animation; filters by active station.
+                   components/kitchen/kitchen-display.tsx — Main orchestrator: Supabase Realtime
+                     subscription on orders:{branchId}; 60s fallback REST poll (10s on CHANNEL_ERROR);
+                     reconnection banner; optimistic state updates; auto-print on CONFIRMED.
+                   components/kitchen/pwa-register.tsx — Registers SW; shows iOS "Add to Home Screen"
+                     banner (sessionStorage-dismissed).
+                   public/manifest-kitchen.json — Kitchen PWA manifest (scope /kitchen/, dark theme,
+                     landscape orientation).
+                   public/kitchen-offline.html — Kitchen offline fallback page (dark bg, Indonesian copy).
+                 Modified files (apps/web):
+                   app/(kitchen)/layout.tsx — adds manifest-kitchen.json metadata + KitchenPwaRegister.
+                   public/sw.js — bumped to v2; added kitchen-offline.html precache; scope-aware
+                     navigation fallback (kitchen routes → kitchen-offline.html).
+                 All 41 tests still passing.
+Previously: Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
                  No schema changes.
                  New packages: @react-pdf/renderer (apps/web + apps/menu dependencies).
                  New files created (apps/web):
@@ -750,9 +793,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
-                   queue number display, PWA offline mode for kitchen display, kitchen ticket +
-                   receipt printing (node-thermal-printer) (apps/web/(kitchen)).
+Next step      : Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -847,7 +888,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
 - [x] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
 - [x] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
-- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
+- [x] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 
 ### Phase 6 — Analytics & Intelligence
 - [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split

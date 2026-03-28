@@ -1,0 +1,25 @@
+{
+  "name": "FBQR Kitchen",
+  "short_name": "Kitchen",
+  "description": "FBQR Kitchen Display — real-time order queue for kitchen staff",
+  "start_url": "/kitchen",
+  "scope": "/kitchen/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "theme_color": "#0C0A09",
+  "background_color": "#0C0A09",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

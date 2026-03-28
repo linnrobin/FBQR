@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kitchen Offline — FBQR</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0C0A09;
+      color: #FAFAF9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      padding: 24px;
+    }
+    .icon { font-size: 56px; }
+    h1 { font-size: 22px; font-weight: 700; color: #FAFAF9; }
+    p  { font-size: 15px; color: #A8A29E; max-width: 360px; line-height: 1.5; }
+    .hint {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #78716C;
+    }
+    button {
+      margin-top: 16px;
+      padding: 12px 28px;
+      background: #E8622A;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:active { opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div class="icon">🍳</div>
+  <h1>Tampilan Dapur Offline</h1>
+  <p>Perangkat tidak terhubung ke internet. Periksa koneksi Wi-Fi dan coba lagi.</p>
+  <p class="hint">Pesanan yang masuk tetap tersimpan — data akan sinkron saat koneksi pulih.</p>
+  <button onclick="location.reload()">Coba Lagi</button>
+</body>
+</html>
