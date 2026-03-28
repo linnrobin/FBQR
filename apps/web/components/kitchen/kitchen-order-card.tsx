@@ -41,6 +41,8 @@ export interface KitchenOrderData {
   confirmedAt: string | null;
   createdAt: string;
   customerNote: string | null;
+  platformName: string | null;
+  estimatedPickupTime: string | null;
   table: { name: string } | null;
   items: KitchenItem[];
 }
@@ -188,15 +190,37 @@ export function KitchenOrderCard({
         <div className="bg-stone-800 px-4 py-3 flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              {order.table && (
+              {order.orderType === "DELIVERY" && order.platformName ? (
                 <span className="font-bold text-stone-100 text-sm">
-                  Meja {order.table.name}
+                  🛵{" "}
+                  {order.platformName === "GRABFOOD"
+                    ? "GrabFood"
+                    : order.platformName === "GOFOOD"
+                    ? "GoFood"
+                    : "ShopeeFood"}
+                  {order.estimatedPickupTime && (
+                    <span className="text-stone-400 font-normal">
+                      {" — Driver ~"}
+                      {new Date(order.estimatedPickupTime).toLocaleTimeString(
+                        "id-ID",
+                        { hour: "2-digit", minute: "2-digit" }
+                      )}
+                    </span>
+                  )}
                 </span>
-              )}
-              {order.queueNumber && (
-                <span className="text-stone-300 text-sm font-mono">
-                  #{String(order.queueNumber).padStart(3, "0")}
-                </span>
+              ) : (
+                <>
+                  {order.table && (
+                    <span className="font-bold text-stone-100 text-sm">
+                      Meja {order.table.name}
+                    </span>
+                  )}
+                  {order.queueNumber && (
+                    <span className="text-stone-300 text-sm font-mono">
+                      #{String(order.queueNumber).padStart(3, "0")}
+                    </span>
+                  )}
+                </>
               )}
               <span className="text-xs text-stone-400">
                 {ORDER_TYPE_ICON[order.orderType] ?? ""}

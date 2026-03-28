@@ -892,8 +892,10 @@ model Order {
   customerNote String?
 
   // Delivery platform
-  platformName    PlatformName?
-  platformOrderId String?
+  platformName        PlatformName?
+  platformOrderId     String?
+  /// Driver estimated pickup time (set from delivery platform webhook payload).
+  estimatedPickupTime DateTime?
 
   // Waiter-assisted order
   placedByStaffId String?

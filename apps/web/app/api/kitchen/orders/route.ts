@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
       try {
         const session = await requireMerchant();
         const merchant = await prisma.merchant.findUnique({
-          where: { id: session.user.merchantId! },
+          where: { id: session.user.id },
           select: { restaurant: { select: { id: true } } },
         });
         restaurantId = merchant?.restaurant?.id ?? null;
@@ -84,7 +84,11 @@ export async function GET(req: NextRequest) {
           createdAt: true,
           customerNote: true,
           placedByStaffId: true,
-          table: { select: { name: true } },
+          platformName: true,
+          estimatedPickupTime: true,
+          customerSession: {
+            select: { table: { select: { name: true } } },
+          },
           items: {
             select: {
               id: true,
@@ -110,7 +114,56 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    return NextResponse.json({ orders, stations });
+    // Serialize to KitchenOrderData shape (table via customerSession)
+    const serializedOrders = orders.map((order) => ({
+      id: order.id,
+      queueNumber: order.queueNumber,
+      orderType: order.orderType,
+      status: order.status,
+      confirmedAt: (order.confirmedAt as Date | null)?.toISOString() ?? null,
+      createdAt: (order.createdAt as Date).toISOString(),
+      customerNote: order.customerNote,
+      platformName: order.platformName ?? null,
+      estimatedPickupTime:
+        (order.estimatedPickupTime as Date | null)?.toISOString() ?? null,
+      table: (order.customerSession as { table: { name: string } } | null)
+        ?.table
+        ? {
+            name: (
+              order.customerSession as { table: { name: string } }
+            ).table.name,
+          }
+        : null,
+      items: (
+        order.items as Array<{
+          id: string;
+          name: string;
+          quantity: number;
+          kitchenStationId: string;
+          kitchenPriority: number;
+          needsWeighing: boolean;
+          weightValue: unknown;
+          specialRequest: string | null;
+          variantSnapshot: unknown;
+          addonSnapshot: unknown;
+        }>
+      ).map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        kitchenStationId: item.kitchenStationId,
+        kitchenPriority: item.kitchenPriority,
+        needsWeighing: item.needsWeighing,
+        weightValue: item.weightValue ? Number(item.weightValue) : null,
+        specialRequest: item.specialRequest ?? null,
+        variantSnapshot: item.variantSnapshot as { name: string } | null,
+        addonSnapshot: item.addonSnapshot as
+          | { name: string; quantity: number }[]
+          | null,
+      })),
+    }));
+
+    return NextResponse.json({ orders: serializedOrders, stations });
   } catch (err) {
     console.error("[GET /api/kitchen/orders]", err);
     return NextResponse.json({ error: "Terjadi kesalahan." }, { status: 500 });

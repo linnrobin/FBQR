@@ -172,6 +172,8 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                       prevent race conditions under concurrent orders; resets at midnight
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
   │  platformOrderId (nullable) — external delivery platform reference
+  │  estimatedPickupTime (DateTime?, nullable) — driver pickup ETA from delivery platform webhook;
+  │                                               displayed in kitchen display header for DELIVERY orders
   │  customerNote (string?, max 200 chars) — free-text special request entered by customer at checkout
   │                                           (e.g. "no MSG", "extra spicy", "allergy: shrimp")
   │                                           shown on kitchen display card and order tracking screen

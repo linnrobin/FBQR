@@ -79,7 +79,11 @@ export default async function KitchenPage() {
         confirmedAt: true,
         createdAt: true,
         customerNote: true,
-        table: { select: { name: true } },
+        platformName: true,
+        estimatedPickupTime: true,
+        customerSession: {
+          select: { table: { select: { name: true } } },
+        },
         items: {
           select: {
             id: true,
@@ -114,7 +118,11 @@ export default async function KitchenPage() {
     confirmedAt: order.confirmedAt?.toISOString() ?? null,
     createdAt: order.createdAt.toISOString(),
     customerNote: order.customerNote,
-    table: order.table ? { name: order.table.name } : null,
+    platformName: order.platformName ?? null,
+    estimatedPickupTime: order.estimatedPickupTime?.toISOString() ?? null,
+    table: order.customerSession?.table
+      ? { name: order.customerSession.table.name }
+      : null,
     items: order.items.map((item) => ({
       id: item.id,
       name: item.name,

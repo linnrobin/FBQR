@@ -11,9 +11,42 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.24
-Current phase  : Phase 6 — Step 21 complete.
-Last completed : Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
+Version        : 4.25
+Current phase  : Phase 6 — Step 22 complete.
+Last completed : Step 22 — Delivery platform integration: GrabFood/GoFood/ShopeeFood webhook → unified kitchen.
+                 Schema changes:
+                   Order: added estimatedPickupTime (DateTime?) — driver pickup ETA from delivery platform.
+                 No new packages.
+                 New files created (apps/web):
+                   lib/delivery/create-delivery-order.ts — shared delivery order creation helper:
+                     idempotency check (platformName+platformOrderId), branch resolution via
+                     platformStoreId, queue number increment, CONFIRMED Order+Items+OrderEvent
+                     creation in transaction, non-fatal push notification via after().
+                   app/api/webhook/grabfood/route.ts — POST: HMAC-SHA256 (X-GrabFood-HMAC-SHA256
+                     base64 header); handles order.created (createDeliveryOrder) + order.cancelled
+                     (CANCELLED transition + OrderEvent); per-restaurant secret override supported
+                     (GRABFOOD_WEBHOOK_SECRET_{restaurantId}).
+                   app/api/webhook/gofood/route.ts — POST: OAuth 2.0 bearer token validation
+                     (Authorization: Bearer GOFOOD_WEBHOOK_TOKEN); handles ORDER_CREATED +
+                     ORDER_CANCELLED.
+                   app/api/webhook/shopeefood/route.ts — POST: HMAC-SHA256 (X-ShopeeFood-Signature
+                     hex header); handles order.new + order.cancel.
+                 Modified files (apps/web):
+                   app/(kitchen)/kitchen/page.tsx — fixed: table select now via customerSession.table;
+                     added platformName, estimatedPickupTime to Order query + serialization.
+                   app/api/kitchen/orders/route.ts — same fix: table via customerSession.table;
+                     platformName + estimatedPickupTime added; full serialization to KitchenOrderData
+                     shape; fixed merchant session lookup (user.id not user.merchantId).
+                   components/kitchen/kitchen-order-card.tsx — KitchenOrderData type extended with
+                     platformName + estimatedPickupTime; header shows "🛵 GrabFood — Driver ~HH:MM"
+                     for DELIVERY orders; table/queue shown for non-delivery orders.
+                 New env vars (apps/web):
+                   GRABFOOD_WEBHOOK_SECRET — global GrabFood HMAC secret
+                   GRABFOOD_WEBHOOK_SECRET_{restaurantId} — per-restaurant override
+                   GOFOOD_WEBHOOK_TOKEN — GoFood bearer token
+                   SHOPEEFOOD_WEBHOOK_SECRET — ShopeeFood HMAC secret
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
                  No schema changes.
                  New packages: recharts ^3.8.1, exceljs ^4.4.0 (apps/web dependencies).
                  New files created (apps/web):
@@ -822,7 +855,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 22 — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (apps/web + API).
+Next step      : Step 23 — AI recommendation engine: bestsellers, upsell, personalized, time-based (apps/menu + API).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -921,7 +954,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 6 — Analytics & Intelligence
 - [x] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
-- [ ] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
+- [x] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
 - [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
 ### Phase 7 — Platform Hardening
