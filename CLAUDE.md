@@ -11,9 +11,50 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.20
-Current phase  : Phase 5 — Step 17 complete.
-Last completed : Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen
+Version        : 4.21
+Current phase  : Phase 5 — Step 18 complete.
+Last completed : Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
+                 Schema changes:
+                   New model: StaffPushSubscription — stores browser push endpoint + VAPID keys per
+                     restaurant/staff. Fields: id, staffId (FK nullable), restaurantId (FK), branchId
+                     (nullable), endpoint (UNIQUE), p256dh, auth, userAgent, createdAt, updatedAt.
+                 New environment variables (both apps):
+                   NEXT_PUBLIC_VAPID_PUBLIC_KEY — VAPID public key (safe to expose to browser)
+                   VAPID_PRIVATE_KEY            — VAPID private key (server-only)
+                   VAPID_SUBJECT                — "mailto:..." for VAPID contact
+                   INTERNAL_API_SECRET          — shared secret for apps/menu → apps/web internal API
+                 New packages: web-push + @types/web-push (apps/web devDependencies)
+                 New files created (apps/web):
+                   lib/push.ts — sendNewOrderNotification() + sendWaiterCallNotification(); looks up
+                     StaffPushSubscription rows by restaurantId/branchId; respects pushNotifications
+                     JSON toggle in MerchantSettings; cleans up stale subscriptions (410/404 response).
+                   app/api/merchant/push/vapid-key/route.ts — GET: returns NEXT_PUBLIC_VAPID_PUBLIC_KEY
+                     (public — no auth required).
+                   app/api/merchant/push/subscribe/route.ts — POST: upsert push subscription; DELETE:
+                     remove. Accepts staff PIN session or merchant owner session.
+                   app/api/internal/notify/route.ts — POST: internal cross-app push trigger protected
+                     by INTERNAL_API_SECRET; accepts {type, restaurantId, branchId, payload};
+                     dispatches to sendNewOrderNotification / sendWaiterCallNotification.
+                   components/merchant/push-subscribe.tsx — Client component mounted in merchant layout;
+                     requests Notification permission; subscribes via PushManager; saves to server;
+                     shows iOS "Add to Home Screen" banner (sessionStorage-dismissed).
+                 Modified files (apps/web):
+                   public/sw.js — added push event handler (showNotification with requireInteraction)
+                     and notificationclick handler (focus existing /merchant/ tab or open new tab).
+                   app/(merchant)/layout.tsx — includes PushSubscribe component.
+                 New files created (apps/menu):
+                   lib/notify.ts — sendInternalNotification() helper; calls apps/web /api/internal/notify;
+                     uses NEXT_PUBLIC_WEB_APP_URL + INTERNAL_API_SECRET; non-fatal (logs + returns).
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — after confirmOrder() and Patungan full-pay:
+                     calls sendInternalNotification({type: "NEW_ORDER", ...}) via after() (non-blocking).
+                   app/api/waiter/route.ts — after WaiterRequest created: fire-and-forget
+                     sendInternalNotification({type: "WAITER_CALL", ...}).
+                   app/api/order/route.ts — for PAY_AT_CASHIER orders: fire-and-forget NEW_ORDER notify.
+                 Modified files (apps/web):
+                   app/api/merchant/orders/route.ts — waiter-assisted orders: after() push NEW_ORDER.
+                 All 41 tests still passing. Prisma client regenerated with StaffPushSubscription.
+Previously: Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen
                  (apps/menu + apps/web/(kitchen)).
                  Schema changes:
                    Table: added tableType (OrderType default DINE_IN) — identifies counter/takeaway tables.
@@ -673,7 +714,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
+Next step      : Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -766,7 +807,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 5 — Kitchen & Operations
 - [x] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
-- [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
+- [x] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
 - [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
 - [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 

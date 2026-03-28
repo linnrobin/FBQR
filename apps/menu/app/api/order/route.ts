@@ -18,6 +18,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@repo/database";
 import { formatInTimeZone } from "date-fns-tz";
 import type { CartEntry } from "@/components/item-detail-modal";
+import { sendInternalNotification } from "@/lib/notify";
 
 // ─── Midtrans helpers ────────────────────────────────────────────────────────
 
@@ -338,7 +339,7 @@ export async function POST(req: NextRequest) {
       }),
       prisma.table.findUnique({
         where: { id: tableId },
-        select: { tableType: true },
+        select: { tableType: true, name: true },
       }),
     ]);
     const defaultStationId =
@@ -447,8 +448,22 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // ── PAY_AT_CASHIER — return immediately ───────────────────────────────────
+    // ── PAY_AT_CASHIER — notify kitchen immediately, then return ─────────────
     if (!isPayFirst) {
+      // Fire-and-forget push notification (kitchen needs to see this right away)
+      sendInternalNotification({
+        type: "NEW_ORDER",
+        restaurantId,
+        branchId: session.branchId,
+        payload: {
+          orderNumber: String(queueNumber),
+          tableLabel: table?.name ?? tableId,
+          grandTotal: financials.grandTotal,
+        },
+      }).catch(() => {
+        // Non-fatal — notification failure never affects the order response
+      });
+
       return NextResponse.json({
         orderId: order.id,
         grandTotal: financials.grandTotal,

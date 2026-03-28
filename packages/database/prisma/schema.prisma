@@ -497,9 +497,10 @@ model Restaurant {
   roles           MerchantRole[]
   stations        KitchenStation[]       @relation("RestaurantStations")
   promotions      Promotion[]
-  loyaltyPrograms MerchantLoyaltyProgram[]
-  analyticsEvents AnalyticsEvent[]
-  auditLogs       AuditLog[]
+  loyaltyPrograms     MerchantLoyaltyProgram[]
+  analyticsEvents     AnalyticsEvent[]
+  auditLogs           AuditLog[]
+  pushSubscriptions   StaffPushSubscription[]
 
   @@map("restaurants")
 }
@@ -703,11 +704,12 @@ model Staff {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  restaurant      Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  branch          Branch?                  @relation("BranchStaff", fields: [branchId], references: [id], onDelete: SetNull)
-  roleAssignments MerchantRoleAssignment[]
-  ordersPlaced    Order[]                  @relation("PlacedByStaff")
-  weightEntries   OrderItem[]              @relation("WeightEnteredByStaff")
+  restaurant        Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch            Branch?                  @relation("BranchStaff", fields: [branchId], references: [id], onDelete: SetNull)
+  roleAssignments   MerchantRoleAssignment[]
+  ordersPlaced      Order[]                  @relation("PlacedByStaff")
+  weightEntries     OrderItem[]              @relation("WeightEnteredByStaff")
+  pushSubscriptions StaffPushSubscription[]
 
   @@map("staff")
 }
@@ -1337,6 +1339,30 @@ model CronRunLog {
   errorMessage String?
 
   @@map("cron_run_logs")
+}
+
+/// Web Push subscription for merchant staff — Step 18.
+/// Stores browser push endpoint + VAPID keys for server-initiated push notifications.
+/// One staff member can have multiple subscriptions (multiple browsers/devices).
+model StaffPushSubscription {
+  id           String   @id @default(uuid())
+  staffId      String?
+  /// Merchant owner subscriptions have no staffId — linked via restaurantId
+  restaurantId String
+  branchId     String?
+  endpoint     String   @unique
+  p256dh       String
+  auth         String
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  staff      Staff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId])
+  @@index([branchId])
+  @@map("staff_push_subscriptions")
 }
 
 /// Split-payment session for Patungan (Phase 1 Step 15). Schema stubbed in Phase 1 Prisma

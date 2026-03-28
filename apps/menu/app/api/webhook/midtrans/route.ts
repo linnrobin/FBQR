@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { after } from "next/server";
 import { prisma } from "@repo/database";
+import { sendInternalNotification } from "@/lib/notify";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,9 @@ export async function POST(req: NextRequest) {
       status: true,
       grandTotal: true,
       branchId: true,
+      queueNumber: true,
+      customerSession: { select: { table: { select: { name: true } } } },
+      branch: { select: { restaurantId: true } },
       payments: {
         where: { paymentType: "FULL" },
         select: { id: true, status: true, splitGroupId: true, midtransTransactionId: true },
@@ -131,6 +135,21 @@ export async function POST(req: NextRequest) {
       await handlePatunganPayment(order, payment, txId, orderId);
     } else {
       await confirmOrder(order, payment, txId);
+      // Send push notification to merchant staff (non-blocking)
+      if (order.branch?.restaurantId) {
+        after(async () => {
+          await sendInternalNotification({
+            type: "NEW_ORDER",
+            restaurantId: order.branch!.restaurantId,
+            branchId: order.branchId,
+            payload: {
+              orderNumber: String(order.queueNumber ?? orderId.slice(0, 8).toUpperCase()),
+              tableLabel: order.customerSession?.table?.name ?? "–",
+              grandTotal: order.grandTotal,
+            },
+          });
+        });
+      }
     }
   } else if (isFailed) {
     await prisma.$transaction([
@@ -209,7 +228,7 @@ export async function POST(req: NextRequest) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function confirmOrder(
-  order: { id: string; status: string; grandTotal: number; branchId: string },
+  order: { id: string; status: string; grandTotal: number; branchId: string; queueNumber: number; customerSession: { table: { name: string } | null } | null; branch: { restaurantId: string } | null },
   payment: { id: string },
   txId: string
 ) {
@@ -246,7 +265,15 @@ async function confirmOrder(
 }
 
 async function handlePatunganPayment(
-  order: { id: string; status: string; grandTotal: number; branchId: string },
+  order: {
+    id: string;
+    status: string;
+    grandTotal: number;
+    branchId: string;
+    queueNumber: number;
+    customerSession: { table: { name: string } | null } | null;
+    branch: { restaurantId: string } | null;
+  },
   payment: { id: string; splitGroupId: string | null },
   txId: string,
   orderId: string
@@ -299,5 +326,21 @@ async function handlePatunganPayment(
         },
       }),
     ]);
+
+    // Send push notification to merchant staff (non-blocking)
+    if (order.branch?.restaurantId) {
+      after(async () => {
+        await sendInternalNotification({
+          type: "NEW_ORDER",
+          restaurantId: order.branch!.restaurantId,
+          branchId: order.branchId,
+          payload: {
+            orderNumber: String(order.queueNumber ?? orderId.slice(0, 8).toUpperCase()),
+            tableLabel: order.customerSession?.table?.name ?? "–",
+            grandTotal: order.grandTotal,
+          },
+        });
+      });
+    }
   }
 }

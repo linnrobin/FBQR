@@ -88,3 +88,57 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+// ── Push ──────────────────────────────────────────────────────────────────────
+
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: "FBQR", body: event.data.text() };
+  }
+
+  const title = payload.title ?? "FBQR";
+  const options = {
+    body: payload.body ?? "",
+    icon: payload.icon ?? "/icons/icon-192x192.png",
+    badge: payload.badge ?? "/icons/badge-72x72.png",
+    tag: payload.tag,
+    data: payload.data ?? {},
+    requireInteraction: true,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// ── Notification click ────────────────────────────────────────────────────────
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const data = event.notification.data ?? {};
+  let targetUrl = "/merchant/dashboard";
+
+  if (data.type === "NEW_ORDER") {
+    targetUrl = "/merchant/tables";
+  } else if (data.type === "WAITER_CALL") {
+    targetUrl = "/merchant/tables";
+  }
+
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      // Focus an existing merchant tab if one is open
+      const existing = clientList.find((c) => c.url.includes("/merchant/"));
+      if (existing) {
+        return existing.focus();
+      }
+      // Otherwise open a new tab
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});

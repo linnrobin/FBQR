@@ -9,6 +9,7 @@
 import type { Metadata } from "next";
 import { MerchantSidebar } from "@/components/merchant/sidebar";
 import { PwaRegister } from "@/components/merchant/pwa-register";
+import PushSubscribe from "@/components/merchant/push-subscribe";
 
 export const metadata: Metadata = {
   title: {
@@ -28,6 +29,7 @@ export default function MerchantLayout({
       <MerchantSidebar />
       <main className="flex-1 overflow-y-auto">{children}</main>
       <PwaRegister />
+      <PushSubscribe />
     </div>
   );
 }

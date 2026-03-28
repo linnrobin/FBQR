@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { prisma } from "@repo/database";
+import { sendInternalNotification } from "@/lib/notify";
 
 export async function POST(req: NextRequest) {
   try {
@@ -49,7 +50,13 @@ export async function POST(req: NextRequest) {
         tableId,
         status: "ACTIVE",
       },
-      select: { id: true, expiresAt: true, branchId: true },
+      select: {
+        id: true,
+        expiresAt: true,
+        branchId: true,
+        branch: { select: { restaurantId: true } },
+        table: { select: { name: true } },
+      },
     });
 
     if (!session || session.expiresAt < new Date()) {
@@ -86,6 +93,21 @@ export async function POST(req: NextRequest) {
         },
       },
     });
+
+    // Send push notification to merchant staff (non-blocking — fire and forget)
+    if (session.branch?.restaurantId) {
+      sendInternalNotification({
+        type: "WAITER_CALL",
+        restaurantId: session.branch.restaurantId,
+        branchId: session.branchId,
+        payload: {
+          tableLabel: session.table?.name ?? tableId,
+          requestType: type,
+        },
+      }).catch(() => {
+        // Non-fatal — notification failure never affects the waiter request response
+      });
+    }
 
     return NextResponse.json({
       id: waiterRequest.id,
