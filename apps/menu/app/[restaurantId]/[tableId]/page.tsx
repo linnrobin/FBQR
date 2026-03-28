@@ -69,6 +69,7 @@ export default async function TableMenuPage({
       id: true,
       status: true,
       name: true,
+      tableType: true,
       branchId: true,
       branch: {
         select: {
@@ -312,6 +313,7 @@ export default async function TableMenuPage({
       menuLayout={(branding?.menuLayout as "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT") ?? "GRID"}
       restaurantId={restaurantId}
       tableId={tableId}
+      tableType={(table.tableType as "DINE_IN" | "TAKEAWAY") ?? "DINE_IN"}
       paymentMode={(settings?.paymentMode as "PAY_FIRST" | "PAY_AT_CASHIER") ?? "PAY_FIRST"}
       {...(taxSettings ? { taxSettings } : {})}
     />

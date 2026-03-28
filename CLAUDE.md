@@ -11,9 +11,40 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.19
-Current phase  : Phase 4 — Step 16 complete.
-Last completed : Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu).
+Version        : 4.20
+Current phase  : Phase 5 — Step 17 complete.
+Last completed : Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen
+                 (apps/menu + apps/web/(kitchen)).
+                 Schema changes:
+                   Table: added tableType (OrderType default DINE_IN) — identifies counter/takeaway tables.
+                 New files created (apps/web):
+                   app/(kitchen)/queue-display/page.tsx — Public queue display page (no auth);
+                     requires ?branchId=<uuid>; renders QueueDisplay component on a TV/monitor.
+                   app/api/kitchen/queue/route.ts — GET public endpoint: returns PREPARING + READY
+                     queue numbers for today (WIB date) scoped to branch. No auth required.
+                   components/kitchen/queue-display.tsx — Full-screen dark TV display (bg-stone-950);
+                     "PESANAN SIAP" section (green tiles) + "SEDANG DISIAPKAN" section (amber tiles);
+                     Supabase Realtime subscription on orders:{branchId} channel; 30s fallback poll;
+                     AnimatePresence animated number tiles; reconnection banner on CHANNEL_ERROR.
+                 Modified files (apps/web):
+                   middleware.ts — /kitchen/queue-display exempted from staff auth (public TV screen).
+                   app/api/merchant/tables/route.ts — POST: accepts optional tableType field
+                     (DINE_IN | TAKEAWAY); passed to Prisma create.
+                   app/api/merchant/tables/[tableId]/route.ts — PATCH: accepts optional tableType field.
+                   app/(merchant)/merchant/tables/tables-floor-map.tsx — FloorMapTable interface gains
+                     tableType field; TableFormModal adds 2-button type selector (🪑 Dine-in / 🥡 Takeaway);
+                     TableCard subtitle shows 🥡 Takeaway for TAKEAWAY tables.
+                 Modified files (apps/menu):
+                   app/[restaurantId]/[tableId]/page.tsx — fetches table.tableType; passes tableType
+                     prop to MenuHome.
+                   app/api/order/route.ts — fetches table.tableType alongside restaurant station;
+                     passes orderType to Order.create.
+                   components/menu-home.tsx — new tableType prop (default DINE_IN); shows "🥡 Takeaway"
+                     sub-label in header when tableType=TAKEAWAY.
+                   components/order-tracking-screen.tsx — TAKEAWAY: shows prominent queue number card
+                     (#NNN, 56px font-black, color-primary); hides Call Waiter (no table service).
+                 All 41 tests still passing.
+Previously: Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu).
                  New files created (apps/menu):
                    app/[restaurantId]/[tableId]/order/[orderId]/page.tsx — Server component: validates
                      session cookie (allows expired sessions to still view in-flight order tracking);
@@ -642,7 +673,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen (apps/menu + apps/web/(kitchen)).
+Next step      : Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -734,7 +765,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 
 ### Phase 5 — Kitchen & Operations
-- [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
+- [x] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
 - [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
 - [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
 - [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split

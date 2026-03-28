@@ -16,6 +16,7 @@ const CreateTableSchema = z.object({
   branchId: z.string().uuid(),
   name: z.string().min(1).max(100),
   capacity: z.number().int().min(1).max(999).nullable().optional(),
+  tableType: z.enum(["DINE_IN", "TAKEAWAY"]).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { branchId, name, capacity } = parsed.data;
+  const { branchId, name, capacity, tableType } = parsed.data;
 
   // Verify branch belongs to this restaurant
   const branch = await prisma.branch.findFirst({
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
       name,
       capacity: capacity ?? null,
       qrToken: randomUUID(),
+      ...(tableType ? { tableType } : {}),
     },
     include: {
       branch: { select: { id: true, name: true } },

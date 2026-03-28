@@ -49,6 +49,8 @@ interface MenuHomeProps {
   /** Required for checkout navigation (ordering mode only) */
   restaurantId?: string;
   tableId?: string;
+  /** DINE_IN = normal table; TAKEAWAY = counter/queue order */
+  tableType?: "DINE_IN" | "TAKEAWAY";
   /** Tax + payment settings for cart sheet */
   taxSettings?: TaxSettings;
   paymentMode?: "PAY_FIRST" | "PAY_AT_CASHIER";
@@ -66,6 +68,7 @@ export function MenuHome({
   menuLayout,
   restaurantId,
   tableId,
+  tableType = "DINE_IN",
   taxSettings,
   paymentMode = "PAY_FIRST",
 }: MenuHomeProps) {
@@ -223,9 +226,14 @@ export function MenuHome({
             {restaurantName.charAt(0)}
           </div>
         )}
-        <span className="flex-1 text-base font-semibold text-[--color-primary] truncate">
-          {restaurantName}
-        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-base font-semibold text-[--color-primary] truncate leading-tight">
+            {restaurantName}
+          </p>
+          {tableType === "TAKEAWAY" && (
+            <p className="text-xs text-stone-500 leading-tight">🥡 Takeaway</p>
+          )}
+        </div>
         {isOrderingMode && (
           <button
             type="button"

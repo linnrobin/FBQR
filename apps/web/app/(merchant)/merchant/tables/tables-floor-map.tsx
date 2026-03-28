@@ -27,12 +27,15 @@ import {
 
 export type TableStatus = "AVAILABLE" | "OCCUPIED" | "RESERVED" | "DIRTY" | "CLOSED";
 
+export type TableType = "DINE_IN" | "TAKEAWAY";
+
 export interface FloorMapTable {
   id: string;
   branchId: string;
   name: string;
   capacity: number | null;
   status: TableStatus;
+  tableType: TableType;
   qrToken: string;
   _count: { sessions: number };
 }
@@ -207,6 +210,7 @@ function TableFormModal({ branchId, table, onClose }: TableFormModalProps) {
   const router = useRouter();
   const [name, setName] = useState(table?.name ?? "");
   const [capacity, setCapacity] = useState<string>(table?.capacity?.toString() ?? "");
+  const [tableType, setTableType] = useState<TableType>(table?.tableType ?? "DINE_IN");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -219,6 +223,7 @@ function TableFormModal({ branchId, table, onClose }: TableFormModalProps) {
         ...(table ? {} : { branchId }),
         name: name.trim(),
         capacity: capacity ? parseInt(capacity, 10) : null,
+        tableType,
       };
       const res = table
         ? await fetch(`/api/merchant/tables/${table.id}`, {
@@ -285,6 +290,25 @@ function TableFormModal({ branchId, table, onClose }: TableFormModalProps) {
               placeholder="Jumlah kursi"
               className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-stone-700 mb-2">Tipe</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["DINE_IN", "TAKEAWAY"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTableType(t)}
+                  className={`border rounded-lg py-2 text-sm font-medium transition-colors ${
+                    tableType === t
+                      ? "border-orange-500 bg-orange-50 text-orange-700"
+                      : "border-stone-300 text-stone-600 hover:bg-stone-50"
+                  }`}
+                >
+                  {t === "DINE_IN" ? "🪑 Dine-in" : "🥡 Takeaway"}
+                </button>
+              ))}
+            </div>
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2 pt-1">
@@ -384,9 +408,11 @@ function TableCard({
         <div className="flex items-start justify-between gap-1">
           <div className="min-w-0">
             <p className="font-semibold text-stone-900 truncate text-sm leading-tight">{table.name}</p>
-            {table.capacity && (
+            {table.tableType === "TAKEAWAY" ? (
+              <p className="text-xs text-stone-500">🥡 Takeaway</p>
+            ) : table.capacity ? (
               <p className="text-xs text-stone-500">{table.capacity} kursi</p>
-            )}
+            ) : null}
           </div>
           <KebabMenu
             table={table}
