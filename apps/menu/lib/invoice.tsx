@@ -21,6 +21,7 @@ import {
   CustomerInvoicePdf,
   type CustomerInvoiceData,
 } from "./pdf/customer-invoice";
+import { sendInvoiceNotification } from "./whatsapp";
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
 
@@ -101,12 +102,16 @@ export async function generateAndStoreCustomerInvoice(
             branchCode: true,
             restaurant: {
               select: {
+                id: true,
                 name: true,
                 address: true,
                 branding: { select: { logoUrl: true } },
               },
             },
           },
+        },
+        customerSession: {
+          select: { customer: { select: { phone: true } } },
         },
       },
     });
@@ -242,6 +247,19 @@ export async function generateAndStoreCustomerInvoice(
     });
 
     console.log(`[invoice] Generated invoice ${invoiceNumber} for order ${orderId}`);
+
+    // 8. Send invoice via WhatsApp (non-fatal)
+    const customerPhone = order.customerSession?.customer?.phone ?? null;
+    if (customerPhone) {
+      await sendInvoiceNotification({
+        restaurantId: restaurant.id,
+        customerPhone,
+        restaurantName: restaurant.name,
+        invoiceNumber,
+        grandTotal: order.grandTotal,
+        pdfUrl: signedData.signedUrl,
+      });
+    }
   } catch (err) {
     // Non-fatal — invoice generation failure never affects the order
     console.error(`[invoice] generateAndStoreCustomerInvoice failed for ${orderId}:`, err);

@@ -19,6 +19,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { SettingsLoyaltyTab } from "@/components/merchant/settings-loyalty-tab";
+import { SettingsWhatsappTab } from "@/components/merchant/settings-whatsapp-tab";
 import {
   Settings,
   CreditCard,
@@ -29,6 +30,7 @@ import {
   Tag,
   Palette,
   Star,
+  MessageCircle,
   CheckCircle,
   ChevronRight,
   Loader2,
@@ -47,6 +49,12 @@ interface EmailNotifications {
   dailySummary: boolean;
   billingInvoice: boolean;
   lowStock: boolean;
+}
+
+interface WaNotifications {
+  orderReady: boolean;
+  invoiceSent: boolean;
+  newOrder: boolean;
 }
 
 interface MerchantSettings {
@@ -73,6 +81,7 @@ interface MerchantSettings {
   aiTimeBased: boolean;
   allowPromotionStacking: boolean;
   loyaltyEnabled: boolean;
+  waNotifications: WaNotifications;
 }
 
 interface SettingsClientProps {
@@ -105,6 +114,7 @@ const DEFAULTS: MerchantSettings = {
   aiTimeBased: true,
   allowPromotionStacking: false,
   loyaltyEnabled: false,
+  waNotifications: { orderReady: true, invoiceSent: true, newOrder: false },
 };
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
@@ -118,6 +128,7 @@ const TABS = [
   { id: "ai",         label: "Fitur AI",   icon: Sparkles },
   { id: "promosi",    label: "Promosi",    icon: Tag },
   { id: "loyalty",    label: "Loyalty",    icon: Star },
+  { id: "whatsapp",   label: "WhatsApp",   icon: MessageCircle },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -520,6 +531,12 @@ export function SettingsClient({ initialSettings }: SettingsClientProps) {
       <SettingsLoyaltyTab
         loyaltyEnabled={s.loyaltyEnabled}
         onLoyaltyEnabledChange={(v) => upd("loyaltyEnabled", v)}
+      />
+    ),
+    whatsapp: () => (
+      <SettingsWhatsappTab
+        initialWaNotifications={s.waNotifications}
+        onWaNotificationsChange={(v) => upd("waNotifications", v)}
       />
     ),
   };

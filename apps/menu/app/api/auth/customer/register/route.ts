@@ -25,6 +25,11 @@ const schema = z.object({
   email: z.string().email().toLowerCase(),
   password: z.string().min(8).max(100),
   name: z.string().min(1).max(100).optional(),
+  phone: z
+    .string()
+    .regex(/^\+?[0-9]{8,15}$/, "Format nomor tidak valid")
+    .optional()
+    .nullable(),
 });
 
 export async function POST(req: NextRequest) {
@@ -38,7 +43,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password, name } = parsed.data;
+    const { email, password, name, phone } = parsed.data;
 
     const existing = await prisma.customer.findUnique({ where: { email } });
     if (existing) {
@@ -60,6 +65,7 @@ export async function POST(req: NextRequest) {
         email,
         hashedPassword,
         name: name ?? null,
+        phone: phone ?? null,
         emailVerifiedAt: autoVerify ? new Date() : null,
       },
       select: { id: true, email: true, name: true, emailVerifiedAt: true },

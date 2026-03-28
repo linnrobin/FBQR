@@ -20,6 +20,8 @@ import {
   Loader2,
   Globe,
   ChevronRight,
+  Smartphone,
+  Pencil,
 } from "lucide-react";
 
 interface TierInfo {
@@ -72,6 +74,7 @@ interface CustomerData {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   emailVerified: boolean;
 }
 
@@ -116,6 +119,10 @@ export default function AccountPage() {
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   const [restaurantId] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
@@ -149,6 +156,29 @@ export default function AccountPage() {
     }
     fetchCustomer();
   }, [router, restaurantId]);
+
+  async function handleSavePhone() {
+    setSavingPhone(true);
+    setPhoneError(null);
+    try {
+      const res = await fetch("/api/customer/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: phoneInput || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPhoneError(data.error ?? "Gagal menyimpan");
+        return;
+      }
+      setCustomer((prev) => prev ? { ...prev, phone: data.customer.phone } : prev);
+      setEditingPhone(false);
+    } catch {
+      setPhoneError("Koneksi gagal.");
+    } finally {
+      setSavingPhone(false);
+    }
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -199,6 +229,58 @@ export default function AccountPage() {
           )}
           Keluar
         </button>
+      </div>
+
+      {/* Phone number section (for WA notifications) */}
+      <div className="bg-white border-b border-stone-200 px-4 py-3">
+        {!editingPhone ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-stone-600">
+              <Smartphone className="h-4 w-4 text-stone-400 shrink-0" />
+              {customer.phone ? (
+                <span>{customer.phone}</span>
+              ) : (
+                <span className="text-stone-400 italic">Belum ada nomor WA</span>
+              )}
+            </div>
+            <button
+              onClick={() => { setPhoneInput(customer.phone ?? ""); setEditingPhone(true); setPhoneError(null); }}
+              className="flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700"
+            >
+              <Pencil className="h-3 w-3" />
+              {customer.phone ? "Ubah" : "Tambah nomor WA"}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-stone-500">
+              Nomor WhatsApp untuk notifikasi pesanan siap dan struk digital.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => { setPhoneInput(e.target.value); setPhoneError(null); }}
+                placeholder="+6281234567890"
+                className="flex-1 border border-stone-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              <button
+                onClick={handleSavePhone}
+                disabled={savingPhone}
+                className="flex items-center gap-1 bg-orange-500 text-white rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              >
+                {savingPhone ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Simpan"}
+              </button>
+              <button
+                onClick={() => setEditingPhone(false)}
+                className="text-sm text-stone-500 hover:text-stone-700 px-2"
+              >
+                Batal
+              </button>
+            </div>
+            {phoneError && <p className="text-xs text-red-600">{phoneError}</p>}
+          </div>
+        )}
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-5 space-y-4">

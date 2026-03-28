@@ -19,6 +19,7 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -32,7 +33,7 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/customer/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, phone: phone || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -104,6 +105,22 @@ export default function RegisterPage() {
                 className={inputClass}
                 placeholder="Minimal 8 karakter"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-stone-700 mb-1">
+                Nomor WhatsApp <span className="text-stone-400 font-normal">(opsional)</span>
+              </label>
+              <input
+                type="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className={inputClass}
+                placeholder="+6281234567890"
+              />
+              <p className="text-xs text-stone-400 mt-1">
+                Untuk notifikasi pesanan siap dan struk digital via WhatsApp.
+              </p>
             </div>
 
             {error && (

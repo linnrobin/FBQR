@@ -13,6 +13,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@repo/database";
 import { getCustomerSession } from "@/lib/customer-auth";
+import { z } from "zod";
+
+const UpdateProfileSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  phone: z
+    .string()
+    .regex(/^\+?[0-9]{8,15}$/, "Format nomor tidak valid (contoh: +6281234567890)")
+    .nullable()
+    .optional(),
+});
+
+export async function PATCH(req: NextRequest) {
+  const session = await getCustomerSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const parsed = UpdateProfileSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 422 });
+  }
+
+  const data = Object.fromEntries(
+    Object.entries(parsed.data).filter(([, v]) => v !== undefined)
+  );
+
+  const updated = await prisma.customer.update({
+    where: { id: session.customerId },
+    data,
+    select: { id: true, email: true, name: true, phone: true },
+  });
+
+  return NextResponse.json({ customer: updated });
+}
 
 export async function GET(req: NextRequest) {
   const session = await getCustomerSession();
@@ -28,6 +63,7 @@ export async function GET(req: NextRequest) {
       id: true,
       email: true,
       name: true,
+      phone: true,
       emailVerifiedAt: true,
       createdAt: true,
       platformLoyalty: {
@@ -137,6 +173,7 @@ export async function GET(req: NextRequest) {
       id: customer.id,
       email: customer.email,
       name: customer.name,
+      phone: customer.phone ?? null,
       emailVerified: !!customer.emailVerifiedAt,
       createdAt: customer.createdAt,
     },

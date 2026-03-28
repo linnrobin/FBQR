@@ -868,7 +868,7 @@ Features organized by impact. 🚨 = deal-breaker for at least one persona. ⚠�
 | **Menu import / CSV migration** | ✅ Designed (Step 9) | Chain | CSV template + bulk entry UI |
 | **ROI analytics dashboard** | ✅ Designed (Step 21) | Chain | Documented in `docs/merchant.md` |
 | **Accounting export** | ✅ Designed (Step 21) | Chain | Excel/CSV; Accurate/Jurnal.id integration Phase 2 |
-| **WhatsApp Business integration** | ⚠️ Phase 2 (Step 27) | All | Order notifications, invoice sharing via WA |
+| **WhatsApp Business integration** | ✅ Done (Step 27) | All | Order READY notification + invoice sharing via WA (Fonnte API); customer phone collected at registration + editable in /account |
 | **Refund / cancellation flow** | ⚠️ Phase 1 (Step 15) | All | Midtrans refund API; reflected in reports |
 | **Analytics event tracking** | 📋 Phase 2 | Chain | `AnalyticsEvent` model stubbed in Phase 1 Prisma |
 | **Split bill / multiple payments** | ✅ Phase 1 (Step 15) | All | Schema supports it: `Payment[]` on `Order`; Patungan split-payment UI built in Step 15 |

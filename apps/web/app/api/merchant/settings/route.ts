@@ -23,6 +23,12 @@ const EmailNotificationsSchema = z.object({
   lowStock: z.boolean(),
 });
 
+const WaNotificationsSchema = z.object({
+  orderReady: z.boolean(),
+  invoiceSent: z.boolean(),
+  newOrder: z.boolean(),
+});
+
 const UpdateSettingsSchema = z.object({
   // Ordering control
   orderingPaused: z.boolean().optional(),
@@ -55,6 +61,8 @@ const UpdateSettingsSchema = z.object({
   allowPromotionStacking: z.boolean().optional(),
   // Loyalty
   loyaltyEnabled: z.boolean().optional(),
+  // WhatsApp
+  waNotifications: WaNotificationsSchema.optional(),
 });
 
 export async function GET(_req: NextRequest) {

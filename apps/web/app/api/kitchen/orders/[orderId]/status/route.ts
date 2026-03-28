@@ -17,6 +17,8 @@ import { getStaffSession, hasPermission } from "@/lib/auth/rbac";
 import { requireMerchant } from "@/lib/auth/session";
 import { cookies } from "next/headers";
 import { auditLog, getRequestMeta } from "@/lib/audit";
+import { sendOrderReadyNotification } from "@/lib/whatsapp";
+import { after } from "next/server";
 
 const VALID_TRANSITIONS: Record<string, string> = {
   CONFIRMED: "PREPARING",
@@ -83,7 +85,16 @@ export async function PATCH(
       where: { id: orderId },
       select: {
         status: true,
-        branch: { select: { restaurantId: true } },
+        queueNumber: true,
+        grandTotal: true,
+        branch: { select: { restaurantId: true, restaurant: { select: { name: true } } } },
+        customerSession: {
+          select: {
+            tableId: true,
+            customer: { select: { phone: true } },
+            table: { select: { name: true } },
+          },
+        },
       },
     });
 
@@ -113,6 +124,23 @@ export async function PATCH(
       },
       select: { id: true, status: true },
     });
+
+    // Send WA notification to customer when order is READY (non-blocking)
+    if (newStatus === "READY" && restaurantId) {
+      const customerPhone = order.customerSession?.customer?.phone ?? null;
+      const tableLabel = order.customerSession?.table?.name ?? "Meja";
+      const restaurantName = order.branch.restaurant?.name ?? "Restoran";
+      after(
+        sendOrderReadyNotification({
+          restaurantId,
+          orderId,
+          customerPhone,
+          restaurantName,
+          tableLabel,
+          orderNumber: String(order.queueNumber ?? orderId.slice(-6)),
+        })
+      );
+    }
 
     const { ipAddress, userAgent } = getRequestMeta(req);
     await auditLog({

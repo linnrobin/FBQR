@@ -544,7 +544,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `WebhookDeliveryLog` | Webhook delivery audit | Schema defined in Public API section above |
 | `BranchMenuOverride` | *(Phase 1 — not deferred)* | Schema + UI toggle both built in Step 9. See `docs/merchant.md` § Multi-Branch. `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
 | `Reservation` | Table reservation system | `(id, branchId FK, tableId FK, guestName, guestPhone, partySize, scheduledAt, depositPaid bool, status: PENDING\|CONFIRMED\|CANCELLED\|SEATED\|NO_SHOW)` |
-| `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
+| `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry. **WHATSAPP type active in Phase 1 Step 27**: credentials JSON = `{ "token": "<fonnte_token>", "senderNumber": "<E.164 optional>" }`. API: GET/POST/DELETE `/api/merchant/integrations/whatsapp`. |
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
 | `MerchantRequest` | In-app EOI for multi-branch | `(id, merchantId FK, type: MULTI_BRANCH, requestedBranches int, message, status: PENDING\|APPROVED\|REJECTED, reviewedByAdminId?, reviewedAt?, createdAt)` |
 | `CronRunLog` | Cron job monitoring — silent failure detection | `(id, jobName, startedAt, completedAt?, status: SUCCESS\|FAILED\|PARTIAL, affectedRows?, errorMessage?)` — one row per cron invocation; used by `/api/health` to detect missed runs |
@@ -581,6 +581,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MenuCategory` | `availableTo` | String? | Time-of-day availability end in `HH:MM` format (24h, WIB). Example: `"11:00"` for a Breakfast category. `null` = always available. Must be > `availableFrom`; overnight ranges (e.g. `"22:00"` to `"02:00"`) are supported by comparing modularly. Both fields must be set together — setting only one is a validation error. |
 | `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
 | `Restaurant` | `whatsappNumber` | String? | Contact WhatsApp number (E.164 format, e.g. `+6281234567890`). Displayed in `apps/menu` footer and "Contact Restaurant" CTA. |
+| `Customer` | `phone` | String? | WhatsApp-compatible phone number (E.164 format, e.g. `+6281234567890`). Optional; collected at registration and editable from /account. Used by WA notification helpers (Step 27). |
 | `Restaurant` | `instagramHandle` | String? | Instagram handle without `@`, e.g. `fbqr.app`. Displayed in `apps/menu` footer. |
 | `Restaurant` | `tiktokHandle` | String? | TikTok handle without `@`. Displayed in `apps/menu` footer. |
 | `Restaurant` | `googleMapsUrl` | String? | Google Maps embed or share link. Rendered as "Get Directions" link in `apps/menu`. |
@@ -612,6 +613,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `aiPersonalized` | Boolean | Default: `false`. When `true`, `apps/menu` shows collaborative-filtering suggestions based on cart content and anonymous order history. Phase 1: model is simple (most co-ordered items); Phase 2: ML model. |
 | `MerchantSettings` | `aiUpsell` | Boolean | Default: `true`. When `true`, a "Tambah minuman?" or similar upsell prompt appears at checkout. |
 | `MerchantSettings` | `aiTimeBased` | Boolean | Default: `true`. When `true`, `apps/menu` surfaces breakfast/lunch/dinner items based on current WIB time of day. |
+| `MerchantSettings` | `waNotifications` | JSON | Per-event WhatsApp notification toggle. Schema: `{ "orderReady": true, "invoiceSent": true, "newOrder": false }`. `orderReady`: send WA to customer when order → READY. `invoiceSent`: send invoice PDF link to customer after payment. `newOrder`: send WA to merchant owner on new order. Requires active `MerchantIntegration(type=WHATSAPP)`. Added Step 27. |
 
 ### Additional Fields Required in Phase 1 Prisma
 

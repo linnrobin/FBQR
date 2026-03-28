@@ -11,9 +11,48 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.29
-Current phase  : Phase 7 — Step 26 complete.
-Last completed : Step 26 — Platform loyalty + gamification (all).
+Version        : 4.30
+Current phase  : Phase 7 — Step 27 complete.
+Last completed : Step 27 — WhatsApp Business integration (shared).
+                 Schema changes:
+                   Customer: added phone (String?) — WhatsApp-compatible phone (E.164 format).
+                   MerchantSettings: added waNotifications (Json default
+                     {"orderReady":true,"invoiceSent":true,"newOrder":false}) — per-event WA toggle.
+                 No new packages (uses fetch() to call Fonnte HTTP API directly).
+                 New files created (apps/web):
+                   lib/whatsapp.ts — Fonnte API client; sendOrderReadyNotification(),
+                     sendInvoiceNotification(), sendNewOrderWaNotification(); reads MerchantIntegration
+                     WHATSAPP credentials from DB; non-fatal; respects waNotifications prefs.
+                   app/api/merchant/integrations/whatsapp/route.ts — GET: masked integration config;
+                     POST: create/update integration (token + optional senderNumber); DELETE: deactivate;
+                     requires settings:manage; audit logged.
+                   components/merchant/settings-whatsapp-tab.tsx — WA setup form (Fonnte token +
+                     sender number); connection status card; notification event toggles (orderReady,
+                     invoiceSent, newOrder); saves via PATCH /api/merchant/settings.
+                 Modified files (apps/web):
+                   app/api/merchant/settings/route.ts — added WaNotificationsSchema + waNotifications
+                     field to UpdateSettingsSchema.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — after() sendOrderReadyNotification
+                     when order transitions to READY; fetches customerSession.customer.phone + table name.
+                   app/(merchant)/merchant/settings/settings-client.tsx — added WaNotifications type +
+                     waNotifications state + "WhatsApp" tab (MessageCircle icon); mounts
+                     SettingsWhatsappTab.
+                 New files created (apps/menu):
+                   lib/whatsapp.ts — mirror of apps/web WA lib (same interface; sendInvoiceNotification
+                     only; non-fatal; reads DB for MerchantIntegration credentials).
+                 Modified files (apps/menu):
+                   lib/invoice.tsx — added sendInvoiceNotification() call after pdfUrl stored; fetches
+                     customer phone via customerSession.customer.phone.
+                   app/api/customer/me/route.ts — added phone to GET response; added PATCH handler
+                     (update name and/or phone; validates E.164 format).
+                   app/api/auth/customer/register/route.ts — accepts optional phone field in POST body;
+                     stored at creation.
+                   app/account/page.tsx — phone edit section in header (shows current number or "Belum
+                     ada nomor WA"; inline edit form with save/cancel); Pencil + Smartphone icons.
+                   app/account/register/page.tsx — optional phone field added to registration form with
+                     WA notification explanation.
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 26 — Platform loyalty + gamification (all).
                  No schema changes (LoyaltyTier + PlatformLoyaltyBalance already in schema from Phase 1).
                  No new packages.
                  New files created (apps/web):
@@ -1015,7 +1054,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 27 — WhatsApp Business integration (shared).
+Next step      : Step 28 — Remaining backlog items (TBD).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -1121,7 +1160,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 24** — Audit log: logging middleware + viewer UI (all)
 - [x] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
 - [x] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
-- [ ] **Step 27** — WhatsApp Business integration (shared)
+- [x] **Step 27** — WhatsApp Business integration (shared)
 - [ ] **Step 28** — Remaining backlog items (TBD)
 
 ---
