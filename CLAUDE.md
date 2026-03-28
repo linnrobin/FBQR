@@ -11,9 +11,72 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.27
-Current phase  : Phase 7 — Step 24 complete.
-Last completed : Step 24 — Audit log: logging middleware + viewer UI (apps/web).
+Version        : 4.28
+Current phase  : Phase 7 — Step 25 complete.
+Last completed : Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
+                 Schema changes:
+                   Customer: added hashedPassword (String?), emailVerifiedAt (DateTime?)
+                   MerchantSettings: added loyaltyEnabled (Boolean default false)
+                   Order: added pointsRedeemed (Int default 0), loyaltyDiscountAmount (Int default 0)
+                 New packages: bcryptjs + @types/bcryptjs, jose (apps/menu dependencies).
+                 New files created (apps/menu):
+                   lib/customer-auth.ts — customer JWT helpers (sign/verify fbqr_customer_session
+                     cookie, HS256 jose, 30-day TTL); signEmailVerifyJwt/verifyEmailVerifyJwt for
+                     email verification flow; CUSTOMER_COOKIE constant.
+                   lib/loyalty.ts — creditLoyaltyPoints(orderId) non-fatal helper; credits
+                     MerchantLoyaltyBalance after order CONFIRMED; idempotency via AuditLog check;
+                     respects loyaltyEnabled + active program + verified email.
+                   app/api/auth/customer/register/route.ts — POST: email+password registration;
+                     bcrypt hash; sends verification email via Resend (graceful stub if no key);
+                     returns 201 + customer id.
+                   app/api/auth/customer/login/route.ts — POST: email+password login; validates
+                     emailVerifiedAt; sets fbqr_customer_session httpOnly cookie (30d TTL).
+                   app/api/auth/customer/logout/route.ts — POST: clears cookie.
+                   app/api/auth/customer/verify-email/route.ts — GET: verifies signed JWT token;
+                     sets emailVerifiedAt; redirects to /account.
+                   app/api/customer/me/route.ts — GET: returns customer profile + loyalty balance
+                     for ?restaurantId= param; requires customer session cookie.
+                   app/account/page.tsx — customer account overview: profile card, loyalty balance,
+                     order history link, logout button.
+                   app/account/login/page.tsx — email+password login form; redirect to /account.
+                   app/account/register/page.tsx — registration form; email+password; post-submit
+                     "check your email" state.
+                 New files created (apps/web):
+                   app/api/merchant/loyalty/route.ts — GET: fetch active loyalty program;
+                     POST: create new program; requires loyalty:manage.
+                   app/api/merchant/loyalty/[programId]/route.ts — PATCH: update program fields;
+                     DELETE: deactivate (soft, sets isActive=false + deactivatedAt).
+                   components/merchant/settings-loyalty-tab.tsx — Loyalty settings tab component;
+                     loyaltyEnabled toggle + program config form (name, IDR per point, redemption
+                     rate, calculation basis); creates/updates MerchantLoyaltyProgram via API;
+                     wired into SettingsClient as "loyalty" tab.
+                 Modified files (apps/menu) — loyalty + new schema fields:
+                   app/api/order/route.ts — accepts pointsToRedeem in body; validates customer
+                     session + verified email + active program + sufficient balance; applies
+                     loyaltyDiscountAmount to grandTotal; atomically deducts balance in transaction;
+                     stores pointsRedeemed + loyaltyDiscountAmount on Order.
+                   app/api/webhook/midtrans/route.ts — after() creditLoyaltyPoints for PAY_FIRST
+                     confirmations and Patungan full-pay.
+                   components/checkout-screen.tsx — added loyaltyEnabled to CheckoutSettings;
+                     fetches /api/customer/me on mount (loyalty enabled only); Section 4: login
+                     prompt card for anonymous users; Section 5: loyalty toggle + discount display
+                     for logged-in verified customers; displays discounted grandTotal.
+                   components/cart-sheet.tsx — added loyaltyEnabled + restaurantId props; fetches
+                     loyalty balance when sheet opens; Section 6: loyalty info chip with balance
+                     + IDR value + "Tukar saat checkout" link.
+                   components/menu-home.tsx — added loyaltyEnabled prop; threads to CartSheet.
+                   app/[restaurantId]/[tableId]/page.tsx — fetches loyaltyEnabled from settings;
+                     passes to MenuHome.
+                   app/[restaurantId]/[tableId]/checkout/page.tsx — fetches loyaltyEnabled; passes
+                     to CheckoutScreen via CheckoutSettings.
+                   lib/audit.ts — fixed Prisma.JsonNull for exactOptionalPropertyTypes.
+                 Modified files (apps/web):
+                   app/(merchant)/merchant/settings/settings-client.tsx — wired SettingsLoyaltyTab
+                     as loyalty tab; removed coming-soon stub.
+                   app/(merchant)/merchant/settings/page.tsx — fetches loyaltyEnabled from DB.
+                   app/api/merchant/settings/route.ts — accepts loyaltyEnabled in PATCH schema.
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 24 — Audit log: logging middleware + viewer UI (apps/web).
                  No schema changes. No new packages.
                  New files created (apps/web):
                    lib/audit.ts — shared auditLog() helper + getRequestMeta(); wraps
@@ -920,7 +983,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
+Next step      : Step 26 — Platform loyalty + gamification (all).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -1024,7 +1087,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 
 ### Phase 7 — Platform Hardening
 - [x] **Step 24** — Audit log: logging middleware + viewer UI (all)
-- [ ] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
+- [x] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
 - [ ] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
 - [ ] **Step 27** — WhatsApp Business integration (shared)
 - [ ] **Step 28** — Remaining backlog items (TBD)

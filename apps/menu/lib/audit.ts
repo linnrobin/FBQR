@@ -5,6 +5,7 @@
  * audit entries consistent and non-fatal.
  */
 import { prisma } from "@repo/database";
+import { Prisma } from "@prisma/client";
 
 export interface AuditParams {
   actorId?: string | null;
@@ -32,8 +33,8 @@ export async function auditLog(params: AuditParams): Promise<void> {
         action: params.action,
         entity: params.entity,
         entityId: params.entityId ?? null,
-        oldValue: params.oldValue !== undefined ? (params.oldValue as object) : undefined,
-        newValue: params.newValue !== undefined ? (params.newValue as object) : undefined,
+        oldValue: params.oldValue !== undefined ? (params.oldValue as Prisma.InputJsonValue) : Prisma.JsonNull,
+        newValue: params.newValue !== undefined ? (params.newValue as Prisma.InputJsonValue) : Prisma.JsonNull,
         ipAddress: params.ipAddress ?? null,
         userAgent: params.userAgent ?? null,
         restaurantId: params.restaurantId ?? null,

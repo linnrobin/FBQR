@@ -13,6 +13,7 @@ import { after } from "next/server";
 import { prisma } from "@repo/database";
 import { sendInternalNotification } from "@/lib/notify";
 import { generateAndStoreCustomerInvoice } from "@/lib/invoice";
+import { creditLoyaltyPoints } from "@/lib/loyalty";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -205,9 +206,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Trigger async PDF generation after returning 200 (ADR spec: use after())
+  // Trigger async PDF generation + loyalty points after returning 200
   if (isSuccess && !payment.splitGroupId) {
     after(() => generateAndStoreCustomerInvoice(orderId));
+    after(() => creditLoyaltyPoints(orderId));
   }
 
   return new NextResponse("OK", { status: 200 });
@@ -331,7 +333,8 @@ async function handlePatunganPayment(
       });
     }
 
-    // Generate invoice PDF for Patungan order (all parts paid)
+    // Generate invoice PDF + credit loyalty points for Patungan order
     after(() => generateAndStoreCustomerInvoice(orderId));
+    after(() => creditLoyaltyPoints(orderId));
   }
 }

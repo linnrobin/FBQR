@@ -9,7 +9,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ShoppingBag, Minus, Plus, Trash2 } from "lucide-react";
+import { X, ShoppingBag, Minus, Plus, Trash2, Star } from "lucide-react";
 import Image from "next/image";
 import type { CartEntry } from "./item-detail-modal";
 import type { MenuItemData } from "./menu-item-card";
@@ -43,6 +43,9 @@ interface CartSheetProps {
   allItems?: MenuItemData[];
   /** Opens item detail modal for upsell/together item tap */
   onOpenItem?: (item: MenuItemData) => void;
+  /** Whether the merchant has loyalty enabled (passes restaurantId for balance fetch) */
+  loyaltyEnabled?: boolean;
+  restaurantId?: string | undefined;
 }
 
 // ─── Financials computation ───────────────────────────────────────────────────
@@ -223,6 +226,8 @@ export function CartSheet({
   togetherIds = [],
   allItems = [],
   onOpenItem,
+  loyaltyEnabled = false,
+  restaurantId = "",
 }: CartSheetProps) {
   const entries = Array.from(cartItems.values());
   const summary = computeOrderSummary(cartItems, taxSettings);
@@ -240,6 +245,42 @@ export function CartSheet({
     .map((id) => itemMap.get(id))
     .filter((i): i is MenuItemData => !!i && !cartSet.has(i.id) && i.effectivelyAvailable && i.isAvailable)
     .slice(0, 4);
+
+  // Loyalty balance (fetched when sheet opens + loyalty enabled)
+  const [loyaltyPoints, setLoyaltyPoints] = useState<{
+    balance: number;
+    idrValue: number;
+    programName: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !loyaltyEnabled || !restaurantId) return;
+    fetch(`/api/customer/me?restaurantId=${encodeURIComponent(restaurantId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: {
+        customer: { emailVerified: boolean };
+        loyaltyBalance: {
+          balance: number;
+          program: { name: string; redemptionRate: string };
+        } | null;
+      } | null) => {
+        if (
+          data?.customer?.emailVerified &&
+          data.loyaltyBalance &&
+          data.loyaltyBalance.balance > 0
+        ) {
+          setLoyaltyPoints({
+            balance: data.loyaltyBalance.balance,
+            idrValue: Math.floor(
+              data.loyaltyBalance.balance *
+                Number(data.loyaltyBalance.program.redemptionRate)
+            ),
+            programName: data.loyaltyBalance.program.name,
+          });
+        }
+      })
+      .catch(() => {/* non-fatal */});
+  }, [isOpen, loyaltyEnabled, restaurantId]);
 
   // Scroll-lock body when open
   useEffect(() => {
@@ -351,6 +392,27 @@ export function CartSheet({
                       </span>
                     </div>
                   </div>
+
+                  {/* Section 6: Loyalty points balance */}
+                  {loyaltyPoints && (
+                    <div className="flex items-center gap-2.5 py-2.5 px-3 bg-amber-50 rounded-lg">
+                      <Star className="h-4 w-4 text-amber-500 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-amber-900 truncate">
+                          {loyaltyPoints.programName}
+                        </p>
+                        <p className="text-xs text-amber-700">
+                          <span className="font-semibold">
+                            {loyaltyPoints.balance.toLocaleString("id-ID")} pts
+                          </span>
+                          {" = "}
+                          <span>Rp {loyaltyPoints.idrValue.toLocaleString("id-ID")}</span>
+                          {" · "}
+                          <span className="text-[--color-primary]">Tukar saat checkout</span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* "Sering dipesan bersama" — frequently ordered together */}
                   {togetherItems.length > 0 && onOpenItem && (

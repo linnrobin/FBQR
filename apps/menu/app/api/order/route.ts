@@ -20,6 +20,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import type { CartEntry } from "@/components/item-detail-modal";
 import { sendInternalNotification } from "@/lib/notify";
 import { generateAndStoreCustomerInvoice } from "@/lib/invoice";
+import { creditLoyaltyPoints } from "@/lib/loyalty";
 
 // ─── Midtrans helpers ────────────────────────────────────────────────────────
 
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest) {
       paymentMethod = "QRIS",
       idempotencyKey,
       customerNote,
+      pointsToRedeem = 0,
     } = body as {
       restaurantId: string;
       tableId: string;
@@ -168,6 +170,7 @@ export async function POST(req: NextRequest) {
       paymentMethod: string;
       idempotencyKey?: string;
       customerNote?: string;
+      pointsToRedeem?: number;
     };
 
     if (!restaurantId || !tableId || !items?.length) {
@@ -184,7 +187,13 @@ export async function POST(req: NextRequest) {
         tableId,
         status: "ACTIVE",
       },
-      select: { id: true, expiresAt: true, branchId: true },
+      select: {
+        id: true,
+        expiresAt: true,
+        branchId: true,
+        customerId: true,
+        customer: { select: { emailVerifiedAt: true } },
+      },
     });
 
     if (!session || session.expiresAt < new Date()) {
@@ -238,6 +247,7 @@ export async function POST(req: NextRequest) {
         maxOrderValueIDR: true,
         maxPendingOrders: true,
         orderingPaused: true,
+        loyaltyEnabled: true,
       },
     });
 
@@ -326,6 +336,54 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── Loyalty points redemption ─────────────────────────────────────────────
+    let loyaltyDiscountAmount = 0;
+    let validatedPointsToRedeem = 0;
+    let loyaltyBalanceId: string | null = null;
+
+    if (pointsToRedeem > 0 && settings.loyaltyEnabled) {
+      const customerId = session.customerId;
+      const emailVerified = !!session.customer?.emailVerifiedAt;
+
+      if (!customerId || !emailVerified) {
+        return NextResponse.json(
+          { error: "Masuk dan verifikasi email untuk menukar poin" },
+          { status: 400 }
+        );
+      }
+
+      // Load loyalty balance + program
+      const loyaltyBalance = await prisma.merchantLoyaltyBalance.findUnique({
+        where: { customerId_restaurantId: { customerId, restaurantId } },
+        select: {
+          id: true,
+          balance: true,
+          program: { select: { redemptionRate: true, isActive: true } },
+        },
+      });
+
+      if (!loyaltyBalance || !loyaltyBalance.program.isActive) {
+        return NextResponse.json(
+          { error: "Program loyalty tidak aktif" },
+          { status: 400 }
+        );
+      }
+
+      // Clamp to available balance
+      const redeemPoints = Math.min(pointsToRedeem, loyaltyBalance.balance);
+      if (redeemPoints > 0) {
+        const redemptionRate = Number(loyaltyBalance.program.redemptionRate);
+        loyaltyDiscountAmount = Math.floor(redeemPoints * redemptionRate);
+        // Discount cannot exceed grandTotal (order must be at least 1 IDR)
+        loyaltyDiscountAmount = Math.min(loyaltyDiscountAmount, financials.grandTotal - 1);
+        if (loyaltyDiscountAmount > 0) {
+          validatedPointsToRedeem = redeemPoints;
+          loyaltyBalanceId = loyaltyBalance.id;
+          financials.grandTotal = financials.grandTotal - loyaltyDiscountAmount;
+        }
+      }
+    }
+
     // ── Fetch kitchen station + table orderType ───────────────────────────────
     const [restaurant, table] = await Promise.all([
       prisma.restaurant.findUnique({
@@ -398,38 +456,51 @@ export async function POST(req: NextRequest) {
     };
     const payMethod: PMethod = methodMap[paymentMethod] ?? "QRIS";
 
-    // ── Create Order + Payment atomically ─────────────────────────────────────
+    // ── Create Order + Payment atomically (+ deduct loyalty points if redeeming) ─
     const isPayFirst = settings.paymentMode === "PAY_FIRST";
     const paymentStatus = isPayFirst ? "PENDING" : "PENDING_CASH";
 
-    const order = await prisma.order.create({
-      data: {
-        branchId: session.branchId,
-        customerSessionId: session.id,
-        orderType,
-        queueNumber,
-        subtotal: financials.subtotal,
-        taxAmount: financials.taxAmount,
-        serviceChargeAmount: financials.serviceChargeAmount,
-        grandTotal: financials.grandTotal,
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        ...(customerNote ? { customerNote } : {}),
-        items: { create: orderItemsData },
-        payments: {
-          create: {
-            amount: financials.grandTotal,
-            method: payMethod,
-            paymentType: "FULL",
-            status: paymentStatus,
+    const [order] = await prisma.$transaction([
+      prisma.order.create({
+        data: {
+          branchId: session.branchId,
+          customerSessionId: session.id,
+          orderType,
+          queueNumber,
+          subtotal: financials.subtotal,
+          taxAmount: financials.taxAmount,
+          serviceChargeAmount: financials.serviceChargeAmount,
+          grandTotal: financials.grandTotal,
+          pointsRedeemed: validatedPointsToRedeem,
+          loyaltyDiscountAmount,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+          ...(customerNote ? { customerNote } : {}),
+          items: { create: orderItemsData },
+          payments: {
+            create: {
+              amount: financials.grandTotal,
+              method: payMethod,
+              paymentType: "FULL",
+              status: paymentStatus,
+            },
           },
         },
-      },
-      select: {
-        id: true,
-        grandTotal: true,
-        createdAt: true,
-      },
-    });
+        select: {
+          id: true,
+          grandTotal: true,
+          createdAt: true,
+        },
+      }),
+      // Deduct loyalty balance atomically (only if points are being redeemed)
+      ...(loyaltyBalanceId && validatedPointsToRedeem > 0
+        ? [
+            prisma.merchantLoyaltyBalance.update({
+              where: { id: loyaltyBalanceId },
+              data: { balance: { decrement: validatedPointsToRedeem } },
+            }),
+          ]
+        : []),
+    ]);
 
     // ── AuditLog ──────────────────────────────────────────────────────────────
     await prisma.auditLog.create({
@@ -465,8 +536,9 @@ export async function POST(req: NextRequest) {
         // Non-fatal — notification failure never affects the order response
       });
 
-      // PAY_AT_CASHIER orders are immediately confirmed — generate invoice async
+      // PAY_AT_CASHIER orders are immediately confirmed — generate invoice + credit points async
       after(() => generateAndStoreCustomerInvoice(order.id));
+      after(() => creditLoyaltyPoints(order.id));
 
       return NextResponse.json({
         orderId: order.id,

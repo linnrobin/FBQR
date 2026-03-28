@@ -51,6 +51,7 @@ export default async function CheckoutPage({
         taxOnServiceCharge: true,
         pricesIncludeTax: true,
         roundingRule: true,
+        loyaltyEnabled: true,
       },
     }),
     prisma.restaurant.findUnique({
@@ -67,6 +68,7 @@ export default async function CheckoutPage({
     paymentMode: settings.paymentMode as "PAY_FIRST" | "PAY_AT_CASHIER",
     restaurantId,
     tableId,
+    loyaltyEnabled: settings.loyaltyEnabled,
     taxSettings: {
       taxRate: Number(settings.taxRate),
       taxLabel: settings.taxLabel,

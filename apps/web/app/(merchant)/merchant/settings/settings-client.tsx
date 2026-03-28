@@ -18,6 +18,7 @@
  */
 import { useState } from "react";
 import Link from "next/link";
+import { SettingsLoyaltyTab } from "@/components/merchant/settings-loyalty-tab";
 import {
   Settings,
   CreditCard,
@@ -71,6 +72,7 @@ interface MerchantSettings {
   aiUpsell: boolean;
   aiTimeBased: boolean;
   allowPromotionStacking: boolean;
+  loyaltyEnabled: boolean;
 }
 
 interface SettingsClientProps {
@@ -102,6 +104,7 @@ const DEFAULTS: MerchantSettings = {
   aiUpsell: true,
   aiTimeBased: true,
   allowPromotionStacking: false,
+  loyaltyEnabled: false,
 };
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
@@ -114,6 +117,7 @@ const TABS = [
   { id: "notifikasi", label: "Notifikasi", icon: Bell },
   { id: "ai",         label: "Fitur AI",   icon: Sparkles },
   { id: "promosi",    label: "Promosi",    icon: Tag },
+  { id: "loyalty",    label: "Loyalty",    icon: Star },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -512,6 +516,12 @@ export function SettingsClient({ initialSettings }: SettingsClientProps) {
     notifikasi: renderNotifikasi,
     ai: renderAI,
     promosi: renderPromosi,
+    loyalty: () => (
+      <SettingsLoyaltyTab
+        loyaltyEnabled={s.loyaltyEnabled}
+        onLoyaltyEnabledChange={(v) => upd("loyaltyEnabled", v)}
+      />
+    ),
   };
 
   return (
@@ -549,16 +559,6 @@ export function SettingsClient({ initialSettings }: SettingsClientProps) {
               </Link>
             </li>
 
-            {/* Coming-soon stubs */}
-            {[{ icon: Star, label: "Loyalty" }].map(({ icon: Icon, label }) => (
-              <li key={label}>
-                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-stone-400 cursor-not-allowed">
-                  <Icon size={15} />
-                  {label}
-                  <span className="ml-auto text-[10px] bg-stone-100 text-stone-400 px-1.5 py-0.5 rounded">Segera</span>
-                </div>
-              </li>
-            ))}
           </ul>
         </nav>
 

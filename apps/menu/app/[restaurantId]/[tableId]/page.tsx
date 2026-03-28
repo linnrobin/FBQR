@@ -135,6 +135,7 @@ export default async function TableMenuPage({
       aiPersonalized: true,
       aiUpsell: true,
       aiTimeBased: true,
+      loyaltyEnabled: true,
     },
   });
 
@@ -328,6 +329,7 @@ export default async function TableMenuPage({
       tableType={(table.tableType as "DINE_IN" | "TAKEAWAY") ?? "DINE_IN"}
       paymentMode={(settings?.paymentMode as "PAY_FIRST" | "PAY_AT_CASHIER") ?? "PAY_FIRST"}
       aiSettings={aiSettings}
+      loyaltyEnabled={settings?.loyaltyEnabled ?? false}
       {...(taxSettings ? { taxSettings } : {})}
     />
   );

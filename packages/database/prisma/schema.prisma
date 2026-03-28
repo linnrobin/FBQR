@@ -592,6 +592,9 @@ model MerchantSettings {
   aiUpsell          Boolean @default(true)
   aiTimeBased       Boolean @default(true)
 
+  // Loyalty program
+  loyaltyEnabled Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -904,6 +907,10 @@ model Order {
   depositRate   Decimal? @db.Decimal(5, 4)
   depositAmount Int?
 
+  // Loyalty redemption (snapshotted at checkout time)
+  pointsRedeemed       Int @default(0)
+  loyaltyDiscountAmount Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1064,8 +1071,10 @@ model Payment {
 model Customer {
   id                  String         @id @default(uuid())
   email               String?        @unique
+  hashedPassword      String?
   name                String?
   googleId            String?        @unique
+  emailVerifiedAt     DateTime?
   privacyConsentAt    DateTime?
   deletionRequestedAt DateTime?
   status              CustomerStatus @default(ACTIVE)

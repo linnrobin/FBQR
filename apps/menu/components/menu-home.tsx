@@ -63,6 +63,8 @@ interface MenuHomeProps {
   taxSettings?: TaxSettings;
   paymentMode?: "PAY_FIRST" | "PAY_AT_CASHIER";
   aiSettings?: AiSettings;
+  /** Whether merchant has loyalty program enabled */
+  loyaltyEnabled?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ export function MenuHome({
   taxSettings,
   paymentMode = "PAY_FIRST",
   aiSettings,
+  loyaltyEnabled = false,
 }: MenuHomeProps) {
   const layout: MenuLayout = menuLayout ?? "GRID";
   const isSpotlight = layout === "SPOTLIGHT";
@@ -374,6 +377,8 @@ export function MenuHome({
         togetherIds={togetherIds}
         allItems={categories.flatMap((c) => c.items)}
         onOpenItem={handleOpenItem}
+        loyaltyEnabled={loyaltyEnabled}
+        restaurantId={restaurantId}
       />
 
       {/* ── Bottom Bar ── */}

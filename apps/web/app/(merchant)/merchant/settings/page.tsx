@@ -43,6 +43,7 @@ export default async function SettingsPage() {
       aiUpsell: true,
       aiTimeBased: true,
       allowPromotionStacking: true,
+      loyaltyEnabled: true,
     },
   });
 

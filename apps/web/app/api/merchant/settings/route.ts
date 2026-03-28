@@ -53,6 +53,8 @@ const UpdateSettingsSchema = z.object({
   aiTimeBased: z.boolean().optional(),
   // Promotions
   allowPromotionStacking: z.boolean().optional(),
+  // Loyalty
+  loyaltyEnabled: z.boolean().optional(),
 });
 
 export async function GET(_req: NextRequest) {

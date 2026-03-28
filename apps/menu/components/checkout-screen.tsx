@@ -13,8 +13,9 @@
  */
 
 import { useState, useEffect } from "react";
-import { ArrowLeft, Lock } from "lucide-react";
+import { ArrowLeft, Lock, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { CartEntry } from "./item-detail-modal";
 import type { TaxSettings } from "./cart-sheet";
 import { PaymentMethodSelector, type PaymentMethodOption } from "./payment-method-selector";
@@ -28,6 +29,13 @@ export interface CheckoutSettings {
   taxSettings: TaxSettings;
   restaurantId: string;
   tableId: string;
+  loyaltyEnabled: boolean;
+}
+
+interface LoyaltyInfo {
+  balance: number;
+  redemptionRate: number; // IDR per point
+  programName: string;
 }
 
 interface CheckoutScreenProps {
@@ -115,7 +123,7 @@ function PrivacyConsentSheet({
 
 export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps) {
   const router = useRouter();
-  const { paymentMode, taxSettings, restaurantId, tableId } = settings;
+  const { paymentMode, taxSettings, restaurantId, tableId, loyaltyEnabled } = settings;
 
   const [cartItems, setCartItems] = useState<CartEntry[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>("QRIS");
@@ -129,6 +137,11 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
   const [patunganLoading, setPatunganLoading] = useState(false);
   const [payAtCashierPending, setPayAtCashierPending] = useState(false);
 
+  // Loyalty state
+  const [customerLoggedIn, setCustomerLoggedIn] = useState<boolean | null>(null); // null = loading
+  const [loyaltyInfo, setLoyaltyInfo] = useState<LoyaltyInfo | null>(null);
+  const [useRedeemPoints, setUseRedeemPoints] = useState(false);
+
   // Load cart from localStorage
   useEffect(() => {
     try {
@@ -141,7 +154,59 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
     }
   }, []);
 
+  // Fetch customer session (for loyalty) if loyalty is enabled
+  useEffect(() => {
+    if (!loyaltyEnabled) {
+      setCustomerLoggedIn(false);
+      return;
+    }
+    fetch(`/api/customer/me?restaurantId=${encodeURIComponent(restaurantId)}`)
+      .then((res) => {
+        if (!res.ok) {
+          setCustomerLoggedIn(false);
+          return null;
+        }
+        return res.json() as Promise<{
+          customer: { emailVerified: boolean };
+          loyaltyBalance: {
+            balance: number;
+            program: { name: string; redemptionRate: string };
+          } | null;
+        }>;
+      })
+      .then((data) => {
+        if (!data) return;
+        if (!data.customer.emailVerified) {
+          setCustomerLoggedIn(true); // logged in but not verified
+          return;
+        }
+        setCustomerLoggedIn(true);
+        if (data.loyaltyBalance && data.loyaltyBalance.balance > 0) {
+          setLoyaltyInfo({
+            balance: data.loyaltyBalance.balance,
+            redemptionRate: Number(data.loyaltyBalance.program.redemptionRate),
+            programName: data.loyaltyBalance.program.name,
+          });
+        }
+      })
+      .catch(() => setCustomerLoggedIn(false));
+  }, [loyaltyEnabled, restaurantId]);
+
   const summary = computeSummary(cartItems, taxSettings);
+
+  // Loyalty discount computation (mirrors server-side logic)
+  const loyaltyDiscountAmount =
+    useRedeemPoints && loyaltyInfo
+      ? Math.min(
+          Math.floor(loyaltyInfo.balance * loyaltyInfo.redemptionRate),
+          summary.grandTotal - 1
+        )
+      : 0;
+  const finalGrandTotal = summary.grandTotal - loyaltyDiscountAmount;
+  const pointsToRedeem =
+    useRedeemPoints && loyaltyInfo && loyaltyDiscountAmount > 0
+      ? loyaltyInfo.balance
+      : 0;
 
   const checkConsentAndProceed = (action: () => void) => {
     const consent = localStorage.getItem("fbqr_consent");
@@ -181,6 +246,7 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
           paymentMethod,
           idempotencyKey,
           customerNote: customerNote.trim() || undefined,
+          pointsToRedeem: pointsToRedeem > 0 ? pointsToRedeem : undefined,
         }),
       });
 
@@ -419,10 +485,16 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
                   <span>{fmt(summary.taxAmount)}</span>
                 </div>
               )}
+              {loyaltyDiscountAmount > 0 && (
+                <div className="flex justify-between text-sm text-emerald-600">
+                  <span>Diskon Poin</span>
+                  <span>-{fmt(loyaltyDiscountAmount)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-base font-bold pt-1 border-t border-stone-100">
                 <span>Grand Total</span>
                 <span className="text-[--color-primary] text-lg">
-                  {fmt(summary.grandTotal)}
+                  {fmt(finalGrandTotal)}
                 </span>
               </div>
             </div>
@@ -458,6 +530,83 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
             </p>
           </section>
 
+          {/* Section 4: Login prompt (anonymous + loyalty enabled) */}
+          {loyaltyEnabled && customerLoggedIn === false && (
+            <section className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+              <Star className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-amber-900">
+                  Masuk untuk mendapatkan poin loyalty
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Kumpulkan poin setiap transaksi dan tukar dengan diskon.
+                </p>
+                <div className="flex items-center gap-3 mt-2">
+                  <Link
+                    href="/account/login"
+                    className="text-xs font-semibold text-[--color-primary] hover:underline"
+                  >
+                    Masuk / Daftar
+                  </Link>
+                  <span className="text-xs text-amber-600">·</span>
+                  <span className="text-xs text-amber-600">
+                    Lanjutkan tanpa akun →
+                  </span>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Section 5: Loyalty redemption (logged in + loyalty enabled + has balance) */}
+          {loyaltyEnabled && customerLoggedIn === true && loyaltyInfo && (
+            <section className="bg-white rounded-xl shadow-sm border border-stone-100 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Star className="h-4 w-4 text-amber-500" />
+                <h3 className="text-sm font-semibold text-stone-700">
+                  {loyaltyInfo.programName}
+                </h3>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-stone-700">
+                    <span className="font-semibold">{loyaltyInfo.balance.toLocaleString("id-ID")} pts</span>
+                    {" "}={" "}
+                    <span className="text-[--color-primary] font-medium">
+                      {fmt(Math.floor(loyaltyInfo.balance * loyaltyInfo.redemptionRate))}
+                    </span>
+                  </p>
+                  {useRedeemPoints && loyaltyDiscountAmount > 0 && (
+                    <p className="text-xs text-emerald-600 mt-0.5">
+                      Diskon {fmt(loyaltyDiscountAmount)} diterapkan
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUseRedeemPoints((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    useRedeemPoints
+                      ? "bg-[--color-primary]"
+                      : "bg-stone-200"
+                  }`}
+                  aria-pressed={useRedeemPoints}
+                  aria-label="Gunakan Poin"
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      useRedeemPoints ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+              {useRedeemPoints && (
+                <p className="text-xs text-stone-400 mt-1.5">
+                  Gunakan Poin
+                </p>
+              )}
+            </section>
+          )}
+
           {/* Error */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-3">
@@ -483,7 +632,7 @@ export function CheckoutScreen({ settings, restaurantName }: CheckoutScreenProps
             ? "Memproses..."
             : paymentMode === "PAY_AT_CASHIER"
             ? `Kirim Pesanan — Bayar di Kasir`
-            : `Bayar Sekarang — ${fmt(summary.grandTotal)}`}
+            : `Bayar Sekarang — ${fmt(finalGrandTotal)}`}
         </button>
 
         {/* Patungan CTA (PAY_FIRST only) */}
