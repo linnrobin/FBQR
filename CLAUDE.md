@@ -11,9 +11,45 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.31
-Current phase  : Phase 7 — Step 28 complete.
-Last completed : Step 28 — Full live merchant dashboard.
+Version        : 4.32
+Current phase  : Phase 7 — Production audit complete.
+Last completed : Production audit — all 7 stub cron jobs implemented + security hardening.
+                 No schema changes. No new packages.
+                 Modified files (apps/web):
+                   app/api/cron/order-expiry/route.ts — full implementation: expire
+                     timed-out PENDING orders (non-CASH); auto-complete READY orders past
+                     autoCompleteReadyMinutes; atomic WHERE guards; CronRunLog.
+                   app/api/cron/session-cleanup/route.ts — full implementation: expire
+                     stale ACTIVE CustomerSessions; update Table.status (DIRTY/AVAILABLE
+                     per enableDirtyState); cancel abandoned BY_WEIGHT orders + Midtrans
+                     refund; resolve leaked WaiterRequests; CronRunLog.
+                   app/api/cron/pii-deletion/route.ts — full UU PDP implementation:
+                     anonymize Customer PII (email, name, phone, password) 30+ days after
+                     deletionRequestedAt; send confirmation email before anonymizing;
+                     zero out loyalty balances; detach CustomerSessions; AuditLog; CronRunLog.
+                   app/api/cron/queue-counter-prune/route.ts — full implementation:
+                     delete QueueCounter rows older than 30 WIB days; CronRunLog.
+                   app/api/cron/availability-reset/route.ts — full implementation:
+                     reset autoResetAvailability items (isAvailable=false, stockCount IS NULL)
+                     at 00:05 WIB daily; CronRunLog.
+                   app/api/cron/eod-cash-cleanup/route.ts — full implementation:
+                     cancel stale PENDING_CASH orders older than 12h not manually closed;
+                     restore stockCount; CronRunLog.
+                   app/api/cron/balance-charge-alert/route.ts — full implementation:
+                     audit-log ALERT entries for BY_WEIGHT order items with weight entered
+                     but no BALANCE_CHARGE/BALANCE_REFUND payment; dedupes per week; CronRunLog.
+                   app/api/internal/notify/route.ts — Zod discriminatedUnion validation
+                     (UUID guards, bounded string/number fields); crypto.timingSafeEqual()
+                     for INTERNAL_API_SECRET comparison.
+                   app/api/webhook/gofood/route.ts — use crypto.timingSafeEqual() with
+                     equal-length padded buffers (prevents secret-length timing attack).
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — wrap all DB ops in try/catch;
+                     improved idempotency (skip when txId already SUCCESS); P2002 constraint
+                     violation silently swallowed as concurrent-request guard; updateMany
+                     with status guards on FAILED/REFUNDED transitions.
+                 All 41 tests still passing.
+Previously: Step 28 — Full live merchant dashboard.
                  No schema changes. No new packages.
                  New files created (apps/web):
                    app/api/merchant/dashboard/route.ts — GET: live dashboard stats
