@@ -562,6 +562,13 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `OrderItem` | `weightUnit` | String? | Unit label matching `MenuItem.unitLabel` (e.g. `"kg"`, `"g"`). Stored for display on KDS and receipt; `null` for non-BY_WEIGHT items. |
 | `OrderItem` | `finalLineTotal` | Int? | Calculated line total after weighing: `round(weightValue × MenuItem.pricePerUnit)`. `null` until weight is entered. Used to compute BALANCE_CHARGE or BALANCE_REFUND delta vs the DEPOSIT amount. |
 | `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
+| `OrderItem` | `specialRequest` | String? | Customer per-item instruction (e.g. "tidak pedas", "extra sauce"). Added Step 15. |
+| `MerchantSettings` | `taxRate` | Decimal default 0.11 | PPN rate. Standard Indonesia VAT 11%. |
+| `MerchantSettings` | `taxLabel` | String default "PPN" | Display label for tax line item. |
+| `MerchantSettings` | `serviceChargeRate` | Decimal default 0.00 | Service charge rate (e.g. 0.05 = 5%). |
+| `MerchantSettings` | `serviceChargeLabel` | String default "Service" | Display label for service charge. |
+| `MerchantSettings` | `taxOnServiceCharge` | Boolean default true | If true, PPN applies to subtotal + service charge per Indonesian PPN regulation. |
+| `MerchantSettings` | `pricesIncludeTax` | Boolean default false | If true, menu prices are tax-inclusive; grandTotal = subtotal. |
 | `Payment` | `splitGroupId` | String? FK → PatunganSession.id | Null for non-Patungan payments. Set when a payment belongs to a Patungan split session. Multiple Payment rows with the same `splitGroupId` collectively cover one Order's `grandTotal`. |
 | `Order` | `readyAt` | DateTime? | Timestamp when Order.status transitioned to `READY`. Set atomically in any READY transition (KDS [Mark Ready] button, or any future auto-READY path). Used by the Order Expiry Cron STEP 1b to compute the `autoCompleteReadyMinutes` hold period accurately. Falls back to `Order.updatedAt` in the cron if null (pre-migration rows). `updatedAt` alone is unreliable for hold-period start because other writes reset it. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |

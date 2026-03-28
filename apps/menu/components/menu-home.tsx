@@ -6,24 +6,27 @@
  * Manages:
  *   - Cart state (CartEntry per item: qty, variant, add-ons, special request, line total)
  *   - Item detail modal state (open item, opens bottom sheet)
+ *   - Cart sheet (slide-up with order summary + CTA → checkout)
  *   - Active category tab (driven by scroll-spy via IntersectionObserver)
  *   - Ordering-paused banner
  *   - Browse-only mode banner (shareable URL)
  *   - Layout switching: GRID | LIST | BUNDLE | SPOTLIGHT
  *
- * Renders: Header → [CategoryTabs] → Layout → ItemDetailModal → Bottom CartBar / BrowseBanner
+ * Renders: Header → [CategoryTabs] → Layout → ItemDetailModal → CartSheet → Bottom CartBar / BrowseBanner
  * Note: Spotlight layout omits CategoryTabs (all items in one carousel).
  */
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { ShoppingCart } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { MenuCategoryTabs } from "./menu-category-tabs";
 import { MenuGridLayout, type MenuCategoryData } from "./menu-grid-layout";
 import { MenuListLayout } from "./menu-list-layout";
 import { MenuBundleLayout } from "./menu-bundle-layout";
 import { MenuSpotlightLayout } from "./menu-spotlight-layout";
 import { ItemDetailModal, type CartEntry } from "./item-detail-modal";
+import { CartSheet, type TaxSettings } from "./cart-sheet";
 import type { MenuItemData } from "./menu-item-card";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -43,6 +46,12 @@ interface MenuHomeProps {
   categories: MenuCategoryData[];
   /** Restaurant's configured layout (defaults to GRID if not set) */
   menuLayout?: MenuLayout | null;
+  /** Required for checkout navigation (ordering mode only) */
+  restaurantId?: string;
+  tableId?: string;
+  /** Tax + payment settings for cart sheet */
+  taxSettings?: TaxSettings;
+  paymentMode?: "PAY_FIRST" | "PAY_AT_CASHIER";
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -55,9 +64,14 @@ export function MenuHome({
   orderingPausedMessage,
   categories,
   menuLayout,
+  restaurantId,
+  tableId,
+  taxSettings,
+  paymentMode = "PAY_FIRST",
 }: MenuHomeProps) {
   const layout: MenuLayout = menuLayout ?? "GRID";
   const isSpotlight = layout === "SPOTLIGHT";
+  const router = useRouter();
 
   // ── Cart: itemId → CartEntry ──────────────────────────────────────────────
   const [cartItems, setCartItems] = useState<Map<string, CartEntry>>(new Map());
@@ -65,6 +79,9 @@ export function MenuHome({
   // ── Item detail modal state ───────────────────────────────────────────────
   const [openItem, setOpenItem] = useState<MenuItemData | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // ── Cart sheet state ──────────────────────────────────────────────────────
+  const [cartSheetOpen, setCartSheetOpen] = useState(false);
 
   // ── Category scroll-spy ───────────────────────────────────────────────────
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(
@@ -110,6 +127,46 @@ export function MenuHome({
     });
   }, []);
 
+  /** Update qty in cart; remove if qty reaches 0 */
+  const handleUpdateQty = useCallback((itemId: string, newQty: number) => {
+    setCartItems((prev) => {
+      const next = new Map(prev);
+      if (newQty <= 0) {
+        next.delete(itemId);
+      } else {
+        const existing = next.get(itemId);
+        if (existing) {
+          const unitPrice =
+            existing.lineTotal / existing.qty;
+          next.set(itemId, {
+            ...existing,
+            qty: newQty,
+            lineTotal: Math.round(unitPrice * newQty),
+          });
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  /** Remove an item from cart */
+  const handleRemoveItem = useCallback((itemId: string) => {
+    setCartItems((prev) => {
+      const next = new Map(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }, []);
+
+  /** Navigate to checkout — saves cart to sessionStorage first */
+  const handleProceedToCheckout = useCallback(() => {
+    if (!restaurantId || !tableId) return;
+    const cartArray = Array.from(cartItems.values());
+    sessionStorage.setItem("fbqr_cart", JSON.stringify(cartArray));
+    setCartSheetOpen(false);
+    router.push(`/${restaurantId}/${tableId}/checkout`);
+  }, [cartItems, restaurantId, tableId, router]);
+
   // ── Scroll-spy via IntersectionObserver ──────────────────────────────────
 
   useEffect(() => {
@@ -139,8 +196,18 @@ export function MenuHome({
     return () => observer.disconnect();
   }, [categories]);
 
-  // ─── Render ─────────────────────────────────────────────────────────────
+  // Default tax settings (used when not provided by server — e.g. browse-only mode)
+  const effectiveTaxSettings: TaxSettings = taxSettings ?? {
+    taxRate: 0.11,
+    taxLabel: "PPN",
+    serviceChargeRate: 0,
+    serviceChargeLabel: "Service",
+    taxOnServiceCharge: true,
+    pricesIncludeTax: false,
+    roundingRule: "NONE",
+  };
 
+  // ─── Render ─────────────────────────────────────────────────────────────
   const tabCategories = categories.map((c) => ({ id: c.id, name: c.name }));
 
   return (
@@ -162,6 +229,7 @@ export function MenuHome({
         {isOrderingMode && (
           <button
             type="button"
+            onClick={() => cartItemCount > 0 && setCartSheetOpen(true)}
             className="relative p-2 text-stone-600 hover:text-[--color-primary] transition-colors"
             aria-label="Keranjang"
           >
@@ -192,7 +260,7 @@ export function MenuHome({
       )}
 
       {/* ── Layout ── */}
-      <main>
+      <main className={isOrderingMode && cartItemCount > 0 ? "pb-16" : ""}>
         {layout === "LIST" && (
           <MenuListLayout
             categories={categories}
@@ -237,9 +305,25 @@ export function MenuHome({
         onAddToCart={handleAddToCart}
       />
 
+      {/* ── Cart Sheet ── */}
+      <CartSheet
+        isOpen={cartSheetOpen}
+        onClose={() => setCartSheetOpen(false)}
+        cartItems={cartItems}
+        taxSettings={effectiveTaxSettings}
+        paymentMode={paymentMode}
+        onUpdateQty={handleUpdateQty}
+        onRemoveItem={handleRemoveItem}
+        onProceed={handleProceedToCheckout}
+      />
+
       {/* ── Bottom Bar ── */}
       {isOrderingMode && cartItemCount > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-30 h-14 bg-[--color-primary] flex items-center px-4 gap-3 shadow-lg">
+        <button
+          type="button"
+          onClick={() => setCartSheetOpen(true)}
+          className="fixed bottom-0 left-0 right-0 z-30 h-14 bg-[--color-primary] flex items-center px-4 gap-3 shadow-lg hover:opacity-95 transition-opacity"
+        >
           <div className="flex items-center gap-2 text-white flex-1">
             <ShoppingCart className="h-5 w-5 shrink-0" />
             <span className="text-sm font-semibold">
@@ -252,7 +336,7 @@ export function MenuHome({
           <span className="text-white text-sm font-medium opacity-90">
             Lihat Keranjang →
           </span>
-        </div>
+        </button>
       )}
 
       {/* ── Browse-only Banner (shareable menu) ── */}

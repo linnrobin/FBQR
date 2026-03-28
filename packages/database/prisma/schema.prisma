@@ -572,6 +572,16 @@ model MerchantSettings {
   autoPrintKitchenTicket Boolean @default(true)
   autoPrintReceipt       Boolean @default(true)
 
+  // Tax & service charge (ADR-013)
+  taxRate            Decimal @default(0.11) @db.Decimal(5, 4)
+  taxLabel           String  @default("PPN")
+  serviceChargeRate  Decimal @default(0.00) @db.Decimal(5, 4)
+  serviceChargeLabel String  @default("Service")
+  /// If true, PPN applies to (subtotal + serviceCharge). Default true per Indonesian PPN regulation.
+  taxOnServiceCharge Boolean @default(true)
+  /// If true, displayed prices already include tax; grandTotal = subtotal (no addition).
+  pricesIncludeTax   Boolean @default(false)
+
   // Rounding (cash merchants)
   roundingRule RoundingRule @default(NONE)
 
@@ -930,6 +940,9 @@ model OrderItem {
 
   // Phase 2: per-item status (nullable in Phase 1)
   status OrderItemStatus?
+
+  /// Customer's special request for this item (e.g. "no spicy", "extra sauce")
+  specialRequest String?
 
   // BY_WEIGHT fields (schema exists Phase 1; KDS UI ships Phase 1.5)
   needsWeighing         Boolean  @default(false)

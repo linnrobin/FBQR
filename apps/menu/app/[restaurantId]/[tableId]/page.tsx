@@ -122,6 +122,14 @@ export default async function TableMenuPage({
       orderingPaused: true,
       orderingPausedMessage: true,
       tableSessionTimeoutMinutes: true,
+      paymentMode: true,
+      taxRate: true,
+      taxLabel: true,
+      serviceChargeRate: true,
+      serviceChargeLabel: true,
+      taxOnServiceCharge: true,
+      pricesIncludeTax: true,
+      roundingRule: true,
     },
   });
 
@@ -281,6 +289,18 @@ export default async function TableMenuPage({
     })),
   }));
 
+  const taxSettings = settings
+    ? {
+        taxRate: Number(settings.taxRate),
+        taxLabel: settings.taxLabel,
+        serviceChargeRate: Number(settings.serviceChargeRate),
+        serviceChargeLabel: settings.serviceChargeLabel,
+        taxOnServiceCharge: settings.taxOnServiceCharge,
+        pricesIncludeTax: settings.pricesIncludeTax,
+        roundingRule: settings.roundingRule as "NONE" | "ROUND_50" | "ROUND_100",
+      }
+    : undefined;
+
   return (
     <MenuHome
       restaurantName={restaurant.name}
@@ -290,6 +310,10 @@ export default async function TableMenuPage({
       orderingPausedMessage={settings?.orderingPausedMessage ?? null}
       categories={categories}
       menuLayout={(branding?.menuLayout as "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT") ?? "GRID"}
+      restaurantId={restaurantId}
+      tableId={tableId}
+      paymentMode={(settings?.paymentMode as "PAY_FIRST" | "PAY_AT_CASHIER") ?? "PAY_FIRST"}
+      {...(taxSettings ? { taxSettings } : {})}
     />
   );
 }

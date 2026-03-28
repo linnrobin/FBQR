@@ -29,6 +29,8 @@ export type CartAddon = {
 
 export type CartEntry = {
   itemId: string;
+  itemName: string;
+  imageUrl: string | null;
   qty: number;
   variantId: string | null;
   variantName: string | null;
@@ -153,6 +155,8 @@ export function ItemDetailModal({
 
     onAddToCart({
       itemId: item.id,
+      itemName: item.name,
+      imageUrl: item.imageUrl ?? null,
       qty,
       variantId: selectedVariantId,
       variantName: selectedVariant?.name ?? null,

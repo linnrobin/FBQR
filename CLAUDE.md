@@ -10,10 +10,59 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-27
-Version        : 4.17
-Current phase  : Phase 4 — Step 14 complete.
-Last completed : Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu).
+Last updated   : 2026-03-28
+Version        : 4.18
+Current phase  : Phase 4 — Step 15 complete.
+Last completed : Step 15 — Cart + pre-invoice + Midtrans QRIS + cash + split payment / Patungan (apps/menu).
+                 Schema changes:
+                   MerchantSettings: added taxRate (Decimal default 0.11), taxLabel (String default "PPN"),
+                     serviceChargeRate (Decimal default 0.00), serviceChargeLabel (String default "Service"),
+                     taxOnServiceCharge (Boolean default true), pricesIncludeTax (Boolean default false).
+                   OrderItem: added specialRequest (String?) for per-item customer instructions.
+                 New files created (apps/menu):
+                   components/cart-sheet.tsx — Bottom sheet (Framer Motion, max-h-85vh): cart item
+                     rows with [−][qty][+] controls + delete, order summary (subtotal/service/tax/total),
+                     "Lanjut ke Pembayaran" / "Pesan & Bayar di Kasir" CTA.
+                   components/payment-method-selector.tsx — Radio cards for QRIS/VA/CARD selection;
+                     fee label per method; selected state uses --color-primary border/bg.
+                   components/patungan-setup-modal.tsx — Bottom sheet: EQUAL/MANUAL mode toggle,
+                     totalParts stepper (2–10), per-person amount preview, "Buat Link Patungan" CTA.
+                   components/patungan-host-screen.tsx — Host progress view: 6-char shareCode + copy
+                     link, progress bar, per-participant paid/pending status list, Cancel Patungan button.
+                   components/patungan-participant-screen.tsx — Participant view: restaurant name,
+                     their share amount, progress bar, Pay button → Midtrans redirect.
+                   components/checkout-screen.tsx — Client component: reads cart from sessionStorage,
+                     shows pre-invoice (itemized + tax breakdown), payment method selector (PAY_FIRST),
+                     customer note textarea, privacy consent (UU PDP) gated, Patungan CTA;
+                     handles order submission and Midtrans redirect; PAY_AT_CASHIER pending screen.
+                   app/[restaurantId]/[tableId]/checkout/page.tsx — Server component: validates
+                     session + fetches tax/payment settings; renders CheckoutScreen.
+                   app/patungan/page.tsx — 6-char code entry page for participants.
+                   app/patungan/[patunganId]/page.tsx — Participant payment page.
+                   app/api/order/route.ts — POST: validate session, verify items, compute financials
+                     (ADR-013), create Order + Payment, return Snap token (PAY_FIRST) or pending
+                     confirmation (PAY_AT_CASHIER). Guards: orderingPaused, maxPendingOrders,
+                     maxOrderValueIDR, BY_WEIGHT block.
+                   app/api/patungan/route.ts — POST: create PatunganSession (EQUAL/MANUAL); validates
+                     PAY_FIRST mode, BY_WEIGHT block, order PENDING guard.
+                   app/api/patungan/[patunganId]/route.ts — GET: status (public); DELETE: host-only
+                     cancel + best-effort Midtrans refunds.
+                   app/api/patungan/[patunganId]/pay/route.ts — POST: create participant Snap token.
+                   app/api/patungan/lookup/route.ts — GET: resolve shareCode → patunganId.
+                   app/api/webhook/midtrans/route.ts — POST: SHA512 signature verification; maps
+                     transaction_status to Payment/Order status; Patungan: increments paidParts,
+                     confirms Order when all parts paid; async Invoice creation via after().
+                 Modified files (apps/menu):
+                   components/item-detail-modal.tsx — CartEntry type extended with itemName: string
+                     and imageUrl: string | null; onAddToCart call populates both.
+                   components/menu-home.tsx — added CartSheet integration; cart icon opens sheet;
+                     handleUpdateQty / handleRemoveItem cart mutators; handleProceedToCheckout saves
+                     cart to sessionStorage and navigates to checkout; new props: restaurantId,
+                     tableId, taxSettings, paymentMode.
+                   app/[restaurantId]/[tableId]/page.tsx — fetches paymentMode + all tax settings
+                     from MerchantSettings; passes to MenuHome as taxSettings + paymentMode props.
+                 All 41 tests still passing. TypeScript clean.
+Previously: Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu).
                  New files created (apps/menu):
                    components/item-variant-selector.tsx — Radio pill-chip group for variant
                      selection; selected chip uses border/bg/text in --color-primary; shows
@@ -562,7 +611,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 15 — Cart + pre-invoice + Midtrans QRIS + cash option + split payment / Patungan (apps/menu) (⚠ pre-split).
+Next step      : Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu) (⚠ pre-split).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -650,7 +699,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
 - [x] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
 - [x] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
-- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
+- [x] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
 - [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 
 ### Phase 5 — Kitchen & Operations
