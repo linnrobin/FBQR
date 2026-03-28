@@ -13,12 +13,13 @@
  *   PAY_FIRST:       { orderId, snapToken, redirectUrl, grandTotal }
  *   PAY_AT_CASHIER:  { orderId, grandTotal, paymentMode: "PAY_AT_CASHIER" }
  */
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { prisma } from "@repo/database";
 import { formatInTimeZone } from "date-fns-tz";
 import type { CartEntry } from "@/components/item-detail-modal";
 import { sendInternalNotification } from "@/lib/notify";
+import { generateAndStoreCustomerInvoice } from "@/lib/invoice";
 
 // ─── Midtrans helpers ────────────────────────────────────────────────────────
 
@@ -448,7 +449,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // ── PAY_AT_CASHIER — notify kitchen immediately, then return ─────────────
+    // ── PAY_AT_CASHIER — notify kitchen immediately, generate invoice, return ──
     if (!isPayFirst) {
       // Fire-and-forget push notification (kitchen needs to see this right away)
       sendInternalNotification({
@@ -463,6 +464,9 @@ export async function POST(req: NextRequest) {
       }).catch(() => {
         // Non-fatal — notification failure never affects the order response
       });
+
+      // PAY_AT_CASHIER orders are immediately confirmed — generate invoice async
+      after(() => generateAndStoreCustomerInvoice(order.id));
 
       return NextResponse.json({
         orderId: order.id,

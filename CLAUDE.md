@@ -11,9 +11,45 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.21
-Current phase  : Phase 5 — Step 18 complete.
-Last completed : Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
+Version        : 4.22
+Current phase  : Phase 5 — Step 19 complete.
+Last completed : Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
+                 No schema changes.
+                 New packages: @react-pdf/renderer (apps/web + apps/menu dependencies).
+                 New files created (apps/web):
+                   lib/pdf/customer-invoice.tsx — CustomerInvoicePdf React-PDF component (A4);
+                     items table, subtotal/service/tax/grand total, payment info, Bahasa Indonesia copy.
+                   lib/pdf/billing-invoice.tsx — BillingInvoicePdf React-PDF component (A4);
+                     FBQR brand header, billed-to section, line item, totals, payment status badge.
+                   lib/customer-invoice.tsx — generateAndStoreCustomerInvoice(orderId) for waiter-
+                     assisted orders placed via apps/web; mirrors apps/menu logic.
+                   lib/billing-invoice.tsx — generateAndStoreBillingInvoice(invoiceId); fetches
+                     MerchantBillingInvoice + merchant; renders PDF; uploads to Supabase Storage
+                     invoices/billing/{merchantId}/{invoiceNumber}.pdf; updates pdfUrl with 24h signed URL.
+                   app/api/merchant/billing-invoices/route.ts — GET: lists authenticated merchant's
+                     FBQR subscription invoices (paginated, status filter).
+                   app/(merchant)/merchant/billing/page.tsx — Server component: current plan summary
+                     card + initial invoice list.
+                   app/(merchant)/merchant/billing/billing-invoices-client.tsx — Client: status filter
+                     tabs, invoice table with PDF download links, plan info card.
+                 New files created (apps/menu):
+                   lib/pdf/customer-invoice.tsx — CustomerInvoicePdf (same template as apps/web).
+                   lib/invoice.tsx — generateAndStoreCustomerInvoice(orderId); invoice number generation
+                     INV-{branchCode}-{YYYYMMDD}-{seq:04d}; renders PDF; uploads to Supabase Storage
+                     invoices/orders/{orderId}.pdf; updates Invoice.pdfUrl with 24h signed URL.
+                 Modified files (apps/web):
+                   app/api/cron/billing/route.ts — sendEmail() stub replaced with real Resend integration
+                     (graceful stub if RESEND_API_KEY absent); generateAndStoreBillingInvoice() called
+                     via after() after invoice creation; invoice-issued email includes PDF link.
+                   app/api/merchant/orders/route.ts — after() generateAndStoreCustomerInvoice() for
+                     waiter-assisted (PAY_AT_CASHIER) orders.
+                   components/merchant/sidebar.tsx — added "Tagihan" link → /merchant/billing.
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — replaced stub Invoice upsert with
+                     after(() => generateAndStoreCustomerInvoice(orderId)); Patungan full-pay also triggers.
+                   app/api/order/route.ts — after() generateAndStoreCustomerInvoice() for PAY_AT_CASHIER.
+                 All 41 tests still passing.
+Previously: Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
                  Schema changes:
                    New model: StaffPushSubscription — stores browser push endpoint + VAPID keys per
                      restaurant/staff. Fields: id, staffId (FK nullable), restaurantId (FK), branchId
@@ -714,7 +750,9 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
+Next step      : Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
+                   queue number display, PWA offline mode for kitchen display, kitchen ticket +
+                   receipt printing (node-thermal-printer) (apps/web/(kitchen)).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -808,7 +846,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 5 — Kitchen & Operations
 - [x] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
 - [x] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
-- [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
+- [x] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
 - [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 
 ### Phase 6 — Analytics & Intelligence

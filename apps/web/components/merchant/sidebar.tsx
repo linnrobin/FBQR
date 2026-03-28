@@ -14,6 +14,7 @@ import {
   Settings,
   Palette,
   LogOut,
+  Receipt,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: "/merchant/tables", label: "Meja & QR", icon: QrCode },
   { href: "/merchant/promotions", label: "Promosi", icon: Tag },
   { href: "/merchant/analytics", label: "Analitik", icon: BarChart2 },
+  { href: "/merchant/billing", label: "Tagihan", icon: Receipt },
   { href: "/merchant/branding", label: "Branding", icon: Palette },
   { href: "/merchant/settings", label: "Pengaturan", icon: Settings },
 ];

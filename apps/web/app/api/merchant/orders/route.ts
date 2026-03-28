@@ -17,6 +17,7 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { formatInTimeZone } from "date-fns-tz";
 import { sendNewOrderNotification } from "@/lib/push";
+import { generateAndStoreCustomerInvoice } from "@/lib/customer-invoice";
 
 const OrderItemSchema = z.object({
   menuItemId: z.string().uuid(),
@@ -262,6 +263,9 @@ export async function POST(req: NextRequest) {
       grandTotal: order.grandTotal,
     });
   });
+
+  // Waiter-assisted orders are immediately confirmed (PAY_AT_CASHIER) — generate invoice async
+  after(() => generateAndStoreCustomerInvoice(order.id));
 
   return NextResponse.json({ order }, { status: 201 });
 }

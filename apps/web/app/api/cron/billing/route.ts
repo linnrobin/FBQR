@@ -15,17 +15,66 @@
 import { validateCronSecret, unauthorizedCronResponse } from "@/lib/cron";
 import { prisma } from "@repo/database";
 import { addDays, addMonths, addYears } from "date-fns";
+import { after } from "next/server";
+import { Resend } from "resend";
+import { generateAndStoreBillingInvoice } from "@/lib/billing-invoice";
 
 // ---------------------------------------------------------------------------
-// Email helper (stub — real integration added when Resend is wired up)
+// Email helper — Resend integration
 // ---------------------------------------------------------------------------
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const EMAIL_FROM = process.env.EMAIL_FROM ?? "noreply@fbqr.app";
+
 async function sendEmail(
   to: string,
   template: string,
   data: Record<string, unknown>
 ) {
-  // TODO: integrate Resend when email notifications step is implemented
-  console.log(`[billing-cron] sendEmail to=${to} template=${template}`, data);
+  if (!process.env.RESEND_API_KEY) {
+    console.log(`[billing-cron] sendEmail stub (no RESEND_API_KEY) to=${to} template=${template}`, data);
+    return;
+  }
+
+  const subjects: Record<string, string> = {
+    "renewal-reminder-7d": `Perpanjangan langganan FBQR dalam 7 hari`,
+    "renewal-reminder-3d": `Perpanjangan langganan FBQR dalam 3 hari`,
+    "invoice-issued": `Invoice FBQR ${data.invoiceNumber ?? ""} telah diterbitkan`,
+    "payment-failed": `Pembayaran langganan FBQR gagal`,
+    "account-suspended-billing": `Akun FBQR Anda ditangguhkan`,
+    "trial-expired": `Masa percobaan FBQR Anda telah berakhir`,
+    "winback-day1": `Kami merindukanmu di FBQR`,
+    "winback-day7": `Kembali ke FBQR — penawaran khusus untukmu`,
+    "winback-day14": `Bergabung kembali dengan FBQR`,
+    "winback-day30-data-deletion": `Pemberitahuan penghapusan data akun FBQR (UU PDP)`,
+  };
+
+  const htmlBodies: Record<string, string> = {
+    "renewal-reminder-7d": `<p>Langganan <strong>${data.planName}</strong> Anda akan diperbarui pada <strong>${new Date(data.renewalDate as string).toLocaleDateString("id-ID")}</strong>.</p><p>Pastikan metode pembayaran Anda aktif.</p>`,
+    "renewal-reminder-3d": `<p>Pengingat: langganan <strong>${data.planName}</strong> Anda akan diperbarui dalam 3 hari.</p>`,
+    "invoice-issued": `<p>Invoice <strong>${data.invoiceNumber}</strong> telah diterbitkan.</p><p>Total: <strong>Rp ${(data.total as number)?.toLocaleString("id-ID")}</strong> &mdash; jatuh tempo ${new Date(data.dueAt as string).toLocaleDateString("id-ID")}.</p>${data.pdfUrl ? `<p><a href="${data.pdfUrl}">Unduh Invoice PDF</a></p>` : ""}`,
+    "payment-failed": `<p>Pembayaran langganan <strong>${data.planName}</strong> Anda gagal (percobaan ke-${data.failedAttempts}).</p><p>Silakan perbarui metode pembayaran Anda sebelum akun ditangguhkan.</p>`,
+    "account-suspended-billing": `<p>Akun FBQR Anda telah ditangguhkan setelah ${data.failedAttempts} percobaan pembayaran yang gagal.</p><p>Hubungi support@fbqr.app untuk mengaktifkan kembali.</p>`,
+    "trial-expired": `<p>Masa percobaan FBQR Anda telah berakhir. Pilih paket langganan untuk melanjutkan.</p>`,
+    "winback-day1": `<p>Kami merindukanmu! Akun FBQR kamu telah dibatalkan. Jika kamu ingin kembali, kami selalu siap membantu.</p>`,
+    "winback-day7": `<p>Sudah seminggu sejak kamu meninggalkan FBQR. Kami punya penawaran menarik untukmu — hubungi kami!</p>`,
+    "winback-day14": `<p>FBQR terus berkembang dengan fitur-fitur baru. Kembali dan coba gratis selama 7 hari!</p>`,
+    "winback-day30-data-deletion": `<p>Sesuai UU PDP, data akun FBQR kamu akan dihapus dalam 30 hari jika tidak ada aktivasi ulang. Hubungi support@fbqr.app jika ada pertanyaan.</p>`,
+  };
+
+  const subject = subjects[template] ?? `Notifikasi FBQR: ${template}`;
+  const html = htmlBodies[template] ?? `<p>Template: ${template}</p><pre>${JSON.stringify(data, null, 2)}</pre>`;
+
+  try {
+    await resend.emails.send({
+      from: EMAIL_FROM,
+      to,
+      subject,
+      html: `<!DOCTYPE html><html><body style="font-family:sans-serif;color:#1c1917;line-height:1.6;max-width:600px;margin:0 auto;padding:24px">${html}<hr style="margin-top:32px;border:none;border-top:1px solid #e7e5e4"><p style="color:#a8a29e;font-size:12px">FBQR Platform &mdash; Jl. Contoh No.1, Jakarta &mdash; support@fbqr.app</p></body></html>`,
+    });
+  } catch (err) {
+    console.error(`[billing-cron] sendEmail failed to=${to} template=${template}:`, err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,12 +246,38 @@ export async function GET(req: Request) {
           });
         });
 
-        await sendEmail(sub.merchant.email, "invoice-issued", {
-          invoiceNumber,
-          planName: sub.plan.name,
-          total,
-          dueAt: dueAt.toISOString(),
+        // Fetch the created invoice id for PDF generation
+        const createdInvoice = await prisma.merchantBillingInvoice.findUnique({
+          where: { invoiceNumber },
+          select: { id: true },
         });
+
+        // Generate PDF asynchronously after returning (non-blocking)
+        if (createdInvoice) {
+          after(async () => {
+            await generateAndStoreBillingInvoice(createdInvoice.id);
+            // Fetch fresh signed URL for email
+            const inv = await prisma.merchantBillingInvoice.findUnique({
+              where: { id: createdInvoice.id },
+              select: { pdfUrl: true },
+            });
+            await sendEmail(sub.merchant.email, "invoice-issued", {
+              invoiceNumber,
+              planName: sub.plan.name,
+              total,
+              dueAt: dueAt.toISOString(),
+              pdfUrl: inv?.pdfUrl ?? null,
+            });
+          });
+        } else {
+          await sendEmail(sub.merchant.email, "invoice-issued", {
+            invoiceNumber,
+            planName: sub.plan.name,
+            total,
+            dueAt: dueAt.toISOString(),
+            pdfUrl: null,
+          });
+        }
 
         affectedRows++;
       } catch (err: unknown) {

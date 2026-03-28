@@ -12,6 +12,7 @@ import crypto from "crypto";
 import { after } from "next/server";
 import { prisma } from "@repo/database";
 import { sendInternalNotification } from "@/lib/notify";
+import { generateAndStoreCustomerInvoice } from "@/lib/invoice";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -206,20 +207,7 @@ export async function POST(req: NextRequest) {
 
   // Trigger async PDF generation after returning 200 (ADR spec: use after())
   if (isSuccess && !payment.splitGroupId) {
-    after(async () => {
-      try {
-        await prisma.invoice.upsert({
-          where: { orderId },
-          update: {},
-          create: {
-            orderId,
-            invoiceNumber: `INV-${orderId.slice(0, 8).toUpperCase()}-${Date.now()}`,
-          },
-        });
-      } catch (e) {
-        console.error("[webhook/midtrans] Invoice creation failed", e);
-      }
-    });
+    after(() => generateAndStoreCustomerInvoice(orderId));
   }
 
   return new NextResponse("OK", { status: 200 });
@@ -342,5 +330,8 @@ async function handlePatunganPayment(
         });
       });
     }
+
+    // Generate invoice PDF for Patungan order (all parts paid)
+    after(() => generateAndStoreCustomerInvoice(orderId));
   }
 }
