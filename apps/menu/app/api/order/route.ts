@@ -324,21 +324,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Fetch kitchen station for item routing ────────────────────────────────
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: restaurantId },
-      select: {
-        defaultStationId: true,
-        stations: {
-          select: { id: true },
-          take: 1,
+    // ── Fetch kitchen station + table orderType ───────────────────────────────
+    const [restaurant, table] = await Promise.all([
+      prisma.restaurant.findUnique({
+        where: { id: restaurantId },
+        select: {
+          defaultStationId: true,
+          stations: {
+            select: { id: true },
+            take: 1,
+          },
         },
-      },
-    });
+      }),
+      prisma.table.findUnique({
+        where: { id: tableId },
+        select: { tableType: true },
+      }),
+    ]);
     const defaultStationId =
       restaurant?.defaultStationId ??
       restaurant?.stations?.[0]?.id ??
       "default";
+    const orderType = table?.tableType ?? "DINE_IN";
 
     // ── Generate queue number ─────────────────────────────────────────────────
     const queueNumber = await generateQueueNumber(session.branchId);
@@ -397,6 +404,7 @@ export async function POST(req: NextRequest) {
       data: {
         branchId: session.branchId,
         customerSessionId: session.id,
+        orderType,
         queueNumber,
         subtotal: financials.subtotal,
         taxAmount: financials.taxAmount,

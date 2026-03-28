@@ -250,7 +250,7 @@ export function OrderTrackingScreen({
           <div className="flex-1 min-w-0">
             <p className="font-bold text-sm truncate">{order.restaurant.name}</p>
             <p className="text-xs opacity-80">
-              Pesanan #{order.queueNumber.toString().padStart(3, "0")}
+              {order.orderType === "TAKEAWAY" ? "Takeaway" : "Pesanan"} #{order.queueNumber.toString().padStart(3, "0")}
             </p>
           </div>
         </div>
@@ -299,6 +299,27 @@ export function OrderTrackingScreen({
       )}
 
       <div className="px-4 py-4 space-y-4">
+        {/* Takeaway — prominent queue number card */}
+        {order.orderType === "TAKEAWAY" && !isCancelled && (
+          <div className="bg-white rounded-xl border border-stone-100 px-6 py-6 text-center">
+            <p className="text-sm text-stone-500 mb-1">Nomor Antrian Anda</p>
+            <p
+              className="font-black leading-none text-[--color-primary]"
+              style={{ fontSize: "56px" }}
+            >
+              #{order.queueNumber.toString().padStart(3, "0")}
+            </p>
+            <p className="text-sm text-stone-600 mt-3">
+              {order.status === "READY"
+                ? "Pesanan Anda siap diambil!"
+                : "Pesanan Anda sedang disiapkan"}
+            </p>
+            <p className="text-xs text-stone-400 mt-1">
+              Perhatikan layar antrian di area kasir.
+            </p>
+          </div>
+        )}
+
         {/* Status timeline */}
         {!isCancelled && (
           <div className="bg-white rounded-xl border border-stone-100 px-4 py-4">
@@ -335,8 +356,8 @@ export function OrderTrackingScreen({
           />
         )}
 
-        {/* Call waiter buttons */}
-        {!isCancelled && (
+        {/* Call waiter buttons — hidden for takeaway orders (no table service) */}
+        {!isCancelled && order.orderType !== "TAKEAWAY" && (
           <CallWaiterMenu
             tableId={tableId}
             orderId={orderId}

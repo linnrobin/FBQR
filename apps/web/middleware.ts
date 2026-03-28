@@ -78,7 +78,10 @@ export default auth(async function middleware(req: NextRequest) {
   if (pathname.startsWith("/kitchen")) {
     if (
       pathname === "/kitchen/login" ||
-      pathname.startsWith("/kitchen/login/")
+      pathname.startsWith("/kitchen/login/") ||
+      // Queue display is a public TV screen — no staff auth required
+      pathname === "/kitchen/queue-display" ||
+      pathname.startsWith("/kitchen/queue-display/")
     ) {
       return NextResponse.next();
     }

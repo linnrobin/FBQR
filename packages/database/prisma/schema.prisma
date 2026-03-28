@@ -678,6 +678,7 @@ model Table {
   name      String
   qrToken   String      @unique
   status    TableStatus @default(AVAILABLE)
+  tableType OrderType   @default(DINE_IN)
   capacity  Int?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
