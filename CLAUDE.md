@@ -11,9 +11,45 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.25
-Current phase  : Phase 6 — Step 22 complete.
-Last completed : Step 22 — Delivery platform integration: GrabFood/GoFood/ShopeeFood webhook → unified kitchen.
+Version        : 4.26
+Current phase  : Phase 6 — Step 23 complete.
+Last completed : Step 23 — AI recommendation engine: bestsellers, upsell, frequently-ordered-together (apps/menu).
+                 No schema changes. No new packages.
+                 New files created (apps/menu):
+                   app/api/recommendations/route.ts — GET: pure-SQL recommendation engine; no external
+                     AI service. Three signals: bestsellers (top items by order count, last 30 days,
+                     branch-scoped), frequently-ordered-together (collaborative filtering — items
+                     co-occurring in orders with cart contents), upsell (bestsellers not in cart).
+                     AI feature gating: respects aiShowBestsellers/aiPersonalized/aiUpsell settings
+                     from MerchantSettings; returns empty arrays if all disabled.
+                     Raw SQL via prisma.$queryRawUnsafe; parameterized to prevent injection.
+                     Returns: { bestsellerIds, upsellIds, togetherIds }.
+                 Modified files (apps/menu):
+                   app/[restaurantId]/[tableId]/page.tsx — added aiShowBestsellers, aiPersonalized,
+                     aiUpsell, aiTimeBased to MerchantSettings select; passes aiSettings + branchId
+                     props to MenuHome.
+                   components/menu-home.tsx — added AiSettings type + aiSettings/branchId props;
+                     client-side recommendation fetch (useEffect on cart change, skips if bestsellerIds
+                     already populated + cart key unchanged); passes bestsellerIds to all layout
+                     components; passes upsellIds, togetherIds, allItems, onOpenItem to CartSheet.
+                   components/menu-item-card.tsx — added isBestseller?: boolean prop; shows orange
+                     "🔥 Terlaris" badge overlay on image (top-left, hidden if in cart).
+                   components/menu-list-row.tsx — added isBestseller?: boolean; shows inline 🔥 badge
+                     next to item name.
+                   components/menu-grid-layout.tsx — added bestsellerIds?: Set<string> prop; threads
+                     isBestseller to each MenuItemCard.
+                   components/menu-list-layout.tsx — added bestsellerIds?: Set<string>; threads to
+                     all MenuListRow renders (filtered + category section).
+                   components/menu-bundle-layout.tsx — added bestsellerIds + isBestseller to
+                     BundleCard interface; shows "🔥 Terlaris" badge on hero image.
+                   components/menu-spotlight-layout.tsx — added bestsellerIds; shows bestseller badge
+                     above item name in detail panel.
+                   components/cart-sheet.tsx — added SuggestionChip component (image + name + price);
+                     added upsellIds, togetherIds, allItems, onOpenItem props; renders
+                     "Sering dipesan bersama" section (up to 4 chips) + "🥤 Tambah minuman atau snack?"
+                     upsell section (up to 4 chips) inside scrollable content area.
+                 All 41 tests still passing. No schema changes.
+Previously: Step 22 — Delivery platform integration: GrabFood/GoFood/ShopeeFood webhook → unified kitchen.
                  Schema changes:
                    Order: added estimatedPickupTime (DateTime?) — driver pickup ETA from delivery platform.
                  No new packages.
@@ -855,7 +891,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 23 — AI recommendation engine: bestsellers, upsell, personalized, time-based (apps/menu + API).
+Next step      : Step 24 — Audit log: logging middleware + viewer UI (all).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -955,7 +991,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 6 — Analytics & Intelligence
 - [x] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
 - [x] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
-- [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
+- [x] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
 ### Phase 7 — Platform Hardening
 - [ ] **Step 24** — Audit log: logging middleware + viewer UI (all)

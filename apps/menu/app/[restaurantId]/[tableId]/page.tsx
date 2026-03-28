@@ -131,6 +131,10 @@ export default async function TableMenuPage({
       taxOnServiceCharge: true,
       pricesIncludeTax: true,
       roundingRule: true,
+      aiShowBestsellers: true,
+      aiPersonalized: true,
+      aiUpsell: true,
+      aiTimeBased: true,
     },
   });
 
@@ -302,6 +306,13 @@ export default async function TableMenuPage({
       }
     : undefined;
 
+  const aiSettings = {
+    aiShowBestsellers: settings?.aiShowBestsellers ?? true,
+    aiPersonalized: settings?.aiPersonalized ?? true,
+    aiUpsell: settings?.aiUpsell ?? true,
+    aiTimeBased: settings?.aiTimeBased ?? true,
+  };
+
   return (
     <MenuHome
       restaurantName={restaurant.name}
@@ -313,8 +324,10 @@ export default async function TableMenuPage({
       menuLayout={(branding?.menuLayout as "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT") ?? "GRID"}
       restaurantId={restaurantId}
       tableId={tableId}
+      branchId={table.branchId}
       tableType={(table.tableType as "DINE_IN" | "TAKEAWAY") ?? "DINE_IN"}
       paymentMode={(settings?.paymentMode as "PAY_FIRST" | "PAY_AT_CASHIER") ?? "PAY_FIRST"}
+      aiSettings={aiSettings}
       {...(taxSettings ? { taxSettings } : {})}
     />
   );

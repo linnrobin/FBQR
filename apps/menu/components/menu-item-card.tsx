@@ -55,6 +55,7 @@ interface MenuItemCardProps {
   cartQty: number;
   /** Opens the item detail modal for variant/add-on selection */
   onOpenItem: (item: MenuItemData) => void;
+  isBestseller?: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ export function MenuItemCard({
   isOrderingMode,
   cartQty,
   onOpenItem,
+  isBestseller = false,
 }: MenuItemCardProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
   const isByWeight = item.priceType === "BY_WEIGHT";
@@ -147,7 +149,12 @@ export function MenuItemCard({
             </span>
           </div>
         )}
-        {/* Bestseller badge — placeholder for Step 23 AI integration */}
+        {/* Bestseller badge */}
+        {isBestseller && available && cartQty === 0 && (
+          <div className="absolute top-1.5 left-1.5 bg-orange-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+            🔥 Terlaris
+          </div>
+        )}
         {cartQty > 0 && available && (
           <div className="absolute top-0 right-0 bg-[--color-primary] text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-bl-[--border-radius-sm]">
             {cartQty}

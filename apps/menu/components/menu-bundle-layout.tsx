@@ -36,10 +36,11 @@ interface BundleCardProps {
   item: MenuItemData;
   isOrderingMode: boolean;
   cartQty: number;
+  isBestseller?: boolean;
   onOpenItem: (item: MenuItemData) => void;
 }
 
-function BundleCard({ item, isOrderingMode, cartQty, onOpenItem }: BundleCardProps) {
+function BundleCard({ item, isOrderingMode, cartQty, isBestseller = false, onOpenItem }: BundleCardProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
   const isByWeight = item.priceType === "BY_WEIGHT";
   const priceDisplay = isByWeight ? formatDeposit(item) : formatPrice(item.price);
@@ -74,6 +75,12 @@ function BundleCard({ item, isOrderingMode, cartQty, onOpenItem }: BundleCardPro
             <span className="bg-white text-stone-800 text-sm font-semibold px-4 py-1.5 rounded-full">
               Habis
             </span>
+          </div>
+        )}
+        {/* Bestseller badge */}
+        {isBestseller && available && cartQty === 0 && (
+          <div className="absolute top-2 left-2 bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full shadow leading-none">
+            🔥 Terlaris
           </div>
         )}
         {/* Cart quantity badge */}
@@ -159,6 +166,7 @@ interface MenuBundleLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
+  bestsellerIds?: Set<string>;
   onOpenItem: (item: MenuItemData) => void;
 }
 
@@ -166,6 +174,7 @@ export function MenuBundleLayout({
   categories,
   isOrderingMode,
   cartQuantities,
+  bestsellerIds,
   onOpenItem,
 }: MenuBundleLayoutProps) {
   const visibleCategories = useMemo(
@@ -201,6 +210,7 @@ export function MenuBundleLayout({
                   item={item}
                   isOrderingMode={isOrderingMode}
                   cartQty={cartQuantities.get(item.id) ?? 0}
+                  isBestseller={bestsellerIds?.has(item.id) ?? false}
                   onOpenItem={onOpenItem}
                 />
               ))}

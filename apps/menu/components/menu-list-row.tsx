@@ -25,12 +25,13 @@ interface MenuListRowProps {
   item: MenuItemData;
   isOrderingMode: boolean;
   cartQty: number;
+  isBestseller?: boolean;
   onOpenItem: (item: MenuItemData) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function MenuListRow({ item, isOrderingMode, cartQty, onOpenItem }: MenuListRowProps) {
+export function MenuListRow({ item, isOrderingMode, cartQty, isBestseller = false, onOpenItem }: MenuListRowProps) {
   const available = item.effectivelyAvailable && item.isAvailable;
 
   return (
@@ -67,7 +68,14 @@ export function MenuListRow({ item, isOrderingMode, cartQty, onOpenItem }: MenuL
 
       {/* Details */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-stone-900 line-clamp-1">{item.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-stone-900 line-clamp-1">{item.name}</p>
+          {isBestseller && available && (
+            <span className="shrink-0 text-[10px] bg-orange-500 text-white font-bold px-1.5 py-0.5 rounded-full leading-none">
+              🔥
+            </span>
+          )}
+        </div>
         {item.description && (
           <p className="text-xs text-stone-500 line-clamp-2 mt-0.5 leading-relaxed">
             {item.description}

@@ -44,6 +44,7 @@ interface MenuSpotlightLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
+  bestsellerIds?: Set<string>;
   onOpenItem: (item: MenuItemData) => void;
 }
 
@@ -53,6 +54,7 @@ export function MenuSpotlightLayout({
   categories,
   isOrderingMode,
   cartQuantities,
+  bestsellerIds,
   onOpenItem,
 }: MenuSpotlightLayoutProps) {
   // Flatten all available-window categories into a single item list
@@ -147,6 +149,12 @@ export function MenuSpotlightLayout({
 
           {/* Item detail */}
           <div className="px-5 pt-5 pb-4">
+            {/* Bestseller badge */}
+            {bestsellerIds?.has(item.id) && available && (
+              <span className="inline-block mb-2 text-xs bg-orange-500 text-white font-bold px-2 py-0.5 rounded-full leading-none">
+                🔥 Terlaris
+              </span>
+            )}
             {/* Display-size name (36px / text-4xl font-bold per spec) */}
             <h1 className="text-4xl font-bold text-stone-900 leading-tight line-clamp-2">
               {item.name}

@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, ShoppingBag, Minus, Plus, Trash2 } from "lucide-react";
 import Image from "next/image";
 import type { CartEntry } from "./item-detail-modal";
+import type { MenuItemData } from "./menu-item-card";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,14 @@ interface CartSheetProps {
   onUpdateQty: (itemId: string, newQty: number) => void;
   onRemoveItem: (itemId: string) => void;
   onProceed: () => void;
+  /** Item IDs for upsell section (bestsellers not in cart) */
+  upsellIds?: string[];
+  /** Item IDs frequently ordered together with current cart */
+  togetherIds?: string[];
+  /** All available menu items (for looking up upsell/together item data) */
+  allItems?: MenuItemData[];
+  /** Opens item detail modal for upsell/together item tap */
+  onOpenItem?: (item: MenuItemData) => void;
 }
 
 // ─── Financials computation ───────────────────────────────────────────────────
@@ -165,6 +174,40 @@ function CartItemRow({
   );
 }
 
+// ─── AI suggestion chip ────────────────────────────────────────────────────────
+
+function SuggestionChip({
+  item,
+  onAdd,
+}: {
+  item: MenuItemData;
+  onAdd: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onAdd}
+      className="flex items-center gap-2 px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-left hover:border-[--color-primary] hover:bg-orange-50 transition-colors active:scale-[0.98]"
+    >
+      {item.imageUrl ? (
+        <div className="relative w-9 h-9 rounded-md overflow-hidden shrink-0 bg-stone-100">
+          <Image src={item.imageUrl} alt={item.name} fill className="object-cover" sizes="36px" />
+        </div>
+      ) : (
+        <div className="w-9 h-9 rounded-md bg-stone-100 shrink-0 flex items-center justify-center text-lg">
+          🍽️
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-stone-900 line-clamp-1">{item.name}</p>
+        <p className="text-xs text-[--color-primary] font-medium">
+          + Rp {item.price.toLocaleString("id-ID")}
+        </p>
+      </div>
+    </button>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function CartSheet({
@@ -176,9 +219,27 @@ export function CartSheet({
   onUpdateQty,
   onRemoveItem,
   onProceed,
+  upsellIds = [],
+  togetherIds = [],
+  allItems = [],
+  onOpenItem,
 }: CartSheetProps) {
   const entries = Array.from(cartItems.values());
   const summary = computeOrderSummary(cartItems, taxSettings);
+
+  // Build lookup maps for AI suggestions
+  const itemMap = new Map(allItems.map((i) => [i.id, i]));
+  const cartSet = new Set(cartItems.keys());
+
+  const togetherItems = togetherIds
+    .map((id) => itemMap.get(id))
+    .filter((i): i is MenuItemData => !!i && !cartSet.has(i.id) && i.effectivelyAvailable && i.isAvailable)
+    .slice(0, 4);
+
+  const upsellItems = upsellIds
+    .map((id) => itemMap.get(id))
+    .filter((i): i is MenuItemData => !!i && !cartSet.has(i.id) && i.effectivelyAvailable && i.isAvailable)
+    .slice(0, 4);
 
   // Scroll-lock body when open
   useEffect(() => {
@@ -290,6 +351,42 @@ export function CartSheet({
                       </span>
                     </div>
                   </div>
+
+                  {/* "Sering dipesan bersama" — frequently ordered together */}
+                  {togetherItems.length > 0 && onOpenItem && (
+                    <div className="pb-3">
+                      <p className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
+                        Sering dipesan bersama
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {togetherItems.map((item) => (
+                          <SuggestionChip
+                            key={item.id}
+                            item={item}
+                            onAdd={() => { onOpenItem(item); }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Upsell chips — "Tambah minuman?" */}
+                  {upsellItems.length > 0 && onOpenItem && (
+                    <div className="pb-4">
+                      <p className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
+                        🥤 Tambah minuman atau snack?
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {upsellItems.map((item) => (
+                          <SuggestionChip
+                            key={item.id}
+                            item={item}
+                            onAdd={() => { onOpenItem(item); }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

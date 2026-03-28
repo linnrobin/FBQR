@@ -16,7 +16,7 @@
  * Note: Spotlight layout omits CategoryTabs (all items in one carousel).
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import { ShoppingCart } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -32,6 +32,13 @@ import type { MenuItemData } from "./menu-item-card";
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type MenuLayout = "GRID" | "LIST" | "BUNDLE" | "SPOTLIGHT";
+
+export interface AiSettings {
+  aiShowBestsellers: boolean;
+  aiPersonalized: boolean;
+  aiUpsell: boolean;
+  aiTimeBased: boolean;
+}
 
 // Re-export CartEntry so callers (Step 15+) can import it from here
 export type { CartEntry };
@@ -49,11 +56,13 @@ interface MenuHomeProps {
   /** Required for checkout navigation (ordering mode only) */
   restaurantId?: string;
   tableId?: string;
+  branchId?: string;
   /** DINE_IN = normal table; TAKEAWAY = counter/queue order */
   tableType?: "DINE_IN" | "TAKEAWAY";
   /** Tax + payment settings for cart sheet */
   taxSettings?: TaxSettings;
   paymentMode?: "PAY_FIRST" | "PAY_AT_CASHIER";
+  aiSettings?: AiSettings;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -68,9 +77,11 @@ export function MenuHome({
   menuLayout,
   restaurantId,
   tableId,
+  branchId,
   tableType = "DINE_IN",
   taxSettings,
   paymentMode = "PAY_FIRST",
+  aiSettings,
 }: MenuHomeProps) {
   const layout: MenuLayout = menuLayout ?? "GRID";
   const isSpotlight = layout === "SPOTLIGHT";
@@ -78,6 +89,12 @@ export function MenuHome({
 
   // ── Cart: itemId → CartEntry ──────────────────────────────────────────────
   const [cartItems, setCartItems] = useState<Map<string, CartEntry>>(new Map());
+
+  // ── AI Recommendations ────────────────────────────────────────────────────
+  const [bestsellerIds, setBestsellerIds] = useState<Set<string>>(new Set());
+  const [upsellIds, setUpsellIds] = useState<string[]>([]);
+  const [togetherIds, setTogetherIds] = useState<string[]>([]);
+  const prevCartKeyRef = useRef<string>("");
 
   // ── Item detail modal state ───────────────────────────────────────────────
   const [openItem, setOpenItem] = useState<MenuItemData | null>(null);
@@ -90,6 +107,32 @@ export function MenuHome({
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(
     categories[0]?.id ?? null
   );
+
+  // ── Fetch AI recommendations (debounced on cart change) ──────────────────
+  useEffect(() => {
+    if (!restaurantId || !isOrderingMode) return;
+    if (!aiSettings?.aiShowBestsellers && !aiSettings?.aiPersonalized && !aiSettings?.aiUpsell) return;
+
+    const cartKey = Array.from(cartItems.keys()).sort().join(",");
+    if (cartKey === prevCartKeyRef.current && bestsellerIds.size > 0) return;
+    prevCartKeyRef.current = cartKey;
+
+    const url = new URL("/api/recommendations", window.location.origin);
+    url.searchParams.set("restaurantId", restaurantId);
+    if (branchId) url.searchParams.set("branchId", branchId);
+    if (cartKey) url.searchParams.set("cartItemIds", cartKey);
+
+    fetch(url.toString())
+      .then((r) => r.json())
+      .then((data: { bestsellerIds: string[]; upsellIds: string[]; togetherIds: string[] }) => {
+        setBestsellerIds(new Set(data.bestsellerIds ?? []));
+        setUpsellIds(data.upsellIds ?? []);
+        setTogetherIds(data.togetherIds ?? []);
+      })
+      .catch(() => {
+        // Non-fatal — AI recommendations are optional
+      });
+  }, [cartItems, restaurantId, branchId, isOrderingMode, aiSettings, bestsellerIds.size]);
 
   // ── Derived cart values ───────────────────────────────────────────────────
 
@@ -274,6 +317,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
+            bestsellerIds={bestsellerIds}
             onOpenItem={handleOpenItem}
           />
         )}
@@ -282,6 +326,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
+            bestsellerIds={bestsellerIds}
             onOpenItem={handleOpenItem}
           />
         )}
@@ -290,6 +335,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
+            bestsellerIds={bestsellerIds}
             onOpenItem={handleOpenItem}
           />
         )}
@@ -298,6 +344,7 @@ export function MenuHome({
             categories={categories}
             isOrderingMode={isOrderingMode && !orderingPaused}
             cartQuantities={cartQuantities}
+            bestsellerIds={bestsellerIds}
             onOpenItem={handleOpenItem}
           />
         )}
@@ -323,6 +370,10 @@ export function MenuHome({
         onUpdateQty={handleUpdateQty}
         onRemoveItem={handleRemoveItem}
         onProceed={handleProceedToCheckout}
+        upsellIds={upsellIds}
+        togetherIds={togetherIds}
+        allItems={categories.flatMap((c) => c.items)}
+        onOpenItem={handleOpenItem}
       />
 
       {/* ── Bottom Bar ── */}

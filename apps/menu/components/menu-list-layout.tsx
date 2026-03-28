@@ -24,6 +24,7 @@ interface MenuListLayoutProps {
   categories: MenuCategoryData[];
   isOrderingMode: boolean;
   cartQuantities: Map<string, number>;
+  bestsellerIds?: Set<string>;
   onOpenItem: (item: MenuItemData) => void;
 }
 
@@ -33,6 +34,7 @@ export function MenuListLayout({
   categories,
   isOrderingMode,
   cartQuantities,
+  bestsellerIds,
   onOpenItem,
 }: MenuListLayoutProps) {
   const [search, setSearch] = useState("");
@@ -154,6 +156,7 @@ export function MenuListLayout({
                 item={item}
                 isOrderingMode={isOrderingMode}
                 cartQty={cartQuantities.get(item.id) ?? 0}
+                isBestseller={bestsellerIds?.has(item.id) ?? false}
                 onOpenItem={onOpenItem}
               />
             ))}
@@ -178,6 +181,7 @@ export function MenuListLayout({
                     item={item}
                     isOrderingMode={isOrderingMode}
                     cartQty={cartQuantities.get(item.id) ?? 0}
+                    isBestseller={bestsellerIds?.has(item.id) ?? false}
                     onOpenItem={onOpenItem}
                   />
                 ))}
