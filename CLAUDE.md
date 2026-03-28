@@ -11,9 +11,41 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.28
-Current phase  : Phase 7 — Step 25 complete.
-Last completed : Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
+Version        : 4.29
+Current phase  : Phase 7 — Step 26 complete.
+Last completed : Step 26 — Platform loyalty + gamification (all).
+                 No schema changes (LoyaltyTier + PlatformLoyaltyBalance already in schema from Phase 1).
+                 No new packages.
+                 New files created (apps/web):
+                   app/api/merchant/loyalty/[programId]/tiers/route.ts — GET: list tiers;
+                     POST: create tier (name, threshold, multiplier, customTitle?, badge?);
+                     requires loyalty:manage.
+                   app/api/merchant/loyalty/[programId]/tiers/[tierId]/route.ts — PATCH: update tier;
+                     DELETE: hard delete tier; audit logged.
+                 Modified files (apps/web):
+                   components/merchant/settings-loyalty-tab.tsx — added LoyaltyTier management
+                     section: list tiers sorted by threshold; add/edit/delete tier via modal;
+                     "Tambah tier default" one-click preset (Perak/Emas/Platinum); platform loyalty
+                     info card explaining FBQR Platform Points.
+                 Modified files (apps/menu):
+                   lib/loyalty.ts — tier-aware creditLoyaltyPoints(): loads tiers for active
+                     program; applies multiplier from customer's current tier; after crediting,
+                     recalculates and updates tierId on MerchantLoyaltyBalance; added
+                     creditPlatformLoyaltyPoints(): earns 1 FBQR point per Rp 50,000 grandTotal;
+                     idempotent via AuditLog; non-fatal.
+                   app/api/webhook/midtrans/route.ts — added after() creditPlatformLoyaltyPoints
+                     for PAY_FIRST confirmations and Patungan full-pay.
+                   app/api/order/route.ts — added after() creditPlatformLoyaltyPoints for
+                     PAY_AT_CASHIER orders.
+                   app/api/customer/me/route.ts — extended response: tier info (name, badge,
+                     customTitle, multiplier), nextTier progress (threshold, pointsToNextTier),
+                     platformLoyalty balance, recentOrders (last 5, scoped to restaurantId if
+                     provided).
+                   app/account/page.tsx — updated to use new API structure; tier badge + name +
+                     custom title displayed on loyalty card; progress bar toward next tier;
+                     platform FBQR points card; recent orders now correctly rendered.
+                 All 41 tests still passing.
+Previously: Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
                  Schema changes:
                    Customer: added hashedPassword (String?), emailVerifiedAt (DateTime?)
                    MerchantSettings: added loyaltyEnabled (Boolean default false)
@@ -983,7 +1015,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 26 — Platform loyalty + gamification (all).
+Next step      : Step 27 — WhatsApp Business integration (shared).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -1088,7 +1120,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 ### Phase 7 — Platform Hardening
 - [x] **Step 24** — Audit log: logging middleware + viewer UI (all)
 - [x] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
-- [ ] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
+- [x] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
 - [ ] **Step 27** — WhatsApp Business integration (shared)
 - [ ] **Step 28** — Remaining backlog items (TBD)
 

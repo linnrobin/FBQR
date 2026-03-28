@@ -20,7 +20,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import type { CartEntry } from "@/components/item-detail-modal";
 import { sendInternalNotification } from "@/lib/notify";
 import { generateAndStoreCustomerInvoice } from "@/lib/invoice";
-import { creditLoyaltyPoints } from "@/lib/loyalty";
+import { creditLoyaltyPoints, creditPlatformLoyaltyPoints } from "@/lib/loyalty";
 
 // ─── Midtrans helpers ────────────────────────────────────────────────────────
 
@@ -539,6 +539,7 @@ export async function POST(req: NextRequest) {
       // PAY_AT_CASHIER orders are immediately confirmed — generate invoice + credit points async
       after(() => generateAndStoreCustomerInvoice(order.id));
       after(() => creditLoyaltyPoints(order.id));
+      after(() => creditPlatformLoyaltyPoints(order.id));
 
       return NextResponse.json({
         orderId: order.id,
