@@ -11,9 +11,38 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.23
-Current phase  : Phase 5 — Step 20 complete.
-Last completed : Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
+Version        : 4.24
+Current phase  : Phase 6 — Step 21 complete.
+Last completed : Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
+                 No schema changes.
+                 New packages: recharts ^3.8.1, exceljs ^4.4.0 (apps/web dependencies).
+                 New files created (apps/web):
+                   app/api/merchant/analytics/route.ts — GET: aggregated analytics (revenue, orders,
+                     menu performance, table analytics, ratings) for date range + branch filter;
+                     merchant owner session or staff PIN session with reports:read.
+                   app/api/merchant/analytics/export/route.ts — GET: downloads itemized Excel (.xlsx)
+                     report of confirmed orders in date range (ExcelJS); up to 5000 orders.
+                   app/(merchant)/merchant/analytics/page.tsx — Server component: auth check; fetches
+                     branch list; renders AnalyticsDashboard.
+                   components/merchant/analytics-types.ts — Shared TypeScript interfaces for all
+                     analytics data shapes (AnalyticsData, RevenueData, OrdersData, MenuData, etc.).
+                   components/merchant/analytics-dashboard.tsx — Orchestrator: date range preset
+                     buttons (7d/30d/90d/custom), custom date inputs, branch selector (multi-branch),
+                     fetch state management, export button placement; renders section sub-components.
+                   components/merchant/analytics-revenue-section.tsx — Revenue stat cards
+                     (gross/tax/service/gateway fees/net) + area chart (daily trend) + donut chart
+                     (by order type) + horizontal bar chart (by payment method).
+                   components/merchant/analytics-orders-section.tsx — Order stat cards
+                     (total/AOV/cancellation rate/per-hour avg) + bar charts (by hour of day WIB,
+                     by day of week).
+                   components/merchant/analytics-menu-table.tsx — Top 10 by revenue + top 10 by
+                     order count (horizontal bar charts) + slowest-moving items table.
+                   components/merchant/analytics-ratings-section.tsx — Avg rating stat + star
+                     distribution bar chart + recent comments list (last 20).
+                   components/merchant/analytics-export-button.tsx — Export button: triggers
+                     GET /api/merchant/analytics/export; blob download.
+                 All 41 tests still passing.
+Previously: Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
                    queue number display, PWA offline mode, kitchen ticket + receipt printing.
                  No schema changes.
                  New package: node-thermal-printer (apps/web dependencies).
@@ -793,7 +822,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
+Next step      : Step 22 — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (apps/web + API).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -891,7 +920,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 
 ### Phase 6 — Analytics & Intelligence
-- [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
+- [x] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
 - [ ] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
 - [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
