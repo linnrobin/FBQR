@@ -65,7 +65,12 @@ export { midtransRefund };
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const notification = (await req.json()) as MidtransNotification;
+  let notification: MidtransNotification;
+  try {
+    notification = (await req.json()) as MidtransNotification;
+  } catch {
+    return new NextResponse("Bad Request", { status: 400 });
+  }
 
   // MANDATORY signature verification — reject all unverified webhooks
   if (!verifyMidtransWebhook(notification)) {
@@ -78,139 +83,158 @@ export async function POST(req: NextRequest) {
   const { order_id: orderId, transaction_id: txId, transaction_status: txStatus, fraud_status: fraudStatus } =
     notification;
 
-  // Look up the order and its payment
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: {
-      id: true,
-      status: true,
-      grandTotal: true,
-      branchId: true,
-      queueNumber: true,
-      customerSession: { select: { table: { select: { name: true } } } },
-      branch: { select: { restaurantId: true } },
-      payments: {
-        where: { paymentType: "FULL" },
-        select: { id: true, status: true, splitGroupId: true, midtransTransactionId: true },
+  try {
+    // Look up the order and its payment
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        status: true,
+        grandTotal: true,
+        branchId: true,
+        queueNumber: true,
+        customerSession: { select: { table: { select: { name: true } } } },
+        branch: { select: { restaurantId: true } },
+        payments: {
+          where: { paymentType: "FULL" },
+          select: { id: true, status: true, splitGroupId: true, midtransTransactionId: true },
+        },
       },
-    },
-  });
-
-  if (!order) {
-    // Unknown order — return 200 so Midtrans doesn't retry
-    console.warn("[webhook/midtrans] Unknown orderId", orderId);
-    return new NextResponse("OK", { status: 200 });
-  }
-
-  const payment = order.payments[0];
-  if (!payment) {
-    console.warn("[webhook/midtrans] No payment for orderId", orderId);
-    return new NextResponse("OK", { status: 200 });
-  }
-
-  // Idempotency: if this txId was already processed, skip
-  if (payment.midtransTransactionId && payment.midtransTransactionId !== txId) {
-    // Different transaction — could be a retry or error; log and skip
-    console.warn("[webhook/midtrans] Transaction ID mismatch", { orderId, txId });
-    return new NextResponse("OK", { status: 200 });
-  }
-
-  // Map Midtrans status to action
-  const isSuccess =
-    txStatus === "settlement" ||
-    (txStatus === "capture" && fraudStatus === "accept");
-  const isFailed =
-    txStatus === "deny" || txStatus === "cancel";
-  const isExpired = txStatus === "expire";
-  const isRefunded = txStatus === "refund";
-  const isChallenged = txStatus === "capture" && fraudStatus === "challenge";
-
-  if (isChallenged) {
-    // Hold — do not confirm; notify merchant. No DB change needed in Phase 1.
-    console.warn("[webhook/midtrans] Payment challenged", { orderId, txId });
-    return new NextResponse("OK", { status: 200 });
-  }
-
-  if (isSuccess) {
-    // Patungan: check if this is a split payment
-    if (payment.splitGroupId) {
-      await handlePatunganPayment(order, payment, txId, orderId);
-    } else {
-      await confirmOrder(order, payment, txId);
-      // Send push notification to merchant staff (non-blocking)
-      if (order.branch?.restaurantId) {
-        after(async () => {
-          await sendInternalNotification({
-            type: "NEW_ORDER",
-            restaurantId: order.branch!.restaurantId,
-            branchId: order.branchId,
-            payload: {
-              orderNumber: String(order.queueNumber ?? orderId.slice(0, 8).toUpperCase()),
-              tableLabel: order.customerSession?.table?.name ?? "–",
-              grandTotal: order.grandTotal,
-            },
-          });
-        });
-      }
-    }
-  } else if (isFailed) {
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: "FAILED", midtransTransactionId: txId },
-      }),
-      prisma.order.update({
-        where: { id: orderId, status: "PENDING" },
-        data: {
-          status: "CANCELLED",
-          cancelledAt: new Date(),
-        },
-      }),
-      prisma.orderEvent.create({
-        data: {
-          orderId,
-          fromStatus: "PENDING",
-          toStatus: "CANCELLED",
-          actorType: "SYSTEM",
-          actorName: "System",
-          cancellationReason: "PAYMENT_FAILED",
-        },
-      }),
-      prisma.auditLog.create({
-        data: {
-          action: "CANCEL",
-          entity: "Order",
-          entityId: orderId,
-          actorType: "SYSTEM",
-          actorName: "System",
-          newValue: { reason: "PAYMENT_FAILED", txId },
-        },
-      }),
-    ]);
-  } else if (isExpired) {
-    // Atomic guard: only update if still PENDING
-    await prisma.$transaction([
-      prisma.payment.updateMany({
-        where: { id: payment.id, status: "PENDING" },
-        data: { status: "EXPIRED", midtransTransactionId: txId },
-      }),
-      prisma.order.updateMany({
-        where: { id: orderId, status: "PENDING" },
-        data: { status: "EXPIRED" },
-      }),
-    ]);
-  } else if (isRefunded) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "REFUNDED" },
     });
-  }
 
-  // Trigger async PDF generation + loyalty points after returning 200
-  if (isSuccess && !payment.splitGroupId) {
-    after(() => generateAndStoreCustomerInvoice(orderId));
-    after(() => creditLoyaltyPoints(orderId));
-    after(() => creditPlatformLoyaltyPoints(orderId));
+    if (!order) {
+      // Unknown order — return 200 so Midtrans doesn't retry
+      console.warn("[webhook/midtrans] Unknown orderId", orderId);
+      return new NextResponse("OK", { status: 200 });
+    }
+
+    const payment = order.payments[0];
+    if (!payment) {
+      console.warn("[webhook/midtrans] No payment for orderId", orderId);
+      return new NextResponse("OK", { status: 200 });
+    }
+
+    // Idempotency: if this exact txId was already recorded as SUCCESS, skip entirely
+    if (payment.midtransTransactionId === txId && payment.status === "SUCCESS") {
+      console.log("[webhook/midtrans] Already processed txId", txId);
+      return new NextResponse("OK", { status: 200 });
+    }
+
+    // Conflict guard: if a DIFFERENT txId was already recorded, log and skip
+    if (payment.midtransTransactionId && payment.midtransTransactionId !== txId) {
+      console.warn("[webhook/midtrans] Transaction ID mismatch", { orderId, txId });
+      return new NextResponse("OK", { status: 200 });
+    }
+
+    // Map Midtrans status to action
+    const isSuccess =
+      txStatus === "settlement" ||
+      (txStatus === "capture" && fraudStatus === "accept");
+    const isFailed =
+      txStatus === "deny" || txStatus === "cancel";
+    const isExpired = txStatus === "expire";
+    const isRefunded = txStatus === "refund";
+    const isChallenged = txStatus === "capture" && fraudStatus === "challenge";
+
+    if (isChallenged) {
+      // Hold — do not confirm; notify merchant. No DB change needed in Phase 1.
+      console.warn("[webhook/midtrans] Payment challenged", { orderId, txId });
+      return new NextResponse("OK", { status: 200 });
+    }
+
+    if (isSuccess) {
+      // Patungan: check if this is a split payment
+      if (payment.splitGroupId) {
+        await handlePatunganPayment(order, payment, txId, orderId);
+      } else {
+        await confirmOrder(order, payment, txId);
+        // Send push notification to merchant staff (non-blocking)
+        if (order.branch?.restaurantId) {
+          after(async () => {
+            await sendInternalNotification({
+              type: "NEW_ORDER",
+              restaurantId: order.branch!.restaurantId,
+              branchId: order.branchId,
+              payload: {
+                orderNumber: String(order.queueNumber ?? orderId.slice(0, 8).toUpperCase()),
+                tableLabel: order.customerSession?.table?.name ?? "–",
+                grandTotal: order.grandTotal,
+              },
+            });
+          });
+        }
+      }
+    } else if (isFailed) {
+      await prisma.$transaction([
+        prisma.payment.updateMany({
+          where: { id: payment.id, status: { in: ["PENDING"] } },
+          data: { status: "FAILED", midtransTransactionId: txId },
+        }),
+        prisma.order.updateMany({
+          where: { id: orderId, status: "PENDING" },
+          data: {
+            status: "CANCELLED",
+            cancelledAt: new Date(),
+          },
+        }),
+        prisma.orderEvent.create({
+          data: {
+            orderId,
+            fromStatus: "PENDING",
+            toStatus: "CANCELLED",
+            actorType: "SYSTEM",
+            actorName: "System",
+            cancellationReason: "PAYMENT_FAILED",
+          },
+        }),
+        prisma.auditLog.create({
+          data: {
+            action: "CANCEL",
+            entity: "Order",
+            entityId: orderId,
+            actorType: "SYSTEM",
+            actorName: "System",
+            newValue: { reason: "PAYMENT_FAILED", txId },
+          },
+        }),
+      ]);
+    } else if (isExpired) {
+      // Atomic guard: only update if still PENDING
+      await prisma.$transaction([
+        prisma.payment.updateMany({
+          where: { id: payment.id, status: "PENDING" },
+          data: { status: "EXPIRED", midtransTransactionId: txId },
+        }),
+        prisma.order.updateMany({
+          where: { id: orderId, status: "PENDING" },
+          data: { status: "EXPIRED" },
+        }),
+      ]);
+    } else if (isRefunded) {
+      await prisma.payment.updateMany({
+        where: { id: payment.id, status: "SUCCESS" },
+        data: { status: "REFUNDED" },
+      });
+    }
+
+    // Trigger async PDF generation + loyalty points after returning 200
+    if (isSuccess && !payment.splitGroupId) {
+      after(() => generateAndStoreCustomerInvoice(orderId));
+      after(() => creditLoyaltyPoints(orderId));
+      after(() => creditPlatformLoyaltyPoints(orderId));
+    }
+  } catch (err) {
+    // Log the error but return 200 to prevent Midtrans retrying indefinitely
+    // on transient failures. Midtrans retries are handled by our order-expiry cron.
+    console.error("[webhook/midtrans] DB error processing orderId", orderId, err);
+    // Re-throw for non-transient errors that should cause a retry
+    if (err instanceof Error && err.message.includes("P2002")) {
+      // Unique constraint violation — idempotency guard kicked in (race condition)
+      // This is safe to swallow: the other concurrent request processed it
+      console.warn("[webhook/midtrans] Idempotency: duplicate concurrent request for", orderId);
+    } else {
+      return new NextResponse("Internal Server Error", { status: 500 });
+    }
   }
 
   return new NextResponse("OK", { status: 200 });

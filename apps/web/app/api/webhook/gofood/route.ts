@@ -57,20 +57,30 @@ type GoFoodOrder = z.infer<typeof GoFoodOrderSchema>;
 
 // ── Bearer Token Verification ─────────────────────────────────────────────────
 
+import crypto from "crypto";
+
 function verifyBearerToken(authHeader: string | null): boolean {
   if (!authHeader?.startsWith("Bearer ")) return false;
   const token = authHeader.slice(7);
   const expected = process.env.GOFOOD_WEBHOOK_TOKEN;
   if (!expected) return false;
-  // Constant-time comparison
-  if (token.length !== expected.length) return false;
+  // Use crypto.timingSafeEqual to prevent timing attacks.
+  // Both buffers are padded to the same length so that the comparison does not
+  // leak token length information via early return.
   const aBuf = Buffer.from(token);
   const bBuf = Buffer.from(expected);
-  let diff = 0;
-  for (let i = 0; i < aBuf.length; i++) {
-    diff |= (aBuf[i] ?? 0) ^ (bBuf[i] ?? 0);
-  }
-  return diff === 0;
+  const maxLen = Math.max(aBuf.length, bBuf.length);
+  const a = Buffer.alloc(maxLen);
+  const b = Buffer.alloc(maxLen);
+  aBuf.copy(a);
+  bBuf.copy(b);
+  // timingSafeEqual returns false if lengths differ even with padding — we
+  // also check lengths to return the correct boolean (same-length tokens that
+  // match the padding pattern would pass otherwise).
+  return (
+    aBuf.length === bBuf.length &&
+    crypto.timingSafeEqual(a, b)
+  );
 }
 
 // ── Route Handler ─────────────────────────────────────────────────────────────
