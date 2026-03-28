@@ -18,8 +18,11 @@ export interface CustomerJwtPayload extends JWTPayload {
 }
 
 function getSecret(): Uint8Array {
-  const secret = process.env.NEXTAUTH_SECRET ?? "";
-  return new TextEncoder().encode(`customer:${secret}`);
+  const rawSecret = process.env.NEXTAUTH_SECRET;
+  if (!rawSecret) {
+    throw new Error("NEXTAUTH_SECRET environment variable is not set");
+  }
+  return new TextEncoder().encode(`customer:${rawSecret}`);
 }
 
 /** Sign a customer JWT. */

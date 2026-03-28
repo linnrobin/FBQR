@@ -22,6 +22,9 @@ const MAX_BESTSELLERS = 20;
 const MAX_UPSELL = 6;
 const MAX_TOGETHER = 8;
 
+// UUID v4 regex — used to validate all ID parameters before raw SQL interpolation
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const restaurantId = searchParams.get("restaurantId");
@@ -30,6 +33,22 @@ export async function GET(req: NextRequest) {
 
   if (!restaurantId) {
     return NextResponse.json({ error: "restaurantId required" }, { status: 400 });
+  }
+
+  // Validate IDs are valid UUIDs before they are used in raw SQL interpolation.
+  // This prevents SQL injection — UUIDs cannot contain SQL metacharacters.
+  if (!UUID_RE.test(restaurantId)) {
+    return NextResponse.json({ error: "invalid restaurantId" }, { status: 400 });
+  }
+  if (branchId && !UUID_RE.test(branchId)) {
+    return NextResponse.json({ error: "invalid branchId" }, { status: 400 });
+  }
+  // Validate each cart item ID is a UUID to prevent injection via the cartItemIds param
+  const rawCartIds = cartParam ? cartParam.split(",").filter(Boolean) : [];
+  for (const id of rawCartIds) {
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: "invalid cartItemId" }, { status: 400 });
+    }
   }
 
   // Check if AI features are enabled for this restaurant
@@ -54,9 +73,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const cartItemIds = cartParam
-    ? cartParam.split(",").filter(Boolean)
-    : [];
+  const cartItemIds = rawCartIds;
 
   const since = subDays(new Date(), 30);
 

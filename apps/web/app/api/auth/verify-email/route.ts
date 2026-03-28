@@ -21,9 +21,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const secret = new TextEncoder().encode(
-    process.env.NEXTAUTH_SECRET ?? "dev-secret-change-in-production"
-  );
+  const rawSecret = process.env.NEXTAUTH_SECRET;
+  if (!rawSecret) {
+    console.error("[verify-email] NEXTAUTH_SECRET is not set");
+    return NextResponse.redirect(
+      new URL("/merchant/login?error=invalid_token", req.url)
+    );
+  }
+  const secret = new TextEncoder().encode(rawSecret);
 
   let payload: { sub?: string; purpose?: string };
   try {
