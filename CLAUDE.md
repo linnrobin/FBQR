@@ -11,9 +11,40 @@ This is the **command center** for AI agents working on this repository. It cont
 
 ```
 Last updated   : 2026-03-28
-Version        : 4.18
-Current phase  : Phase 4 — Step 15 complete.
-Last completed : Step 15 — Cart + pre-invoice + Midtrans QRIS + cash + split payment / Patungan (apps/menu).
+Version        : 4.19
+Current phase  : Phase 4 — Step 16 complete.
+Last completed : Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu).
+                 New files created (apps/menu):
+                   app/[restaurantId]/[tableId]/order/[orderId]/page.tsx — Server component: validates
+                     session cookie (allows expired sessions to still view in-flight order tracking);
+                     renders OrderTrackingScreen.
+                   app/api/orders/[orderId]/route.ts — GET: fetch order details for tracking (session-
+                     authenticated; returns full order with items, payments, invoice, rating, session
+                     status, and restaurant branding).
+                   app/api/orders/[orderId]/rating/route.ts — POST: submit 1–5 star rating + optional
+                     comment for COMPLETED orders; one rating per order; session-authenticated.
+                   app/api/waiter/route.ts — POST: create WaiterRequest (CALL/ASSISTANCE/BILL);
+                     session-authenticated + tableId validation; logged to AuditLog.
+                   components/order-timeline.tsx — Vertical status progression (CONFIRMED → PREPARING →
+                     READY → COMPLETED); active step has animated pulse ring (Loader2 + animate-ping);
+                     completed steps show CheckCircle2; CANCELLED state shows red banner with timestamp.
+                   components/order-status-display.tsx — Items list (with ⚖️ BY_WEIGHT badge + weight
+                     value when set), payment summary (subtotal/service/tax/total + method badge +
+                     payment status badge), READY banner (animate-pulse), invoice download link
+                     (shows "Generating..." when pdfUrl not yet set).
+                   components/call-waiter-menu.tsx — 3-button grid (Panggil Pelayan / Butuh Bantuan /
+                     Minta Struk); ASSISTANCE button opens Framer Motion bottom sheet with optional
+                     note textarea; sent state auto-resets after 30s; disabled while session inactive.
+                   components/order-rating-prompt.tsx — Star rating (5 tappable stars, h-8 w-8,
+                     amber-400 fill); optional comment textarea (max 500 chars); submits to
+                     /api/orders/[orderId]/rating; shows "Terima kasih!" confirmation on success.
+                   components/order-tracking-screen.tsx — Orchestrator: Supabase Realtime subscription
+                     on `orders:{branchId}` channel (branch-scoped per ADR spec); 30s fallback poll;
+                     reconnection banner on CHANNEL_ERROR; return-from-Midtrans spinner (shows while
+                     status=PENDING after ?status=finish); confirmation banner auto-dismiss 5s;
+                     cancelled/expired state view; Add More Items + Back to Menu buttons.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 15 — Cart + pre-invoice + Midtrans QRIS + cash + split payment / Patungan (apps/menu).
                  Schema changes:
                    MerchantSettings: added taxRate (Decimal default 0.11), taxLabel (String default "PPN"),
                      serviceChargeRate (Decimal default 0.00), serviceChargeLabel (String default "Service"),
@@ -611,7 +642,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu) (⚠ pre-split).
+Next step      : Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen (apps/menu + apps/web/(kitchen)).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -700,7 +731,7 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
 - [x] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
 - [x] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
-- [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
+- [x] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 
 ### Phase 5 — Kitchen & Operations
 - [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
