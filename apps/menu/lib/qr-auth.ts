@@ -11,7 +11,14 @@
  */
 import crypto from "crypto";
 
-const SECRET = process.env.QR_SIGNING_SECRET ?? "";
+const SECRET = (() => {
+  const s = process.env.QR_SIGNING_SECRET;
+  if (!s && process.env.NODE_ENV === "production") {
+    // Crash loudly in production — QR codes are unverifiable without a secret.
+    throw new Error("QR_SIGNING_SECRET environment variable is required in production");
+  }
+  return s ?? "";
+})();
 
 /** Sign: HMAC-SHA256(tableToken:expUnix) → hex string */
 export function signQrUrl(tableToken: string, expUnix: number): string {

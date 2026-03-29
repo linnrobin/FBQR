@@ -22,7 +22,7 @@ const MAX_BESTSELLERS = 20;
 const MAX_UPSELL = 6;
 const MAX_TOGETHER = 8;
 
-// UUID v4 regex — used to validate all ID parameters before raw SQL interpolation
+// UUID v4 regex — used to validate all ID parameters
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(req: NextRequest) {
@@ -81,28 +81,44 @@ export async function GET(req: NextRequest) {
   let bestsellerIds: string[] = [];
 
   if (settings.aiShowBestsellers || settings.aiUpsell) {
-    // Scope to branch if provided, else all branches of restaurant
-    const branchFilter = branchId
-      ? `AND o."branchId" = '${branchId}'`
-      : `AND b."restaurantId" = '${restaurantId}'`;
-
-    const bestsellers = await prisma.$queryRawUnsafe<Array<{ menuItemId: string; cnt: bigint }>>(
-      `
-      SELECT oi."menuItemId", COUNT(*) AS cnt
-      FROM "OrderItem" oi
-      JOIN "Order" o ON o.id = oi."orderId"
-      JOIN "Branch" b ON b.id = o."branchId"
-      WHERE o."createdAt" >= $1
-        AND o.status NOT IN ('CANCELLED')
-        AND oi."menuItemId" != '00000000-0000-0000-0000-000000000000'
-        ${branchFilter}
-      GROUP BY oi."menuItemId"
-      ORDER BY cnt DESC
-      LIMIT $2
-      `,
-      since,
-      MAX_BESTSELLERS
-    );
+    // Use separate parameterized queries for branch vs restaurant scope to
+    // avoid string interpolation in raw SQL entirely.
+    const bestsellers = branchId
+      ? await prisma.$queryRawUnsafe<Array<{ menuItemId: string; cnt: bigint }>>(
+          `
+          SELECT oi."menuItemId", COUNT(*) AS cnt
+          FROM "OrderItem" oi
+          JOIN "Order" o ON o.id = oi."orderId"
+          WHERE o."createdAt" >= $1
+            AND o."branchId" = $2
+            AND o.status NOT IN ('CANCELLED')
+            AND oi."menuItemId" != '00000000-0000-0000-0000-000000000000'
+          GROUP BY oi."menuItemId"
+          ORDER BY cnt DESC
+          LIMIT $3
+          `,
+          since,
+          branchId,
+          MAX_BESTSELLERS
+        )
+      : await prisma.$queryRawUnsafe<Array<{ menuItemId: string; cnt: bigint }>>(
+          `
+          SELECT oi."menuItemId", COUNT(*) AS cnt
+          FROM "OrderItem" oi
+          JOIN "Order" o ON o.id = oi."orderId"
+          JOIN "Branch" b ON b.id = o."branchId"
+          WHERE o."createdAt" >= $1
+            AND b."restaurantId" = $2
+            AND o.status NOT IN ('CANCELLED')
+            AND oi."menuItemId" != '00000000-0000-0000-0000-000000000000'
+          GROUP BY oi."menuItemId"
+          ORDER BY cnt DESC
+          LIMIT $3
+          `,
+          since,
+          restaurantId,
+          MAX_BESTSELLERS
+        );
 
     bestsellerIds = bestsellers.map((r) => r.menuItemId);
   }
@@ -116,6 +132,9 @@ export async function GET(req: NextRequest) {
       .map((_, i) => `$${i + 2}`)
       .join(", ");
 
+    // $1 = restaurantId, $2..$N = cartItemIds, $N+1 = since, $N+2 = MAX_TOGETHER
+    const sinceIdx = cartItemIds.length + 2;
+    const limitIdx = cartItemIds.length + 3;
     const together = await prisma.$queryRawUnsafe<Array<{ menuItemId: string; cnt: bigint }>>(
       `
       SELECT oi2."menuItemId", COUNT(DISTINCT oi2."orderId") AS cnt
@@ -126,17 +145,18 @@ export async function GET(req: NextRequest) {
       JOIN "Branch" b ON b.id = o."branchId"
       WHERE oi1."menuItemId" IN (${placeholders})
         AND b."restaurantId" = $1
-        AND o."createdAt" >= ${`$${cartItemIds.length + 2}`}
+        AND o."createdAt" >= $${sinceIdx}
         AND o.status NOT IN ('CANCELLED')
         AND oi2."menuItemId" != '00000000-0000-0000-0000-000000000000'
         AND oi2."menuItemId" NOT IN (${placeholders})
       GROUP BY oi2."menuItemId"
       ORDER BY cnt DESC
-      LIMIT ${MAX_TOGETHER}
+      LIMIT $${limitIdx}
       `,
       restaurantId,
       ...cartItemIds,
-      since
+      since,
+      MAX_TOGETHER
     );
 
     togetherIds = together.map((r) => r.menuItemId);

@@ -122,6 +122,16 @@ export async function POST(
       );
     }
 
+    // Guard against race condition: count existing PENDING+SUCCESS payments so
+    // concurrent POST requests don't create more payment rows than remaining parts.
+    const remainingParts = patungan.totalParts - patungan.paidParts;
+    if (patungan.payments.length >= remainingParts) {
+      return NextResponse.json(
+        { error: "All parts already have pending or completed payments" },
+        { status: 409 }
+      );
+    }
+
     // Calculate this participant's amount
     const paidParts = patungan.paidParts + patungan.payments.length;
     const isLastPart = paidParts === patungan.totalParts - 1;

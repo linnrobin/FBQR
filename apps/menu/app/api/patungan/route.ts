@@ -16,14 +16,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { prisma } from "@repo/database";
+import { randomBytes } from "crypto";
 
-// ─── Generate a 6-char alphanumeric share code ────────────────────────────────
+// ─── Generate a 6-char alphanumeric share code (cryptographically secure) ────
 
 function generateShareCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/O/0/1 for readability
+  const bytes = randomBytes(6);
   let code = "";
   for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[(bytes[i] as number) % chars.length];
   }
   return code;
 }

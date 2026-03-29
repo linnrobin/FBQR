@@ -39,7 +39,9 @@ export async function GET(
         },
       },
       payments: {
-        select: { id: true, status: true, amount: true, createdAt: true },
+        // Intentionally omit `amount` — this is a public endpoint; per-payment
+        // amounts must not be exposed to unauthenticated observers.
+        select: { id: true, status: true, createdAt: true },
       },
     },
   });

@@ -10,10 +10,28 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-28
-Version        : 4.32
-Current phase  : Phase 7 — Production audit complete.
-Last completed : Production audit — all 7 stub cron jobs implemented + security hardening.
+Last updated   : 2026-03-29
+Version        : 4.33
+Current phase  : Phase 7 — Second security audit pass complete.
+Last completed : Security audit pass #2 — 5 findings fixed. No schema changes. No new packages.
+                 Modified files (apps/menu):
+                   app/api/recommendations/route.ts — eliminated all string interpolation in
+                     $queryRawUnsafe: bestseller query now uses two separate parameterized
+                     queries (branch-scoped vs restaurant-scoped) instead of inline branchFilter
+                     fragment; "together" query LIMIT now passed as a bound parameter ($N+3)
+                     instead of template literal.
+                   app/api/patungan/route.ts — replaced Math.random() share-code generation
+                     with crypto.randomBytes() for cryptographically secure output.
+                   app/api/patungan/[patunganId]/pay/route.ts — added race-condition guard:
+                     rejects POST if PENDING+SUCCESS payment count >= remaining parts, preventing
+                     concurrent requests from creating more payment rows than split parts.
+                   app/api/patungan/[patunganId]/route.ts — removed `amount` field from public
+                     GET payments response; per-payment amounts must not be exposed to
+                     unauthenticated observers.
+                   lib/qr-auth.ts — QR_SIGNING_SECRET now throws in production if unset,
+                     instead of silently degrading to empty-string HMAC key.
+                 All 41 tests still passing.
+Previously: Production audit — all 7 stub cron jobs implemented + security hardening.
                  No schema changes. No new packages.
                  Modified files (apps/web):
                    app/api/cron/order-expiry/route.ts — full implementation: expire
