@@ -14,6 +14,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth/rbac";
 import { z } from "zod";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 type Params = { merchantId: string };
 
@@ -89,6 +90,20 @@ export async function POST(
     where: { id: merchantId },
     data: updateData,
     select: { id: true, status: true, suspendedAt: true, suspendedReason: true },
+  });
+
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.id,
+    actorType: "ADMIN",
+    actorName: session.user.email ?? null,
+    action: action === "suspend" ? "SUSPEND" : "UNSUSPEND",
+    entity: "Merchant",
+    entityId: merchantId,
+    oldValue: { status: existing.status },
+    newValue: { status: merchant.status, reason: reason ?? null },
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({ merchant });

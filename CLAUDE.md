@@ -10,50 +10,757 @@ This is the **command center** for AI agents working on this repository. It cont
 > Update this block at the END of every session before pushing.
 
 ```
-Last updated   : 2026-03-23
-Version        : 4.9
-Current phase  : Phase 3 — Step 10 in progress (partial).
-Last completed : Step 10 (partial) — table management API routes + page server component.
-                 Bug fixes applied (same session):
-                   orders/route.ts: used MenuItem.price (not pricePerUnit) for unit price snapshot
-                   orders/route.ts: replaced requireStaffPermission() throw with hasPermission() early return (403 not 500)
-                   orders/route.ts: added table.branchId === branchId cross-check
-                   orders/route.ts: added BY_WEIGHT guard (422 — not supported in waiter-assisted mode)
-                   orders/route.ts: replaced date-fns format() with formatInTimeZone(Asia/Jakarta) for QueueCounter key
-                   tables/page.tsx: removed non-existent MenuCategory.isActive filter
-                 Routing bug fixed (same session):
-                   (merchant)/dashboard/ was at the WRONG URL (/dashboard, unprotected by middleware).
-                   Moved to (merchant)/merchant/dashboard/ so it serves /merchant/dashboard correctly
-                   and falls under the /merchant/* middleware protection.
-                 API routes created (apps/web):
-                   GET/POST   /api/merchant/tables — list tables by branch + create with auto qrToken
-                   GET/PATCH/DELETE /api/merchant/tables/[tableId] — CRUD
-                   PATCH      /api/merchant/tables/[tableId]/status — manual status transitions
-                   POST       /api/merchant/tables/[tableId]/rotate-token — regenerate qrToken
-                   GET        /api/merchant/tables/[tableId]/qr — QR code as base64 data URL
-                   POST       /api/merchant/orders — waiter-assisted order placement
-                 Merchant page: /merchant/tables — Server Component (fetches branches, tables, settings, categories)
+Last updated   : 2026-03-29
+Version        : 4.33
+Current phase  : Phase 7 — Second security audit pass complete.
+Last completed : Security audit pass #2 — 5 findings fixed. No schema changes. No new packages.
+                 Modified files (apps/menu):
+                   app/api/recommendations/route.ts — eliminated all string interpolation in
+                     $queryRawUnsafe: bestseller query now uses two separate parameterized
+                     queries (branch-scoped vs restaurant-scoped) instead of inline branchFilter
+                     fragment; "together" query LIMIT now passed as a bound parameter ($N+3)
+                     instead of template literal.
+                   app/api/patungan/route.ts — replaced Math.random() share-code generation
+                     with crypto.randomBytes() for cryptographically secure output.
+                   app/api/patungan/[patunganId]/pay/route.ts — added race-condition guard:
+                     rejects POST if PENDING+SUCCESS payment count >= remaining parts, preventing
+                     concurrent requests from creating more payment rows than split parts.
+                   app/api/patungan/[patunganId]/route.ts — removed `amount` field from public
+                     GET payments response; per-payment amounts must not be exposed to
+                     unauthenticated observers.
+                   lib/qr-auth.ts — QR_SIGNING_SECRET now throws in production if unset,
+                     instead of silently degrading to empty-string HMAC key.
+                 All 41 tests still passing.
+Previously: Production audit — all 7 stub cron jobs implemented + security hardening.
+                 No schema changes. No new packages.
+                 Modified files (apps/web):
+                   app/api/cron/order-expiry/route.ts — full implementation: expire
+                     timed-out PENDING orders (non-CASH); auto-complete READY orders past
+                     autoCompleteReadyMinutes; atomic WHERE guards; CronRunLog.
+                   app/api/cron/session-cleanup/route.ts — full implementation: expire
+                     stale ACTIVE CustomerSessions; update Table.status (DIRTY/AVAILABLE
+                     per enableDirtyState); cancel abandoned BY_WEIGHT orders + Midtrans
+                     refund; resolve leaked WaiterRequests; CronRunLog.
+                   app/api/cron/pii-deletion/route.ts — full UU PDP implementation:
+                     anonymize Customer PII (email, name, phone, password) 30+ days after
+                     deletionRequestedAt; send confirmation email before anonymizing;
+                     zero out loyalty balances; detach CustomerSessions; AuditLog; CronRunLog.
+                   app/api/cron/queue-counter-prune/route.ts — full implementation:
+                     delete QueueCounter rows older than 30 WIB days; CronRunLog.
+                   app/api/cron/availability-reset/route.ts — full implementation:
+                     reset autoResetAvailability items (isAvailable=false, stockCount IS NULL)
+                     at 00:05 WIB daily; CronRunLog.
+                   app/api/cron/eod-cash-cleanup/route.ts — full implementation:
+                     cancel stale PENDING_CASH orders older than 12h not manually closed;
+                     restore stockCount; CronRunLog.
+                   app/api/cron/balance-charge-alert/route.ts — full implementation:
+                     audit-log ALERT entries for BY_WEIGHT order items with weight entered
+                     but no BALANCE_CHARGE/BALANCE_REFUND payment; dedupes per week; CronRunLog.
+                   app/api/internal/notify/route.ts — Zod discriminatedUnion validation
+                     (UUID guards, bounded string/number fields); crypto.timingSafeEqual()
+                     for INTERNAL_API_SECRET comparison.
+                   app/api/webhook/gofood/route.ts — use crypto.timingSafeEqual() with
+                     equal-length padded buffers (prevents secret-length timing attack).
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — wrap all DB ops in try/catch;
+                     improved idempotency (skip when txId already SUCCESS); P2002 constraint
+                     violation silently swallowed as concurrent-request guard; updateMany
+                     with status guards on FAILED/REFUNDED transitions.
+                 All 41 tests still passing.
+Previously: Step 28 — Full live merchant dashboard.
+                 No schema changes. No new packages.
+                 New files created (apps/web):
+                   app/api/merchant/dashboard/route.ts — GET: live dashboard stats
+                     (activeOrders, occupiedTables, openWaiterRequests, todayRevenue,
+                     7-day revenue chartData, recentOrders last 10, waiterRequests list,
+                     orderingPaused/Message); auth: merchant owner or staff orders:view.
+                   app/api/merchant/waiter-requests/[requestId]/resolve/route.ts — PATCH:
+                     sets resolvedAt = NOW(); validates restaurant ownership; audit logged.
+                   components/merchant/dashboard-revenue-chart.tsx — Recharts AreaChart
+                     component for 7-day revenue (formatIDR Y-axis, orange gradient fill).
+                 Modified files (apps/web):
+                   app/(merchant)/merchant/dashboard/page.tsx — now fetches full initial
+                     dashboard data (branches, order counts, table stats, waiter requests,
+                     today revenue, 7-day revenue, recent 10 orders, settings) and passes
+                     as initialData prop; imports date-fns / date-fns-tz for WIB aggregation.
+                   app/(merchant)/merchant/dashboard/dashboard-client.tsx — full rewrite:
+                     stat cards (Pesanan Aktif / Meja Terisi / Permintaan Pelayan /
+                     Pendapatan Hari Ini); ordering pause/resume toggle (PATCH /api/merchant/
+                     settings); DashboardRevenueChart; recent orders table; WaiterRequest
+                     alerts panel with [Tandai Selesai]; onboarding checklist card;
+                     Supabase Realtime subscription on orders:{primaryBranchId} channel;
+                     30-second fallback REST poll; offline banner.
+                 All 41 tests still passing.
+Previously: Step 27 — WhatsApp Business integration (shared).
+                 Schema changes:
+                   Customer: added phone (String?) — WhatsApp-compatible phone (E.164 format).
+                   MerchantSettings: added waNotifications (Json default
+                     {"orderReady":true,"invoiceSent":true,"newOrder":false}) — per-event WA toggle.
+                 No new packages (uses fetch() to call Fonnte HTTP API directly).
+                 New files created (apps/web):
+                   lib/whatsapp.ts — Fonnte API client; sendOrderReadyNotification(),
+                     sendInvoiceNotification(), sendNewOrderWaNotification(); reads MerchantIntegration
+                     WHATSAPP credentials from DB; non-fatal; respects waNotifications prefs.
+                   app/api/merchant/integrations/whatsapp/route.ts — GET: masked integration config;
+                     POST: create/update integration (token + optional senderNumber); DELETE: deactivate;
+                     requires settings:manage; audit logged.
+                   components/merchant/settings-whatsapp-tab.tsx — WA setup form (Fonnte token +
+                     sender number); connection status card; notification event toggles (orderReady,
+                     invoiceSent, newOrder); saves via PATCH /api/merchant/settings.
+                 Modified files (apps/web):
+                   app/api/merchant/settings/route.ts — added WaNotificationsSchema + waNotifications
+                     field to UpdateSettingsSchema.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — after() sendOrderReadyNotification
+                     when order transitions to READY; fetches customerSession.customer.phone + table name.
+                   app/(merchant)/merchant/settings/settings-client.tsx — added WaNotifications type +
+                     waNotifications state + "WhatsApp" tab (MessageCircle icon); mounts
+                     SettingsWhatsappTab.
+                 New files created (apps/menu):
+                   lib/whatsapp.ts — mirror of apps/web WA lib (same interface; sendInvoiceNotification
+                     only; non-fatal; reads DB for MerchantIntegration credentials).
+                 Modified files (apps/menu):
+                   lib/invoice.tsx — added sendInvoiceNotification() call after pdfUrl stored; fetches
+                     customer phone via customerSession.customer.phone.
+                   app/api/customer/me/route.ts — added phone to GET response; added PATCH handler
+                     (update name and/or phone; validates E.164 format).
+                   app/api/auth/customer/register/route.ts — accepts optional phone field in POST body;
+                     stored at creation.
+                   app/account/page.tsx — phone edit section in header (shows current number or "Belum
+                     ada nomor WA"; inline edit form with save/cancel); Pencil + Smartphone icons.
+                   app/account/register/page.tsx — optional phone field added to registration form with
+                     WA notification explanation.
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 26 — Platform loyalty + gamification (all).
+                 No schema changes (LoyaltyTier + PlatformLoyaltyBalance already in schema from Phase 1).
+                 No new packages.
+                 New files created (apps/web):
+                   app/api/merchant/loyalty/[programId]/tiers/route.ts — GET: list tiers;
+                     POST: create tier (name, threshold, multiplier, customTitle?, badge?);
+                     requires loyalty:manage.
+                   app/api/merchant/loyalty/[programId]/tiers/[tierId]/route.ts — PATCH: update tier;
+                     DELETE: hard delete tier; audit logged.
+                 Modified files (apps/web):
+                   components/merchant/settings-loyalty-tab.tsx — added LoyaltyTier management
+                     section: list tiers sorted by threshold; add/edit/delete tier via modal;
+                     "Tambah tier default" one-click preset (Perak/Emas/Platinum); platform loyalty
+                     info card explaining FBQR Platform Points.
+                 Modified files (apps/menu):
+                   lib/loyalty.ts — tier-aware creditLoyaltyPoints(): loads tiers for active
+                     program; applies multiplier from customer's current tier; after crediting,
+                     recalculates and updates tierId on MerchantLoyaltyBalance; added
+                     creditPlatformLoyaltyPoints(): earns 1 FBQR point per Rp 50,000 grandTotal;
+                     idempotent via AuditLog; non-fatal.
+                   app/api/webhook/midtrans/route.ts — added after() creditPlatformLoyaltyPoints
+                     for PAY_FIRST confirmations and Patungan full-pay.
+                   app/api/order/route.ts — added after() creditPlatformLoyaltyPoints for
+                     PAY_AT_CASHIER orders.
+                   app/api/customer/me/route.ts — extended response: tier info (name, badge,
+                     customTitle, multiplier), nextTier progress (threshold, pointsToNextTier),
+                     platformLoyalty balance, recentOrders (last 5, scoped to restaurantId if
+                     provided).
+                   app/account/page.tsx — updated to use new API structure; tier badge + name +
+                     custom title displayed on loyalty card; progress bar toward next tier;
+                     platform FBQR points card; recent orders now correctly rendered.
+                 All 41 tests still passing.
+Previously: Step 25 — Merchant loyalty program + customer account (apps/menu + apps/web/(merchant)).
+                 Schema changes:
+                   Customer: added hashedPassword (String?), emailVerifiedAt (DateTime?)
+                   MerchantSettings: added loyaltyEnabled (Boolean default false)
+                   Order: added pointsRedeemed (Int default 0), loyaltyDiscountAmount (Int default 0)
+                 New packages: bcryptjs + @types/bcryptjs, jose (apps/menu dependencies).
+                 New files created (apps/menu):
+                   lib/customer-auth.ts — customer JWT helpers (sign/verify fbqr_customer_session
+                     cookie, HS256 jose, 30-day TTL); signEmailVerifyJwt/verifyEmailVerifyJwt for
+                     email verification flow; CUSTOMER_COOKIE constant.
+                   lib/loyalty.ts — creditLoyaltyPoints(orderId) non-fatal helper; credits
+                     MerchantLoyaltyBalance after order CONFIRMED; idempotency via AuditLog check;
+                     respects loyaltyEnabled + active program + verified email.
+                   app/api/auth/customer/register/route.ts — POST: email+password registration;
+                     bcrypt hash; sends verification email via Resend (graceful stub if no key);
+                     returns 201 + customer id.
+                   app/api/auth/customer/login/route.ts — POST: email+password login; validates
+                     emailVerifiedAt; sets fbqr_customer_session httpOnly cookie (30d TTL).
+                   app/api/auth/customer/logout/route.ts — POST: clears cookie.
+                   app/api/auth/customer/verify-email/route.ts — GET: verifies signed JWT token;
+                     sets emailVerifiedAt; redirects to /account.
+                   app/api/customer/me/route.ts — GET: returns customer profile + loyalty balance
+                     for ?restaurantId= param; requires customer session cookie.
+                   app/account/page.tsx — customer account overview: profile card, loyalty balance,
+                     order history link, logout button.
+                   app/account/login/page.tsx — email+password login form; redirect to /account.
+                   app/account/register/page.tsx — registration form; email+password; post-submit
+                     "check your email" state.
+                 New files created (apps/web):
+                   app/api/merchant/loyalty/route.ts — GET: fetch active loyalty program;
+                     POST: create new program; requires loyalty:manage.
+                   app/api/merchant/loyalty/[programId]/route.ts — PATCH: update program fields;
+                     DELETE: deactivate (soft, sets isActive=false + deactivatedAt).
+                   components/merchant/settings-loyalty-tab.tsx — Loyalty settings tab component;
+                     loyaltyEnabled toggle + program config form (name, IDR per point, redemption
+                     rate, calculation basis); creates/updates MerchantLoyaltyProgram via API;
+                     wired into SettingsClient as "loyalty" tab.
+                 Modified files (apps/menu) — loyalty + new schema fields:
+                   app/api/order/route.ts — accepts pointsToRedeem in body; validates customer
+                     session + verified email + active program + sufficient balance; applies
+                     loyaltyDiscountAmount to grandTotal; atomically deducts balance in transaction;
+                     stores pointsRedeemed + loyaltyDiscountAmount on Order.
+                   app/api/webhook/midtrans/route.ts — after() creditLoyaltyPoints for PAY_FIRST
+                     confirmations and Patungan full-pay.
+                   components/checkout-screen.tsx — added loyaltyEnabled to CheckoutSettings;
+                     fetches /api/customer/me on mount (loyalty enabled only); Section 4: login
+                     prompt card for anonymous users; Section 5: loyalty toggle + discount display
+                     for logged-in verified customers; displays discounted grandTotal.
+                   components/cart-sheet.tsx — added loyaltyEnabled + restaurantId props; fetches
+                     loyalty balance when sheet opens; Section 6: loyalty info chip with balance
+                     + IDR value + "Tukar saat checkout" link.
+                   components/menu-home.tsx — added loyaltyEnabled prop; threads to CartSheet.
+                   app/[restaurantId]/[tableId]/page.tsx — fetches loyaltyEnabled from settings;
+                     passes to MenuHome.
+                   app/[restaurantId]/[tableId]/checkout/page.tsx — fetches loyaltyEnabled; passes
+                     to CheckoutScreen via CheckoutSettings.
+                   lib/audit.ts — fixed Prisma.JsonNull for exactOptionalPropertyTypes.
+                 Modified files (apps/web):
+                   app/(merchant)/merchant/settings/settings-client.tsx — wired SettingsLoyaltyTab
+                     as loyalty tab; removed coming-soon stub.
+                   app/(merchant)/merchant/settings/page.tsx — fetches loyaltyEnabled from DB.
+                   app/api/merchant/settings/route.ts — accepts loyaltyEnabled in PATCH schema.
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 24 — Audit log: logging middleware + viewer UI (apps/web).
+                 No schema changes. No new packages.
+                 New files created (apps/web):
+                   lib/audit.ts — shared auditLog() helper + getRequestMeta(); wraps
+                     prisma.auditLog.create(); non-fatal (catches + logs errors, never throws);
+                     used by all state-changing API routes instead of inline prisma calls.
+                 New files created (apps/menu):
+                   lib/audit.ts — identical helper for apps/menu (same interface, same non-fatal
+                     behavior); apps/menu inline transaction-level calls left as-is (intentionally
+                     transactional).
+                 New files created (apps/web):
+                   app/api/fbqrsys/audit-log/route.ts — GET: paginated audit log list (50/page);
+                     requires reports:read; filters: search (actorName/entity/entityId), actorType,
+                     action, entity, restaurantId, dateFrom, dateTo; returns logs + restaurant.name.
+                   app/(fbqrsys)/audit-log/page.tsx — client component; filter bar (search,
+                     actorType, action, entity, date range); paginated table (Waktu/Aktor/Tindakan/
+                     Entitas/Restoran/IP); row click expands JSON diff (oldValue/newValue side-by-side
+                     in bg-stone-950 code blocks); action badge colors per spec; empty state with
+                     Shield icon; debounced filter fetch (300ms).
+                 Modified files (apps/web) — auditLog() wired into:
+                   app/api/auth/pin/route.ts — Staff LOGIN event.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — Order UPDATE (status transition).
+                   app/api/fbqrsys/merchants/[merchantId]/suspend/route.ts — Merchant SUSPEND/UNSUSPEND.
+                   app/api/merchant/menu/items/route.ts — MenuItem CREATE.
+                   app/api/merchant/menu/items/[itemId]/route.ts — MenuItem UPDATE + DELETE.
+                   app/api/merchant/promotions/route.ts — Promotion CREATE.
+                   app/api/merchant/promotions/[promotionId]/route.ts — Promotion UPDATE + DELETE.
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/priority/route.ts — OrderItem REORDER.
+                 All 41 tests still passing. No schema changes.
+Previously: Step 23 — AI recommendation engine: bestsellers, upsell, frequently-ordered-together (apps/menu).
+                 No schema changes. No new packages.
+                 New files created (apps/menu):
+                   app/api/recommendations/route.ts — GET: pure-SQL recommendation engine; no external
+                     AI service. Three signals: bestsellers (top items by order count, last 30 days,
+                     branch-scoped), frequently-ordered-together (collaborative filtering — items
+                     co-occurring in orders with cart contents), upsell (bestsellers not in cart).
+                     AI feature gating: respects aiShowBestsellers/aiPersonalized/aiUpsell settings
+                     from MerchantSettings; returns empty arrays if all disabled.
+                     Raw SQL via prisma.$queryRawUnsafe; parameterized to prevent injection.
+                     Returns: { bestsellerIds, upsellIds, togetherIds }.
+                 Modified files (apps/menu):
+                   app/[restaurantId]/[tableId]/page.tsx — added aiShowBestsellers, aiPersonalized,
+                     aiUpsell, aiTimeBased to MerchantSettings select; passes aiSettings + branchId
+                     props to MenuHome.
+                   components/menu-home.tsx — added AiSettings type + aiSettings/branchId props;
+                     client-side recommendation fetch (useEffect on cart change, skips if bestsellerIds
+                     already populated + cart key unchanged); passes bestsellerIds to all layout
+                     components; passes upsellIds, togetherIds, allItems, onOpenItem to CartSheet.
+                   components/menu-item-card.tsx — added isBestseller?: boolean prop; shows orange
+                     "🔥 Terlaris" badge overlay on image (top-left, hidden if in cart).
+                   components/menu-list-row.tsx — added isBestseller?: boolean; shows inline 🔥 badge
+                     next to item name.
+                   components/menu-grid-layout.tsx — added bestsellerIds?: Set<string> prop; threads
+                     isBestseller to each MenuItemCard.
+                   components/menu-list-layout.tsx — added bestsellerIds?: Set<string>; threads to
+                     all MenuListRow renders (filtered + category section).
+                   components/menu-bundle-layout.tsx — added bestsellerIds + isBestseller to
+                     BundleCard interface; shows "🔥 Terlaris" badge on hero image.
+                   components/menu-spotlight-layout.tsx — added bestsellerIds; shows bestseller badge
+                     above item name in detail panel.
+                   components/cart-sheet.tsx — added SuggestionChip component (image + name + price);
+                     added upsellIds, togetherIds, allItems, onOpenItem props; renders
+                     "Sering dipesan bersama" section (up to 4 chips) + "🥤 Tambah minuman atau snack?"
+                     upsell section (up to 4 chips) inside scrollable content area.
+                 All 41 tests still passing. No schema changes.
+Previously: Step 22 — Delivery platform integration: GrabFood/GoFood/ShopeeFood webhook → unified kitchen.
+                 Schema changes:
+                   Order: added estimatedPickupTime (DateTime?) — driver pickup ETA from delivery platform.
+                 No new packages.
+                 New files created (apps/web):
+                   lib/delivery/create-delivery-order.ts — shared delivery order creation helper:
+                     idempotency check (platformName+platformOrderId), branch resolution via
+                     platformStoreId, queue number increment, CONFIRMED Order+Items+OrderEvent
+                     creation in transaction, non-fatal push notification via after().
+                   app/api/webhook/grabfood/route.ts — POST: HMAC-SHA256 (X-GrabFood-HMAC-SHA256
+                     base64 header); handles order.created (createDeliveryOrder) + order.cancelled
+                     (CANCELLED transition + OrderEvent); per-restaurant secret override supported
+                     (GRABFOOD_WEBHOOK_SECRET_{restaurantId}).
+                   app/api/webhook/gofood/route.ts — POST: OAuth 2.0 bearer token validation
+                     (Authorization: Bearer GOFOOD_WEBHOOK_TOKEN); handles ORDER_CREATED +
+                     ORDER_CANCELLED.
+                   app/api/webhook/shopeefood/route.ts — POST: HMAC-SHA256 (X-ShopeeFood-Signature
+                     hex header); handles order.new + order.cancel.
+                 Modified files (apps/web):
+                   app/(kitchen)/kitchen/page.tsx — fixed: table select now via customerSession.table;
+                     added platformName, estimatedPickupTime to Order query + serialization.
+                   app/api/kitchen/orders/route.ts — same fix: table via customerSession.table;
+                     platformName + estimatedPickupTime added; full serialization to KitchenOrderData
+                     shape; fixed merchant session lookup (user.id not user.merchantId).
+                   components/kitchen/kitchen-order-card.tsx — KitchenOrderData type extended with
+                     platformName + estimatedPickupTime; header shows "🛵 GrabFood — Driver ~HH:MM"
+                     for DELIVERY orders; table/queue shown for non-delivery orders.
+                 New env vars (apps/web):
+                   GRABFOOD_WEBHOOK_SECRET — global GrabFood HMAC secret
+                   GRABFOOD_WEBHOOK_SECRET_{restaurantId} — per-restaurant override
+                   GOFOOD_WEBHOOK_TOKEN — GoFood bearer token
+                   SHOPEEFOOD_WEBHOOK_SECRET — ShopeeFood HMAC secret
+                 All 41 tests still passing. Prisma client regenerated.
+Previously: Step 21 — merchant-pos: ROI analytics dashboard + accounting export (apps/web/(merchant)).
+                 No schema changes.
+                 New packages: recharts ^3.8.1, exceljs ^4.4.0 (apps/web dependencies).
+                 New files created (apps/web):
+                   app/api/merchant/analytics/route.ts — GET: aggregated analytics (revenue, orders,
+                     menu performance, table analytics, ratings) for date range + branch filter;
+                     merchant owner session or staff PIN session with reports:read.
+                   app/api/merchant/analytics/export/route.ts — GET: downloads itemized Excel (.xlsx)
+                     report of confirmed orders in date range (ExcelJS); up to 5000 orders.
+                   app/(merchant)/merchant/analytics/page.tsx — Server component: auth check; fetches
+                     branch list; renders AnalyticsDashboard.
+                   components/merchant/analytics-types.ts — Shared TypeScript interfaces for all
+                     analytics data shapes (AnalyticsData, RevenueData, OrdersData, MenuData, etc.).
+                   components/merchant/analytics-dashboard.tsx — Orchestrator: date range preset
+                     buttons (7d/30d/90d/custom), custom date inputs, branch selector (multi-branch),
+                     fetch state management, export button placement; renders section sub-components.
+                   components/merchant/analytics-revenue-section.tsx — Revenue stat cards
+                     (gross/tax/service/gateway fees/net) + area chart (daily trend) + donut chart
+                     (by order type) + horizontal bar chart (by payment method).
+                   components/merchant/analytics-orders-section.tsx — Order stat cards
+                     (total/AOV/cancellation rate/per-hour avg) + bar charts (by hour of day WIB,
+                     by day of week).
+                   components/merchant/analytics-menu-table.tsx — Top 10 by revenue + top 10 by
+                     order count (horizontal bar charts) + slowest-moving items table.
+                   components/merchant/analytics-ratings-section.tsx — Avg rating stat + star
+                     distribution bar chart + recent comments list (last 20).
+                   components/merchant/analytics-export-button.tsx — Export button: triggers
+                     GET /api/merchant/analytics/export; blob download.
+                 All 41 tests still passing.
+Previously: Step 20 — merchant-kitchen: real-time queue, priority reordering, station tabs,
+                   queue number display, PWA offline mode, kitchen ticket + receipt printing.
+                 No schema changes.
+                 New package: node-thermal-printer (apps/web dependencies).
+                 New files created (apps/web):
+                   app/(kitchen)/kitchen/page.tsx — Server component: auth check (kitchen:view),
+                     fetches initial orders + stations + settings; renders KitchenDisplay.
+                   app/api/kitchen/orders/route.ts — GET: CONFIRMED+PREPARING+READY orders for branch;
+                     staff PIN session (kitchen:view) or merchant owner auth.
+                   app/api/kitchen/orders/[orderId]/status/route.ts — PATCH: status transitions
+                     (CONFIRMED→PREPARING→READY→COMPLETED); sets readyAt on READY transition.
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/priority/route.ts — PATCH: up/down
+                     kitchenPriority (scoped per item, per station intent).
+                   app/api/kitchen/orders/[orderId]/items/[itemId]/weight/route.ts — PATCH: enter
+                     actual weight for BY_WEIGHT items; computes finalLineTotal; returns delta vs
+                     Order.depositAmount; sets needsWeighing=false.
+                   app/api/kitchen/print/route.ts — POST: trigger KITCHEN_TICKET or RECEIPT print job;
+                     reads printerConfig from MerchantSettings; non-fatal on failure.
+                   lib/printer.ts — printKitchenTicket() + printCustomerReceipt() via
+                     node-thermal-printer; supports NETWORK (TCP/IP); USB/BT require local bridge
+                     (Phase 2); fails gracefully with toast message.
+                   components/kitchen/kitchen-station-tabs.tsx — Tab bar: "Semua" + one per active
+                     station; active tab bg-primary; order count badge per tab.
+                   components/kitchen/kitchen-order-card.tsx — Order card: header (table/queue/type/time),
+                     items (qty/name/variant/addons/badges ⚖️🔥), elapsed timer (green/yellow/red),
+                     action button (Disiapkan/Siap/Selesai), priority ↑↓ controls, print button.
+                   components/kitchen/weight-entry-modal.tsx — Numpad modal for BY_WEIGHT items;
+                     opens on ⚖️ tap; submits to weight API; shows delta (charge/refund) on save.
+                   components/kitchen/kitchen-order-grid.tsx — 2/3/4-col responsive grid with
+                     AnimatePresence entrance animation; filters by active station.
+                   components/kitchen/kitchen-display.tsx — Main orchestrator: Supabase Realtime
+                     subscription on orders:{branchId}; 60s fallback REST poll (10s on CHANNEL_ERROR);
+                     reconnection banner; optimistic state updates; auto-print on CONFIRMED.
+                   components/kitchen/pwa-register.tsx — Registers SW; shows iOS "Add to Home Screen"
+                     banner (sessionStorage-dismissed).
+                   public/manifest-kitchen.json — Kitchen PWA manifest (scope /kitchen/, dark theme,
+                     landscape orientation).
+                   public/kitchen-offline.html — Kitchen offline fallback page (dark bg, Indonesian copy).
+                 Modified files (apps/web):
+                   app/(kitchen)/layout.tsx — adds manifest-kitchen.json metadata + KitchenPwaRegister.
+                   public/sw.js — bumped to v2; added kitchen-offline.html precache; scope-aware
+                     navigation fallback (kitchen routes → kitchen-offline.html).
+                 All 41 tests still passing.
+Previously: Step 19 — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared).
+                 No schema changes.
+                 New packages: @react-pdf/renderer (apps/web + apps/menu dependencies).
+                 New files created (apps/web):
+                   lib/pdf/customer-invoice.tsx — CustomerInvoicePdf React-PDF component (A4);
+                     items table, subtotal/service/tax/grand total, payment info, Bahasa Indonesia copy.
+                   lib/pdf/billing-invoice.tsx — BillingInvoicePdf React-PDF component (A4);
+                     FBQR brand header, billed-to section, line item, totals, payment status badge.
+                   lib/customer-invoice.tsx — generateAndStoreCustomerInvoice(orderId) for waiter-
+                     assisted orders placed via apps/web; mirrors apps/menu logic.
+                   lib/billing-invoice.tsx — generateAndStoreBillingInvoice(invoiceId); fetches
+                     MerchantBillingInvoice + merchant; renders PDF; uploads to Supabase Storage
+                     invoices/billing/{merchantId}/{invoiceNumber}.pdf; updates pdfUrl with 24h signed URL.
+                   app/api/merchant/billing-invoices/route.ts — GET: lists authenticated merchant's
+                     FBQR subscription invoices (paginated, status filter).
+                   app/(merchant)/merchant/billing/page.tsx — Server component: current plan summary
+                     card + initial invoice list.
+                   app/(merchant)/merchant/billing/billing-invoices-client.tsx — Client: status filter
+                     tabs, invoice table with PDF download links, plan info card.
+                 New files created (apps/menu):
+                   lib/pdf/customer-invoice.tsx — CustomerInvoicePdf (same template as apps/web).
+                   lib/invoice.tsx — generateAndStoreCustomerInvoice(orderId); invoice number generation
+                     INV-{branchCode}-{YYYYMMDD}-{seq:04d}; renders PDF; uploads to Supabase Storage
+                     invoices/orders/{orderId}.pdf; updates Invoice.pdfUrl with 24h signed URL.
+                 Modified files (apps/web):
+                   app/api/cron/billing/route.ts — sendEmail() stub replaced with real Resend integration
+                     (graceful stub if RESEND_API_KEY absent); generateAndStoreBillingInvoice() called
+                     via after() after invoice creation; invoice-issued email includes PDF link.
+                   app/api/merchant/orders/route.ts — after() generateAndStoreCustomerInvoice() for
+                     waiter-assisted (PAY_AT_CASHIER) orders.
+                   components/merchant/sidebar.tsx — added "Tagihan" link → /merchant/billing.
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — replaced stub Invoice upsert with
+                     after(() => generateAndStoreCustomerInvoice(orderId)); Patungan full-pay also triggers.
+                   app/api/order/route.ts — after() generateAndStoreCustomerInvoice() for PAY_AT_CASHIER.
+                 All 41 tests still passing.
+Previously: Step 18 — Push notifications: Web Push API, new order alert, Call Waiter alert (apps/web).
+                 Schema changes:
+                   New model: StaffPushSubscription — stores browser push endpoint + VAPID keys per
+                     restaurant/staff. Fields: id, staffId (FK nullable), restaurantId (FK), branchId
+                     (nullable), endpoint (UNIQUE), p256dh, auth, userAgent, createdAt, updatedAt.
+                 New environment variables (both apps):
+                   NEXT_PUBLIC_VAPID_PUBLIC_KEY — VAPID public key (safe to expose to browser)
+                   VAPID_PRIVATE_KEY            — VAPID private key (server-only)
+                   VAPID_SUBJECT                — "mailto:..." for VAPID contact
+                   INTERNAL_API_SECRET          — shared secret for apps/menu → apps/web internal API
+                 New packages: web-push + @types/web-push (apps/web devDependencies)
+                 New files created (apps/web):
+                   lib/push.ts — sendNewOrderNotification() + sendWaiterCallNotification(); looks up
+                     StaffPushSubscription rows by restaurantId/branchId; respects pushNotifications
+                     JSON toggle in MerchantSettings; cleans up stale subscriptions (410/404 response).
+                   app/api/merchant/push/vapid-key/route.ts — GET: returns NEXT_PUBLIC_VAPID_PUBLIC_KEY
+                     (public — no auth required).
+                   app/api/merchant/push/subscribe/route.ts — POST: upsert push subscription; DELETE:
+                     remove. Accepts staff PIN session or merchant owner session.
+                   app/api/internal/notify/route.ts — POST: internal cross-app push trigger protected
+                     by INTERNAL_API_SECRET; accepts {type, restaurantId, branchId, payload};
+                     dispatches to sendNewOrderNotification / sendWaiterCallNotification.
+                   components/merchant/push-subscribe.tsx — Client component mounted in merchant layout;
+                     requests Notification permission; subscribes via PushManager; saves to server;
+                     shows iOS "Add to Home Screen" banner (sessionStorage-dismissed).
+                 Modified files (apps/web):
+                   public/sw.js — added push event handler (showNotification with requireInteraction)
+                     and notificationclick handler (focus existing /merchant/ tab or open new tab).
+                   app/(merchant)/layout.tsx — includes PushSubscribe component.
+                 New files created (apps/menu):
+                   lib/notify.ts — sendInternalNotification() helper; calls apps/web /api/internal/notify;
+                     uses NEXT_PUBLIC_WEB_APP_URL + INTERNAL_API_SECRET; non-fatal (logs + returns).
+                 Modified files (apps/menu):
+                   app/api/webhook/midtrans/route.ts — after confirmOrder() and Patungan full-pay:
+                     calls sendInternalNotification({type: "NEW_ORDER", ...}) via after() (non-blocking).
+                   app/api/waiter/route.ts — after WaiterRequest created: fire-and-forget
+                     sendInternalNotification({type: "WAITER_CALL", ...}).
+                   app/api/order/route.ts — for PAY_AT_CASHIER orders: fire-and-forget NEW_ORDER notify.
+                 Modified files (apps/web):
+                   app/api/merchant/orders/route.ts — waiter-assisted orders: after() push NEW_ORDER.
+                 All 41 tests still passing. Prisma client regenerated with StaffPushSubscription.
+Previously: Step 17 — Takeaway / counter mode: counter QR, queue numbers, queue display screen
+                 (apps/menu + apps/web/(kitchen)).
+                 Schema changes:
+                   Table: added tableType (OrderType default DINE_IN) — identifies counter/takeaway tables.
+                 New files created (apps/web):
+                   app/(kitchen)/queue-display/page.tsx — Public queue display page (no auth);
+                     requires ?branchId=<uuid>; renders QueueDisplay component on a TV/monitor.
+                   app/api/kitchen/queue/route.ts — GET public endpoint: returns PREPARING + READY
+                     queue numbers for today (WIB date) scoped to branch. No auth required.
+                   components/kitchen/queue-display.tsx — Full-screen dark TV display (bg-stone-950);
+                     "PESANAN SIAP" section (green tiles) + "SEDANG DISIAPKAN" section (amber tiles);
+                     Supabase Realtime subscription on orders:{branchId} channel; 30s fallback poll;
+                     AnimatePresence animated number tiles; reconnection banner on CHANNEL_ERROR.
+                 Modified files (apps/web):
+                   middleware.ts — /kitchen/queue-display exempted from staff auth (public TV screen).
+                   app/api/merchant/tables/route.ts — POST: accepts optional tableType field
+                     (DINE_IN | TAKEAWAY); passed to Prisma create.
+                   app/api/merchant/tables/[tableId]/route.ts — PATCH: accepts optional tableType field.
+                   app/(merchant)/merchant/tables/tables-floor-map.tsx — FloorMapTable interface gains
+                     tableType field; TableFormModal adds 2-button type selector (🪑 Dine-in / 🥡 Takeaway);
+                     TableCard subtitle shows 🥡 Takeaway for TAKEAWAY tables.
+                 Modified files (apps/menu):
+                   app/[restaurantId]/[tableId]/page.tsx — fetches table.tableType; passes tableType
+                     prop to MenuHome.
+                   app/api/order/route.ts — fetches table.tableType alongside restaurant station;
+                     passes orderType to Order.create.
+                   components/menu-home.tsx — new tableType prop (default DINE_IN); shows "🥡 Takeaway"
+                     sub-label in header when tableType=TAKEAWAY.
+                   components/order-tracking-screen.tsx — TAKEAWAY: shows prominent queue number card
+                     (#NNN, 56px font-black, color-primary); hides Call Waiter (no table service).
+                 All 41 tests still passing.
+Previously: Step 16 — Order tracking screen: real-time status, Call Waiter, rating (apps/menu).
+                 New files created (apps/menu):
+                   app/[restaurantId]/[tableId]/order/[orderId]/page.tsx — Server component: validates
+                     session cookie (allows expired sessions to still view in-flight order tracking);
+                     renders OrderTrackingScreen.
+                   app/api/orders/[orderId]/route.ts — GET: fetch order details for tracking (session-
+                     authenticated; returns full order with items, payments, invoice, rating, session
+                     status, and restaurant branding).
+                   app/api/orders/[orderId]/rating/route.ts — POST: submit 1–5 star rating + optional
+                     comment for COMPLETED orders; one rating per order; session-authenticated.
+                   app/api/waiter/route.ts — POST: create WaiterRequest (CALL/ASSISTANCE/BILL);
+                     session-authenticated + tableId validation; logged to AuditLog.
+                   components/order-timeline.tsx — Vertical status progression (CONFIRMED → PREPARING →
+                     READY → COMPLETED); active step has animated pulse ring (Loader2 + animate-ping);
+                     completed steps show CheckCircle2; CANCELLED state shows red banner with timestamp.
+                   components/order-status-display.tsx — Items list (with ⚖️ BY_WEIGHT badge + weight
+                     value when set), payment summary (subtotal/service/tax/total + method badge +
+                     payment status badge), READY banner (animate-pulse), invoice download link
+                     (shows "Generating..." when pdfUrl not yet set).
+                   components/call-waiter-menu.tsx — 3-button grid (Panggil Pelayan / Butuh Bantuan /
+                     Minta Struk); ASSISTANCE button opens Framer Motion bottom sheet with optional
+                     note textarea; sent state auto-resets after 30s; disabled while session inactive.
+                   components/order-rating-prompt.tsx — Star rating (5 tappable stars, h-8 w-8,
+                     amber-400 fill); optional comment textarea (max 500 chars); submits to
+                     /api/orders/[orderId]/rating; shows "Terima kasih!" confirmation on success.
+                   components/order-tracking-screen.tsx — Orchestrator: Supabase Realtime subscription
+                     on `orders:{branchId}` channel (branch-scoped per ADR spec); 30s fallback poll;
+                     reconnection banner on CHANNEL_ERROR; return-from-Midtrans spinner (shows while
+                     status=PENDING after ?status=finish); confirmation banner auto-dismiss 5s;
+                     cancelled/expired state view; Add More Items + Back to Menu buttons.
                  All 41 tests still passing. No DB schema changes.
-
-INCOMPLETE WORK — must finish before marking Step 10 complete:
-  [ ] apps/web/app/(merchant)/merchant/tables/tables-client.tsx
-        Floor map grid (table cards with status colours), QR code modal (download + print),
-        table status action buttons, waiter-assisted order panel (category/item selector,
-        variant/addon picker, confirm → POST /api/merchant/orders).
-        See docs/merchant.md § Table Management and § Waiter-Assisted Order Mode for full spec.
+Previously: Step 15 — Cart + pre-invoice + Midtrans QRIS + cash + split payment / Patungan (apps/menu).
+                 Schema changes:
+                   MerchantSettings: added taxRate (Decimal default 0.11), taxLabel (String default "PPN"),
+                     serviceChargeRate (Decimal default 0.00), serviceChargeLabel (String default "Service"),
+                     taxOnServiceCharge (Boolean default true), pricesIncludeTax (Boolean default false).
+                   OrderItem: added specialRequest (String?) for per-item customer instructions.
+                 New files created (apps/menu):
+                   components/cart-sheet.tsx — Bottom sheet (Framer Motion, max-h-85vh): cart item
+                     rows with [−][qty][+] controls + delete, order summary (subtotal/service/tax/total),
+                     "Lanjut ke Pembayaran" / "Pesan & Bayar di Kasir" CTA.
+                   components/payment-method-selector.tsx — Radio cards for QRIS/VA/CARD selection;
+                     fee label per method; selected state uses --color-primary border/bg.
+                   components/patungan-setup-modal.tsx — Bottom sheet: EQUAL/MANUAL mode toggle,
+                     totalParts stepper (2–10), per-person amount preview, "Buat Link Patungan" CTA.
+                   components/patungan-host-screen.tsx — Host progress view: 6-char shareCode + copy
+                     link, progress bar, per-participant paid/pending status list, Cancel Patungan button.
+                   components/patungan-participant-screen.tsx — Participant view: restaurant name,
+                     their share amount, progress bar, Pay button → Midtrans redirect.
+                   components/checkout-screen.tsx — Client component: reads cart from sessionStorage,
+                     shows pre-invoice (itemized + tax breakdown), payment method selector (PAY_FIRST),
+                     customer note textarea, privacy consent (UU PDP) gated, Patungan CTA;
+                     handles order submission and Midtrans redirect; PAY_AT_CASHIER pending screen.
+                   app/[restaurantId]/[tableId]/checkout/page.tsx — Server component: validates
+                     session + fetches tax/payment settings; renders CheckoutScreen.
+                   app/patungan/page.tsx — 6-char code entry page for participants.
+                   app/patungan/[patunganId]/page.tsx — Participant payment page.
+                   app/api/order/route.ts — POST: validate session, verify items, compute financials
+                     (ADR-013), create Order + Payment, return Snap token (PAY_FIRST) or pending
+                     confirmation (PAY_AT_CASHIER). Guards: orderingPaused, maxPendingOrders,
+                     maxOrderValueIDR, BY_WEIGHT block.
+                   app/api/patungan/route.ts — POST: create PatunganSession (EQUAL/MANUAL); validates
+                     PAY_FIRST mode, BY_WEIGHT block, order PENDING guard.
+                   app/api/patungan/[patunganId]/route.ts — GET: status (public); DELETE: host-only
+                     cancel + best-effort Midtrans refunds.
+                   app/api/patungan/[patunganId]/pay/route.ts — POST: create participant Snap token.
+                   app/api/patungan/lookup/route.ts — GET: resolve shareCode → patunganId.
+                   app/api/webhook/midtrans/route.ts — POST: SHA512 signature verification; maps
+                     transaction_status to Payment/Order status; Patungan: increments paidParts,
+                     confirms Order when all parts paid; async Invoice creation via after().
+                 Modified files (apps/menu):
+                   components/item-detail-modal.tsx — CartEntry type extended with itemName: string
+                     and imageUrl: string | null; onAddToCart call populates both.
+                   components/menu-home.tsx — added CartSheet integration; cart icon opens sheet;
+                     handleUpdateQty / handleRemoveItem cart mutators; handleProceedToCheckout saves
+                     cart to sessionStorage and navigates to checkout; new props: restaurantId,
+                     tableId, taxSettings, paymentMode.
+                   app/[restaurantId]/[tableId]/page.tsx — fetches paymentMode + all tax settings
+                     from MerchantSettings; passes to MenuHome as taxSettings + paymentMode props.
+                 All 41 tests still passing. TypeScript clean.
+Previously: Step 14 — Item detail modal: variants, add-ons, allergens (apps/menu).
+                 New files created (apps/menu):
+                   components/item-variant-selector.tsx — Radio pill-chip group for variant
+                     selection; selected chip uses border/bg/text in --color-primary; shows
+                     price delta (+Rp / -Rp) next to each option.
+                   components/item-addon-selector.tsx — Multi-select checkbox chip list for
+                     optional add-ons; simple toggle for maxQuantity=null/1; [−][qty][+]
+                     controls for maxQuantity>1; isDefault pre-checked on modal open.
+                   components/item-detail-content.tsx — Scrollable modal body: 11 spec
+                     sections (image 16:9 / name / price / dietary badges / prep time /
+                     description / variants / add-ons / allergen warning box / special
+                     request textarea / qty selector [−][n][+]).
+                   components/item-detail-modal.tsx — Framer Motion bottom sheet (max-h-90vh,
+                     spring animation, body scroll lock); manages selectedVariantId,
+                     selectedAddons Map<id,qty>, qty, specialRequest state; pre-fills from
+                     existingEntry when item already in cart; footer "Tambahkan ke Pesanan"
+                     button disabled for BY_WEIGHT, unavailable, or missing required variant;
+                     exports CartEntry and CartAddon types for Step 15 cart/checkout.
+                 Modified files (apps/menu):
+                   components/menu-item-card.tsx — added MenuItemVariant and MenuItemAddon
+                     interfaces to MenuItemData; whole card now clickable (role=button);
+                     onAdd → onOpenItem(item); add button opens modal instead of direct add.
+                   components/menu-grid-layout.tsx — onAddItem → onOpenItem(item).
+                   components/menu-list-row.tsx — whole row clickable; onAdd → onOpenItem(item).
+                   components/menu-list-layout.tsx — onAddItem → onOpenItem(item).
+                   components/menu-bundle-layout.tsx — whole card clickable; onAddItem →
+                     onOpenItem(item).
+                   components/menu-spotlight-layout.tsx — button opens modal via
+                     onOpenItem(item); onAddItem → onOpenItem(item).
+                   components/menu-home.tsx — cart upgraded from Map<string,number> to
+                     Map<string,CartEntry> (stores variant/addon/special-request/lineTotal
+                     per item); added openItem + modalOpen state; ItemDetailModal wired
+                     with existingEntry for re-editing; bottom bar uses CartEntry.lineTotal.
+                   app/[restaurantId]/[tableId]/page.tsx — added variants and addons to
+                     Prisma query (deletedAt: null filter, sortOrder ordering); mapped to
+                     MenuItemData.variants / addons; allergens cast to string[].
+                   app/[restaurantId]/menu/page.tsx — same variants/addons query expansion.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 13 — List, Bundle, Spotlight layouts (apps/menu).
+                 New files created (apps/menu):
+                   lib/menu-time-window.ts — shared isCategoryAvailable() helper (WIB
+                     time-window filtering, overnight range support); extracted from
+                     menu-grid-layout.tsx so all layout renderers share one source of truth.
+                   components/menu-list-row.tsx — single item row: 56×56 image, name
+                     (1-line clamp), description (2-line clamp), dietary badges, price,
+                     add-to-cart button (h-8 w-8 rounded-full); spec from customer.md.
+                   components/menu-list-layout.tsx — List layout orchestrator: full-width
+                     search bar (Cari menu...), horizontal category filter chips (Semua +
+                     per-category), category sections with list rows when no filter/search;
+                     flat filtered results when search active; category tabs remain (scroll-spy).
+                   components/menu-bundle-layout.tsx — Bundle layout: per-item full-width
+                     cards (16:7 hero image, name, description, price, dietary badges,
+                     full-width add button pinned to card bottom); category sections with
+                     scroll-spy IDs.
+                   components/menu-spotlight-layout.tsx — Spotlight carousel: all items
+                     flattened across categories; Framer Motion drag="x" swipe navigation;
+                     chevron arrow buttons; "N / total" pagination indicator; full-width
+                     hero image (4:3), Display-size name (text-4xl font-bold), H2 price,
+                     4-line description clamp, dietary badges, full-width add button.
+                     No category tabs (omitted per spec).
+                 Modified files (apps/menu):
+                   components/menu-grid-layout.tsx — removed inline time-window helpers;
+                     now imports isCategoryAvailable from lib/menu-time-window.
+                   components/menu-home.tsx — added menuLayout prop (GRID|LIST|BUNDLE|
+                     SPOTLIGHT, default GRID); conditionally renders appropriate layout
+                     component; hides MenuCategoryTabs for SPOTLIGHT layout; added
+                     imports for three new layout components.
+                   app/[restaurantId]/[tableId]/page.tsx — passes branding.menuLayout
+                     to MenuHome.
+                   app/[restaurantId]/menu/page.tsx — passes branding.menuLayout to MenuHome.
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 12 — QR validation + branded menu + Grid layout + shareable URL.
+                 New files created (apps/menu):
+                   lib/qr-auth.ts — HMAC-SHA256 sign/verify (ADR-015); signQrUrl(),
+                     verifyQrSig() timing-safe, buildSignedMenuUrl() with 24h expiry
+                   app/r/[tableToken]/route.ts — QR redirect handler: table lookup,
+                     merchant/table status validation, HTML error pages, 302 redirect to
+                     signed URL. Table DIRTY check gates on enableDirtyState setting.
+                   app/api/menu/session/route.ts — Session creation/resume: re-validates
+                     sig, creates CustomerSession (sessionCookie, expiresAt, ip, ua),
+                     sets fbqr_session_id httpOnly cookie, redirects back to menu.
+                     CRITICAL ADR-015: resume query uses sessionCookie, not id.
+                   components/menu-item-card.tsx — Item card: image, dietary badges
+                     (Halal/Vegan/Vegetarian/Allergen), spice level, price (+ deposit
+                     for BY_WEIGHT), cart quantity badge, [+ Tambah] button disabled
+                     for unavailable/BY_WEIGHT items.
+                   components/menu-category-tabs.tsx — Horizontal scroll-spy tabs:
+                     IntersectionObserver drives active tab; auto-scrolls active tab
+                     into view; click scrolls to section with header+tab offset.
+                   components/menu-grid-layout.tsx — 2/3-col grid per category section:
+                     category time-window filter (WIB, overnight range support).
+                   components/menu-home.tsx — Orchestrator: sticky header (logo, name,
+                     cart icon), ordering-paused banner, category tabs, grid layout,
+                     fixed bottom cart bar (isOrderingMode=true) or browse-only banner
+                     "Pindai QR di meja untuk memesan" (isOrderingMode=false).
+                     Cart state: quantity map (full checkout deferred to Step 15).
+                     Scroll-spy via IntersectionObserver.
+                   app/[restaurantId]/[tableId]/page.tsx — QR-validated table menu:
+                     full ADR-015 security flow (sig validation → path param assertion
+                     → table/merchant status checks → session create/resume → menu
+                     render). Session creation uses redirect to /api/menu/session.
+                   app/[restaurantId]/menu/page.tsx — Shareable browse-only menu:
+                     no QR needed; merchant/restaurant status check; primary branch
+                     BranchMenuOverride applied; browse-only banner rendered.
+                 apps/menu/package.json: added lucide-react ^0.469.0.
+                 All 41 tests still passing. No DB schema changes.
+                 Schema changes:
+                   Added DiscountType enum (PERCENTAGE, FIXED_AMOUNT, BOGO, FREE_ITEM)
+                   Added PromotionScope enum (ALL_ITEMS, SPECIFIC_CATEGORIES, SPECIFIC_ITEMS)
+                   Redesigned Promotion model: removed redundant `type String` + `discountType
+                     String`; replaced with single `discountType DiscountType` enum field.
+                     Renamed startsAt→validFrom, endsAt→validTo, maxUses→usageLimit,
+                     usedCount→usageCount. Added scope fields: applicableTo (PromotionScope),
+                     applicableItemIds (Json default "[]"), maximumDiscountAmount (Int?),
+                     minimumOrderValue (Int?), perCustomerLimit (Int?).
+                 API routes created (apps/web):
+                   GET/POST   /api/merchant/promotions — list (non-deleted) + create; code
+                     uniqueness enforced at restaurant scope (409 on conflict)
+                   GET/PATCH/DELETE /api/merchant/promotions/[promotionId] — CRUD; soft delete
+                 Merchant pages created (apps/web/(merchant)/merchant/promotions):
+                   /merchant/promotions — Server Component + PromotionsClient + PromotionsList
+                     (table with status/type filters, kebab actions: edit/duplicate/toggle/delete)
+                   /merchant/promotions/new — Server Component + PromotionForm (create)
+                   /merchant/promotions/[promotionId]/edit — Server Component + PromotionForm (edit)
+                 Pre-split client components (per component architecture guide):
+                   promotion-form.tsx    — full create/edit form (all 12 fields per spec)
+                   promotions-list.tsx   — filterable table with RowActions kebab
+                   promotions-client.tsx — thin shell; mounts PromotionsList
+                 Sidebar link /merchant/promotions was already wired (sidebar.tsx unchanged).
+                 All 41 tests still passing.
+Previously: /merchant/settings page — 7-tab MerchantSettings editor.
+                 API expanded (PATCH /api/merchant/settings): fixed stale PaymentMode BOTH
+                   value; added 17 new settable fields covering payment limits, kitchen alerts,
+                   print toggles, notification preferences, AI toggles, promotion stacking.
+                   Fixed pre-existing exactOptionalPropertyTypes Prisma upsert error.
+                 Pages created (apps/web):
+                   /merchant/settings — Server Component + SettingsClient (7 active tabs:
+                     Operasi, Pembayaran, Sesi Meja, Dapur, Notifikasi, Fitur AI, Promosi;
+                     each tab saves independently via PATCH /api/merchant/settings;
+                     Branding tab links to /merchant/branding; Loyalty stub = coming soon)
+                 All 41 tests still passing. No DB schema changes.
+Previously: Step 10 QA pass — 4 bugs fixed in table management UI components:
+                   tables-floor-map.tsx: KebabMenu.transition() was closing the menu before
+                     the fetch resolved; on non-ok response the failure was silent. Fixed:
+                     menu now closes only on success; inline error shown in dropdown; network
+                     exceptions caught. DeleteConfirm.confirm() had no error state and no
+                     try/catch — failure was invisible to the user. Fixed: added error display
+                     and catch block. TableFormModal.submit() had try/finally without catch —
+                     network errors propagated unhandled. Fixed: added catch block.
+                   tables-order-panel.tsx: submitOrder() same try/finally-only pattern.
+                     Fixed: added catch block so network failures set submitError.
+                   All res.json() calls on error paths now use .catch(() => ({})) to handle
+                     non-JSON responses (e.g. 502 from proxy) without a second exception.
+                 Previously: Step 10 — table management UI complete.
+                   Client components created (apps/web):
+                     tables-floor-map.tsx  — responsive grid of table cards (status colours,
+                       kebab actions for status transitions, create/edit/delete table forms)
+                     tables-qr-modal.tsx   — QR view modal (download PNG, print, rotate token
+                       with confirmation dialog; fetches from GET /api/merchant/tables/[id]/qr)
+                     tables-order-panel.tsx — full-screen waiter-assisted POS panel (category
+                       tabs, item grid, variant/addon picker modal, cart with qty controls,
+                       POST /api/merchant/orders; BY_WEIGHT items shown disabled)
+                     tables-client.tsx     — orchestrator (branch tabs, pause-orders banner
+                       with toggle → PATCH /api/merchant/settings, floor-map/list view toggle,
+                       list view table, mounts QrModal + OrderPanel)
+                 All 41 tests still passing. No DB schema changes.
 
 KNOWN INCOMPLETE ITEMS in earlier steps (expected — assigned to future steps):
   Step 6  — sendEmail() in /api/cron/billing/route.ts is a console.log stub.
               Real Resend integration is Step 18 (push notifications + email).
-  Step 7  — /merchant/dashboard shows a static checklist card only. Full live stat cards
-              and revenue chart are deferred to after Step 20 (Realtime connected).
-  Step 10 — tables-client.tsx (see INCOMPLETE WORK above).
+  Step 7  — /merchant/dashboard: Full live dashboard built in Step 28 (stat cards,
+              ordering toggle, revenue chart, recent orders, waiter requests panel,
+              Supabase Realtime + 30s fallback poll). ✓ Complete.
 
 SIDEBAR LINKS WITH NO PAGE YET (expected — future steps):
-  /merchant/promotions  → Step 11 (not built yet)
+  /merchant/promotions  → ✓ built (Step 11 complete)
   /merchant/analytics   → Step 21 (not built yet)
-  /merchant/settings    → not assigned to a step yet; add MerchantSettings editor in Step 10
-                           or treat as a standalone step before Step 11. See docs/merchant.md.
+  /merchant/settings    → ✓ built (7-tab MerchantSettings editor)
   /fbqrsys/audit-log    → Step 24 (not built yet)
 Previously: Step 9 — merchant-pos: menu & category management, allergens, CSV import,
                  per-branch item availability toggle (BranchMenuOverride UI), PWA offline mode
@@ -426,8 +1133,7 @@ Previously: UI/UX specification pass (v3.3) — full design system + screen-spec
                  LOW #15 — architecture.md: ADR-025 added (Late Webhook Revival design,
                    revival conditions, auto-refund fallback, lateWebhookWindowMinutes).
                  Previously (v3.1): 6 bugs, 3 gaps from first post-migration audit fixed.
-Next step      : Step 10 (resume) — build tables-client.tsx (floor map, QR modal, waiter order panel),
-                 then add /merchant/settings page before starting Step 11.
+Next step      : Phase 1 complete. Phase 2 items (see docs/architecture.md Feature Backlog).
 Active branch  : claude/claude-md-mmj9kfzjcs43k5bw-RRqsz
 Open decisions : See "Open Questions for Future AI Agents" in docs/architecture.md
 Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec but not schema);
@@ -447,6 +1153,35 @@ Known doc gaps : MerchantStatus enum lacks FREE value (in ui-ux.md badge spec bu
                  quick sold-out from KDS — UX note for Step 20.
                  EFAKTUR API for Faktur Pajak — deferred to Phase 2.
 ```
+
+---
+
+## Component Architecture Pre-split Guide
+
+> **Read this before starting any flagged step.** Steps marked ⚠ below will produce a single
+> client component exceeding ~400 lines if built naively. Pre-plan the split before writing code.
+> Pattern established in Step 10: split into focused sub-components + thin orchestrator.
+>
+> **Rule of thumb:** any client component projected to exceed 400 lines must be split.
+> Each sub-component file should do one thing (grid rendering, one modal, one form, one panel).
+
+### Steps requiring pre-emptive splitting
+
+| Step | Proposed sub-components | Why it needs splitting |
+|---|---|---|
+| **11** | `promotions-list.tsx` (table + filters) · `promotion-form.tsx` (12-field form with conditional visibility — discount type, category/item selectors, date pickers) · `promotions-client.tsx` (orchestrator) | Form alone is ~320 lines due to conditional fields (PERCENTAGE shows max cap; BOGO shows buy/get selectors) |
+| **12** | `menu-grid-layout.tsx` (grid + scroll-spy) · `menu-item-card.tsx` (reusable card) · `menu-category-tabs.tsx` (scroll-spy tabs) · `menu-home.tsx` (orchestrator + branding injection) | Grid layout handles column responsiveness, scroll-spy category sync, branding CSS override, and badge display simultaneously |
+| **13** | `menu-list-layout.tsx` · `menu-list-row.tsx` · `menu-bundle-layout.tsx` · `menu-spotlight-layout.tsx` (carousel) | Three distinct layout renderers — each warrants its own file; ListLayout also includes search/filter state |
+| **14** | `item-detail-modal.tsx` (sheet wrapper + state) · `item-variant-selector.tsx` (radio group) · `item-addon-selector.tsx` (multi-checkbox) · `item-detail-content.tsx` (scrollable body) | Bottom sheet has 11 distinct sections; variant/addon selectors will be reused in cart and Patungan screens |
+| **15** | `cart-sheet.tsx` (slide-over cart) · `checkout-screen.tsx` (pre-invoice + tax/service breakdown) · `payment-method-selector.tsx` · `patungan-setup-modal.tsx` (split mode selection + per-part amount calc) · `patungan-host-screen.tsx` (host progress view) · `patungan-participant-screen.tsx` | Checkout is a tax/service state machine; Patungan adds host/participant branching + Realtime progress tracking — easily 700+ lines if merged |
+| **16** | `order-tracking-screen.tsx` (Realtime subscription + routing) · `order-status-display.tsx` (status badge + items list) · `order-timeline.tsx` (vertical event log) · `call-waiter-menu.tsx` (action sheet) · `order-rating-prompt.tsx` | Real-time subscription + Call Waiter action sheet + rating form + BY_WEIGHT balance alert all in one screen |
+| **20** | `kitchen-display.tsx` (Realtime sub + station tabs + fallback poll) · `kitchen-order-grid.tsx` (grid layout) · `kitchen-order-card.tsx` (card + action buttons + weight numpad) · `kitchen-station-tabs.tsx` · `kitchen-priority-reorder.tsx` (drag-drop) | ~500-line component without split; real-time + drag-drop + fallback polling + station routing all compete for complexity |
+| **21** | `analytics-dashboard.tsx` (layout + date range state) · `analytics-revenue-section.tsx` (stat cards + trend chart) · `analytics-orders-section.tsx` (order stats + by-hour chart) · `analytics-menu-table.tsx` (top/slowest items) · `analytics-ratings-section.tsx` · `analytics-export-button.tsx` · individual chart files per chart type (each ~80 lines) | 8 chart types + 5 sections = 600+ lines if merged; Recharts components should each live in their own file |
+
+### Steps that do NOT need splitting (all components stay under 300 lines)
+
+Steps 17 (queue display), 18 (push notifications), 19 (PDF/invoice), 22 (delivery integration),
+23 (AI badges/sections), 24 (audit log viewer), 25 (loyalty + customer account), 26–28.
 
 ---
 
@@ -479,33 +1214,33 @@ Work through phases in order. Do not start a phase until all previous steps are 
 - [x] **Step 7** — Merchant onboarding: trial/free tier flow, plan selection (`apps/web/(merchant)`)
 - [x] **Step 8** — Restaurant branding settings + CSS variable injection (`apps/web/(merchant)` + `apps/menu`)
 - [x] **Step 9** — merchant-pos: menu & category management, layouts, allergens, CSV import, **per-branch item availability toggle (BranchMenuOverride UI)**, **PWA offline mode for merchant-pos** (`apps/web/(merchant)`)
-- [ ] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
-- [ ] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`)
+- [x] **Step 10** — merchant-pos: table management, QR generation, floor map, **waiter-assisted order mode (POS places order on behalf of customer)** (`apps/web/(merchant)`)
+- [x] **Step 11** — merchant-pos: promotions + discount codes (`apps/web/(merchant)`) ⚠ pre-split
 
 ### Phase 4 — Customer Ordering (end-user-system)
-- [ ] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`)
-- [ ] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`)
-- [ ] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`)
-- [ ] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`)
-- [ ] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`)
+- [x] **Step 12** — QR validation + branded menu, Grid layout, dine-in, **shareable browse-only menu URL** (`apps/menu`) ⚠ pre-split
+- [x] **Step 13** — List, Bundle, Spotlight layouts (`apps/menu`) ⚠ pre-split
+- [x] **Step 14** — Item detail modal: variants, add-ons, allergens (`apps/menu`) ⚠ pre-split
+- [x] **Step 15** — Cart + pre-invoice + Midtrans QRIS + cash option + **split payment / Patungan (multi-person checkout)** (`apps/menu`) ⚠ pre-split
+- [x] **Step 16** — Order tracking screen: real-time status, Call Waiter, rating (`apps/menu`) ⚠ pre-split
 
 ### Phase 5 — Kitchen & Operations
-- [ ] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
-- [ ] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
-- [ ] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
-- [ ] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`)
+- [x] **Step 17** — Takeaway / counter mode: counter QR, queue numbers, queue display screen (`apps/menu` + `apps/web/(kitchen)`)
+- [x] **Step 18** — Push notifications: Web Push API, new order alert, Call Waiter alert (`apps/web`)
+- [x] **Step 19** — Invoice + MerchantBillingInvoice PDF generation + Supabase Storage (shared)
+- [x] **Step 20** — merchant-kitchen: real-time queue, priority reordering, station tabs, queue number display, **PWA offline mode for kitchen display**, **kitchen ticket + receipt printing (node-thermal-printer)** (`apps/web/(kitchen)`) ⚠ pre-split
 
 ### Phase 6 — Analytics & Intelligence
-- [ ] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`)
-- [ ] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
-- [ ] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
+- [x] **Step 21** — merchant-pos: ROI analytics dashboard + accounting export (`apps/web/(merchant)`) ⚠ pre-split
+- [x] **Step 22** — Delivery platform integration: GrabFood/GoFood webhook → unified kitchen (`apps/web` + API)
+- [x] **Step 23** — AI recommendation engine: bestsellers, upsell, personalized, time-based (`apps/menu` + API)
 
 ### Phase 7 — Platform Hardening
-- [ ] **Step 24** — Audit log: logging middleware + viewer UI (all)
-- [ ] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
-- [ ] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
-- [ ] **Step 27** — WhatsApp Business integration (shared)
-- [ ] **Step 28** — Remaining backlog items (TBD)
+- [x] **Step 24** — Audit log: logging middleware + viewer UI (all)
+- [x] **Step 25** — Merchant loyalty program + customer account (`apps/menu` + `apps/web/(merchant)`)
+- [x] **Step 26** — Platform loyalty + gamification — Phase 2 (all)
+- [x] **Step 27** — WhatsApp Business integration (shared)
+- [x] **Step 28** — Remaining backlog items: full live merchant dashboard
 
 ---
 

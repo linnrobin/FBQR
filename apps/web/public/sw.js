@@ -11,12 +11,14 @@
  * Display an in-app banner prompting this for optimal notification support.
  */
 
-const CACHE_VERSION = "fbqr-merchant-v1";
+const CACHE_VERSION = "fbqr-merchant-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const OFFLINE_URL = "/offline.html";
+const KITCHEN_OFFLINE_URL = "/kitchen-offline.html";
 
 const PRECACHE_URLS = [
   "/offline.html",
+  "/kitchen-offline.html",
 ];
 
 // ── Install ───────────────────────────────────────────────────────────────────
@@ -77,14 +79,70 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation: network-first, fall back to offline page
+  // Navigation: network-first, fall back to scope-aware offline page
   if (request.mode === "navigate") {
+    const isKitchen = url.pathname.startsWith("/kitchen/") || url.pathname === "/kitchen";
+    const fallbackUrl = isKitchen ? KITCHEN_OFFLINE_URL : OFFLINE_URL;
     event.respondWith(
       fetch(request).catch(() =>
-        caches.match(OFFLINE_URL).then(
+        caches.match(fallbackUrl).then(
           (offline) => offline ?? new Response("Offline", { status: 503 })
         )
       )
     );
   }
+});
+
+// ── Push ──────────────────────────────────────────────────────────────────────
+
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: "FBQR", body: event.data.text() };
+  }
+
+  const title = payload.title ?? "FBQR";
+  const options = {
+    body: payload.body ?? "",
+    icon: payload.icon ?? "/icons/icon-192x192.png",
+    badge: payload.badge ?? "/icons/badge-72x72.png",
+    tag: payload.tag,
+    data: payload.data ?? {},
+    requireInteraction: true,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// ── Notification click ────────────────────────────────────────────────────────
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const data = event.notification.data ?? {};
+  let targetUrl = "/merchant/dashboard";
+
+  if (data.type === "NEW_ORDER") {
+    targetUrl = "/merchant/tables";
+  } else if (data.type === "WAITER_CALL") {
+    targetUrl = "/merchant/tables";
+  }
+
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      // Focus an existing merchant tab if one is open
+      const existing = clientList.find((c) => c.url.includes("/merchant/"));
+      if (existing) {
+        return existing.focus();
+      }
+      // Otherwise open a new tab
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
 });

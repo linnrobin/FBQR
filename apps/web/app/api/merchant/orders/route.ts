@@ -9,12 +9,15 @@
  * Merchant (owner) session also accepted.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
 import { getStaffSession, hasPermission, forbiddenResponse } from "@/lib/auth/rbac";
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { formatInTimeZone } from "date-fns-tz";
+import { sendNewOrderNotification } from "@/lib/push";
+import { generateAndStoreCustomerInvoice } from "@/lib/customer-invoice";
 
 const OrderItemSchema = z.object({
   menuItemId: z.string().uuid(),
@@ -249,6 +252,20 @@ export async function POST(req: NextRequest) {
 
     return newOrder;
   });
+
+  // Send push notification to other staff (non-blocking)
+  after(async () => {
+    await sendNewOrderNotification({
+      restaurantId,
+      branchId: order.branchId,
+      orderNumber: String(order.queueNumber),
+      tableLabel: table.name,
+      grandTotal: order.grandTotal,
+    });
+  });
+
+  // Waiter-assisted orders are immediately confirmed (PAY_AT_CASHIER) — generate invoice async
+  after(() => generateAndStoreCustomerInvoice(order.id));
 
   return NextResponse.json({ order }, { status: 201 });
 }

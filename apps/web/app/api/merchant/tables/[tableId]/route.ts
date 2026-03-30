@@ -10,6 +10,7 @@ import { z } from "zod";
 const UpdateTableSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   capacity: z.number().int().min(1).max(999).nullable().optional(),
+  tableType: z.enum(["DINE_IN", "TAKEAWAY"]).optional(),
 });
 
 async function resolveTable(tableId: string, restaurantId: string) {
@@ -68,6 +69,7 @@ export async function PATCH(
     data: {
       ...(parsed.data.name !== undefined && { name: parsed.data.name }),
       ...(parsed.data.capacity !== undefined && { capacity: parsed.data.capacity }),
+      ...(parsed.data.tableType !== undefined && { tableType: parsed.data.tableType }),
     },
     include: { branch: { select: { id: true, name: true } } },
   });

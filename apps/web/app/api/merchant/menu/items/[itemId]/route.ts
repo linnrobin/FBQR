@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@repo/database";
 import { requireMerchant } from "@/lib/auth/session";
 import { z } from "zod";
+import { auditLog, getRequestMeta } from "@/lib/audit";
 
 const ALLERGENS = ["nuts", "dairy", "gluten", "seafood", "eggs", "soy"] as const;
 
@@ -198,11 +199,26 @@ export async function PATCH(
     },
   });
 
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "UPDATE",
+    entity: "MenuItem",
+    entityId: itemId,
+    oldValue: { name: existing.name, price: existing.price },
+    newValue: updateData,
+    restaurantId,
+    ipAddress,
+    userAgent,
+  });
+
   return NextResponse.json({ item });
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ itemId: string }> }
 ) {
   const session = await requireMerchant();
@@ -220,6 +236,20 @@ export async function DELETE(
   await prisma.menuItem.update({
     where: { id: itemId },
     data: { deletedAt: new Date() },
+  });
+
+  const { ipAddress, userAgent } = getRequestMeta(req);
+  await auditLog({
+    actorId: session.user.merchantId ?? null,
+    actorType: "MERCHANT",
+    actorName: session.user.email ?? null,
+    action: "DELETE",
+    entity: "MenuItem",
+    entityId: itemId,
+    oldValue: { name: existing.name, price: existing.price },
+    restaurantId,
+    ipAddress,
+    userAgent,
   });
 
   return NextResponse.json({ success: true });

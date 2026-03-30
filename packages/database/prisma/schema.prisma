@@ -224,6 +224,19 @@ enum MerchantIntegrationType {
   CUSTOM
 }
 
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  BOGO
+  FREE_ITEM
+}
+
+enum PromotionScope {
+  ALL_ITEMS
+  SPECIFIC_CATEGORIES
+  SPECIFIC_ITEMS
+}
+
 // =============================================================================
 // PLATFORM — FBQRSYS admin accounts, subscription plans, platform config
 // =============================================================================
@@ -484,9 +497,10 @@ model Restaurant {
   roles           MerchantRole[]
   stations        KitchenStation[]       @relation("RestaurantStations")
   promotions      Promotion[]
-  loyaltyPrograms MerchantLoyaltyProgram[]
-  analyticsEvents AnalyticsEvent[]
-  auditLogs       AuditLog[]
+  loyaltyPrograms     MerchantLoyaltyProgram[]
+  analyticsEvents     AnalyticsEvent[]
+  auditLogs           AuditLog[]
+  pushSubscriptions   StaffPushSubscription[]
 
   @@map("restaurants")
 }
@@ -559,6 +573,16 @@ model MerchantSettings {
   autoPrintKitchenTicket Boolean @default(true)
   autoPrintReceipt       Boolean @default(true)
 
+  // Tax & service charge (ADR-013)
+  taxRate            Decimal @default(0.11) @db.Decimal(5, 4)
+  taxLabel           String  @default("PPN")
+  serviceChargeRate  Decimal @default(0.00) @db.Decimal(5, 4)
+  serviceChargeLabel String  @default("Service")
+  /// If true, PPN applies to (subtotal + serviceCharge). Default true per Indonesian PPN regulation.
+  taxOnServiceCharge Boolean @default(true)
+  /// If true, displayed prices already include tax; grandTotal = subtotal (no addition).
+  pricesIncludeTax   Boolean @default(false)
+
   // Rounding (cash merchants)
   roundingRule RoundingRule @default(NONE)
 
@@ -567,6 +591,13 @@ model MerchantSettings {
   aiPersonalized    Boolean @default(false)
   aiUpsell          Boolean @default(true)
   aiTimeBased       Boolean @default(true)
+
+  // Loyalty program
+  loyaltyEnabled Boolean @default(false)
+
+  // WhatsApp Business notification events (Step 27)
+  // JSON: { "orderReady": true, "invoiceSent": true, "newOrder": false }
+  waNotifications Json @default("{\"orderReady\":true,\"invoiceSent\":true,\"newOrder\":false}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -655,6 +686,7 @@ model Table {
   name      String
   qrToken   String      @unique
   status    TableStatus @default(AVAILABLE)
+  tableType OrderType   @default(DINE_IN)
   capacity  Int?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
@@ -679,11 +711,12 @@ model Staff {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  restaurant      Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  branch          Branch?                  @relation("BranchStaff", fields: [branchId], references: [id], onDelete: SetNull)
-  roleAssignments MerchantRoleAssignment[]
-  ordersPlaced    Order[]                  @relation("PlacedByStaff")
-  weightEntries   OrderItem[]              @relation("WeightEnteredByStaff")
+  restaurant        Restaurant               @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch            Branch?                  @relation("BranchStaff", fields: [branchId], references: [id], onDelete: SetNull)
+  roleAssignments   MerchantRoleAssignment[]
+  ordersPlaced      Order[]                  @relation("PlacedByStaff")
+  weightEntries     OrderItem[]              @relation("WeightEnteredByStaff")
+  pushSubscriptions StaffPushSubscription[]
 
   @@map("staff")
 }
@@ -807,27 +840,31 @@ model BranchMenuOverride {
 }
 
 model Promotion {
-  id               String    @id @default(uuid())
-  restaurantId     String
-  name             String
-  description      String?
-  type             String
-  discountType     String
-  discountValue    Int
-  minOrderValue    Int       @default(0)
-  maxDiscountAmount Int?
-  code             String?
-  isActive         Boolean   @default(true)
-  startsAt         DateTime?
-  endsAt           DateTime?
-  maxUses          Int?
-  usedCount        Int       @default(0)
-  deletedAt        DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                    String         @id @default(uuid())
+  restaurantId          String
+  name                  String
+  description           String?
+  discountType          DiscountType
+  discountValue         Int            @default(0)
+  maximumDiscountAmount Int?
+  minimumOrderValue     Int?
+  applicableTo          PromotionScope @default(ALL_ITEMS)
+  /// JSON array of MenuItem or MenuCategory IDs; empty array when applicableTo = ALL_ITEMS
+  applicableItemIds     Json           @default("[]")
+  code                  String?
+  usageLimit            Int?
+  usageCount            Int            @default(0)
+  perCustomerLimit      Int?
+  validFrom             DateTime?
+  validTo               DateTime?
+  isActive              Boolean        @default(true)
+  deletedAt             DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
+  @@index([restaurantId])
   @@map("promotions")
 }
 
@@ -862,8 +899,10 @@ model Order {
   customerNote String?
 
   // Delivery platform
-  platformName    PlatformName?
-  platformOrderId String?
+  platformName        PlatformName?
+  platformOrderId     String?
+  /// Driver estimated pickup time (set from delivery platform webhook payload).
+  estimatedPickupTime DateTime?
 
   // Waiter-assisted order
   placedByStaffId String?
@@ -871,6 +910,10 @@ model Order {
   // BY_WEIGHT booking deposit
   depositRate   Decimal? @db.Decimal(5, 4)
   depositAmount Int?
+
+  // Loyalty redemption (snapshotted at checkout time)
+  pointsRedeemed       Int @default(0)
+  loyaltyDiscountAmount Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -913,6 +956,9 @@ model OrderItem {
 
   // Phase 2: per-item status (nullable in Phase 1)
   status OrderItemStatus?
+
+  /// Customer's special request for this item (e.g. "no spicy", "extra sauce")
+  specialRequest String?
 
   // BY_WEIGHT fields (schema exists Phase 1; KDS UI ships Phase 1.5)
   needsWeighing         Boolean  @default(false)
@@ -1029,8 +1075,11 @@ model Payment {
 model Customer {
   id                  String         @id @default(uuid())
   email               String?        @unique
+  hashedPassword      String?
   name                String?
+  phone               String?        /// WhatsApp-compatible phone number (E.164, e.g. +6281234567890)
   googleId            String?        @unique
+  emailVerifiedAt     DateTime?
   privacyConsentAt    DateTime?
   deletionRequestedAt DateTime?
   status              CustomerStatus @default(ACTIVE)
@@ -1306,6 +1355,30 @@ model CronRunLog {
   errorMessage String?
 
   @@map("cron_run_logs")
+}
+
+/// Web Push subscription for merchant staff — Step 18.
+/// Stores browser push endpoint + VAPID keys for server-initiated push notifications.
+/// One staff member can have multiple subscriptions (multiple browsers/devices).
+model StaffPushSubscription {
+  id           String   @id @default(uuid())
+  staffId      String?
+  /// Merchant owner subscriptions have no staffId — linked via restaurantId
+  restaurantId String
+  branchId     String?
+  endpoint     String   @unique
+  p256dh       String
+  auth         String
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  staff      Staff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId])
+  @@index([branchId])
+  @@map("staff_push_subscriptions")
 }
 
 /// Split-payment session for Patungan (Phase 1 Step 15). Schema stubbed in Phase 1 Prisma

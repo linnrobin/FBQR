@@ -494,19 +494,20 @@ Selections are stored per `OrderItem` as a JSON snapshot (not foreign keys) to p
 
 ## Promotion — Full Field Specification
 
-> **Step 11 dependency.** This model must be defined before Step 11 is built.
+> **Step 11 dependency — COMPLETE.** Schema migrated and UI built in Step 11.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | UUID |
 | `restaurantId` | string | FK → Restaurant |
 | `name` | string | Display name shown to customer and in merchant-pos |
-| `type` | enum | `PERCENTAGE` \| `FIXED_AMOUNT` \| `BOGO` \| `FREE_ITEM` |
-| `discountValue` | int | Percentage (e.g. 20 = 20%) for PERCENTAGE; IDR for FIXED_AMOUNT; unused for BOGO/FREE_ITEM |
+| `description` | string? | Optional description shown to customers |
+| `discountType` | enum (`DiscountType`) | `PERCENTAGE` \| `FIXED_AMOUNT` \| `BOGO` \| `FREE_ITEM` |
+| `discountValue` | int | Percentage (e.g. 20 = 20%) for PERCENTAGE; IDR for FIXED_AMOUNT; unused (0) for BOGO/FREE_ITEM |
 | `maximumDiscountAmount` | int? | Cap on PERCENTAGE discounts; null = no cap |
 | `minimumOrderValue` | int? | Minimum subtotal (IDR) required; null = no minimum |
-| `applicableTo` | enum | `ALL_ITEMS` \| `SPECIFIC_CATEGORIES` \| `SPECIFIC_ITEMS` |
-| `applicableItemIds` | string[] | IDs of `MenuItem` or `MenuCategory` records; empty array when `ALL_ITEMS` |
+| `applicableTo` | enum (`PromotionScope`) | `ALL_ITEMS` \| `SPECIFIC_CATEGORIES` \| `SPECIFIC_ITEMS` |
+| `applicableItemIds` | Json (string[]) | IDs of `MenuCategory` records when `SPECIFIC_CATEGORIES`; IDs of `MenuItem` records when `SPECIFIC_ITEMS`; empty array when `ALL_ITEMS` |
 | `code` | string? | Customer-entered promo code (e.g. "PROMO10"); null = auto-applied |
 | `usageLimit` | int? | Total platform-wide uses; null = unlimited |
 | `usageCount` | int | Running count of redemptions (incremented transactionally at Order CONFIRMED) |

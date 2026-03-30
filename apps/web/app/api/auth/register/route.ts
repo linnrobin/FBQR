@@ -83,9 +83,15 @@ export async function POST(req: NextRequest) {
   });
 
   // Generate email verification token (24h expiry, jose HS256)
-  const secret = new TextEncoder().encode(
-    process.env.NEXTAUTH_SECRET ?? "dev-secret-change-in-production"
-  );
+  const rawSecret = process.env.NEXTAUTH_SECRET;
+  if (!rawSecret) {
+    console.error("[register] NEXTAUTH_SECRET is not set — cannot generate verification token");
+    return NextResponse.json(
+      { error: "Server configuration error. Please try again later." },
+      { status: 500 }
+    );
+  }
+  const secret = new TextEncoder().encode(rawSecret);
   const token = await new SignJWT({ sub: merchant.id, email: merchant.email, purpose: "email-verify" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()

@@ -172,6 +172,8 @@ Order                ← status: PENDING | CONFIRMED | PREPARING | READY | COMPL
   │                       prevent race conditions under concurrent orders; resets at midnight
   │  platformName (nullable) — GRABFOOD | GOFOOD | SHOPEEFOOD
   │  platformOrderId (nullable) — external delivery platform reference
+  │  estimatedPickupTime (DateTime?, nullable) — driver pickup ETA from delivery platform webhook;
+  │                                               displayed in kitchen display header for DELIVERY orders
   │  customerNote (string?, max 200 chars) — free-text special request entered by customer at checkout
   │                                           (e.g. "no MSG", "extra spicy", "allergy: shrimp")
   │                                           shown on kitchen display card and order tracking screen
@@ -542,7 +544,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `WebhookDeliveryLog` | Webhook delivery audit | Schema defined in Public API section above |
 | `BranchMenuOverride` | *(Phase 1 — not deferred)* | Schema + UI toggle both built in Step 9. See `docs/merchant.md` § Multi-Branch. `(branchId FK, menuItemId FK, isAvailable bool)` — unique on `(branchId, menuItemId)` |
 | `Reservation` | Table reservation system | `(id, branchId FK, tableId FK, guestName, guestPhone, partySize, scheduledAt, depositPaid bool, status: PENDING\|CONFIRMED\|CANCELLED\|SEATED\|NO_SHOW)` |
-| `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry |
+| `MerchantIntegration` | WhatsApp, Accurate, Jurnal.id | `(id, merchantId FK, type: WHATSAPP\|ACCURATE\|JURNAL\|CUSTOM, credentials JSON encrypted, isActive bool, createdAt)` — generic integration registry. **WHATSAPP type active in Phase 1 Step 27**: credentials JSON = `{ "token": "<fonnte_token>", "senderNumber": "<E.164 optional>" }`. API: GET/POST/DELETE `/api/merchant/integrations/whatsapp`. |
 | `AnalyticsEvent` | Product analytics, funnel tracking | `(id, restaurantId FK, sessionId?, eventType, properties JSON, createdAt)` — append-only |
 | `MerchantRequest` | In-app EOI for multi-branch | `(id, merchantId FK, type: MULTI_BRANCH, requestedBranches int, message, status: PENDING\|APPROVED\|REJECTED, reviewedByAdminId?, reviewedAt?, createdAt)` |
 | `CronRunLog` | Cron job monitoring — silent failure detection | `(id, jobName, startedAt, completedAt?, status: SUCCESS\|FAILED\|PARTIAL, affectedRows?, errorMessage?)` — one row per cron invocation; used by `/api/health` to detect missed runs |
@@ -562,6 +564,13 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `OrderItem` | `weightUnit` | String? | Unit label matching `MenuItem.unitLabel` (e.g. `"kg"`, `"g"`). Stored for display on KDS and receipt; `null` for non-BY_WEIGHT items. |
 | `OrderItem` | `finalLineTotal` | Int? | Calculated line total after weighing: `round(weightValue × MenuItem.pricePerUnit)`. `null` until weight is entered. Used to compute BALANCE_CHARGE or BALANCE_REFUND delta vs the DEPOSIT amount. |
 | `OrderItem` | `weightEnteredByStaffId` | String? FK → Staff.id | Audit trail: which staff member entered the weight. Set atomically with `weightValue`. |
+| `OrderItem` | `specialRequest` | String? | Customer per-item instruction (e.g. "tidak pedas", "extra sauce"). Added Step 15. |
+| `MerchantSettings` | `taxRate` | Decimal default 0.11 | PPN rate. Standard Indonesia VAT 11%. |
+| `MerchantSettings` | `taxLabel` | String default "PPN" | Display label for tax line item. |
+| `MerchantSettings` | `serviceChargeRate` | Decimal default 0.00 | Service charge rate (e.g. 0.05 = 5%). |
+| `MerchantSettings` | `serviceChargeLabel` | String default "Service" | Display label for service charge. |
+| `MerchantSettings` | `taxOnServiceCharge` | Boolean default true | If true, PPN applies to subtotal + service charge per Indonesian PPN regulation. |
+| `MerchantSettings` | `pricesIncludeTax` | Boolean default false | If true, menu prices are tax-inclusive; grandTotal = subtotal. |
 | `Payment` | `splitGroupId` | String? FK → PatunganSession.id | Null for non-Patungan payments. Set when a payment belongs to a Patungan split session. Multiple Payment rows with the same `splitGroupId` collectively cover one Order's `grandTotal`. |
 | `Order` | `readyAt` | DateTime? | Timestamp when Order.status transitioned to `READY`. Set atomically in any READY transition (KDS [Mark Ready] button, or any future auto-READY path). Used by the Order Expiry Cron STEP 1b to compute the `autoCompleteReadyMinutes` hold period accurately. Falls back to `Order.updatedAt` in the cron if null (pre-migration rows). `updatedAt` alone is unreliable for hold-period start because other writes reset it. |
 | `Order` | `depositRate` | decimal? | Booking deposit percentage |
@@ -572,6 +581,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MenuCategory` | `availableTo` | String? | Time-of-day availability end in `HH:MM` format (24h, WIB). Example: `"11:00"` for a Breakfast category. `null` = always available. Must be > `availableFrom`; overnight ranges (e.g. `"22:00"` to `"02:00"`) are supported by comparing modularly. Both fields must be set together — setting only one is a validation error. |
 | `Restaurant` | `defaultStationId` | string? FK → KitchenStation | Default station for unrouted items (nullable — first station used if null) |
 | `Restaurant` | `whatsappNumber` | String? | Contact WhatsApp number (E.164 format, e.g. `+6281234567890`). Displayed in `apps/menu` footer and "Contact Restaurant" CTA. |
+| `Customer` | `phone` | String? | WhatsApp-compatible phone number (E.164 format, e.g. `+6281234567890`). Optional; collected at registration and editable from /account. Used by WA notification helpers (Step 27). |
 | `Restaurant` | `instagramHandle` | String? | Instagram handle without `@`, e.g. `fbqr.app`. Displayed in `apps/menu` footer. |
 | `Restaurant` | `tiktokHandle` | String? | TikTok handle without `@`. Displayed in `apps/menu` footer. |
 | `Restaurant` | `googleMapsUrl` | String? | Google Maps embed or share link. Rendered as "Get Directions" link in `apps/menu`. |
@@ -603,6 +613,7 @@ Invoice PDFs are stored in Supabase Storage and accessed via **signed, expiring 
 | `MerchantSettings` | `aiPersonalized` | Boolean | Default: `false`. When `true`, `apps/menu` shows collaborative-filtering suggestions based on cart content and anonymous order history. Phase 1: model is simple (most co-ordered items); Phase 2: ML model. |
 | `MerchantSettings` | `aiUpsell` | Boolean | Default: `true`. When `true`, a "Tambah minuman?" or similar upsell prompt appears at checkout. |
 | `MerchantSettings` | `aiTimeBased` | Boolean | Default: `true`. When `true`, `apps/menu` surfaces breakfast/lunch/dinner items based on current WIB time of day. |
+| `MerchantSettings` | `waNotifications` | JSON | Per-event WhatsApp notification toggle. Schema: `{ "orderReady": true, "invoiceSent": true, "newOrder": false }`. `orderReady`: send WA to customer when order → READY. `invoiceSent`: send invoice PDF link to customer after payment. `newOrder`: send WA to merchant owner on new order. Requires active `MerchantIntegration(type=WHATSAPP)`. Added Step 27. |
 
 ### Additional Fields Required in Phase 1 Prisma
 
